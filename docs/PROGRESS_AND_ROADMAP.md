@@ -1,8 +1,9 @@
 # AI Platform — Progress & Roadmap
 
 **Date:** 2026-10-31
-**Target host:** single node, NVIDIA RTX Quadro 8000 (48 GB), Turing
+**Target host:** single rented NVIDIA cloud GPU on [aiccloud.in](https://aiccloud.in/) (L40S 48 GB recommended; A100/H100 also fine)
 **Default model:** 26B / A4B MoE (`LLM_MODEL=gemma-3-26b-a4b-it`) · Nemotron switchable via `.env`
+**Setup guide:** docs/CLOUD_SETUP_GUIDE.md · **User guide:** docs/USER_GUIDE.md
 
 ---
 
@@ -172,13 +173,15 @@ policies → classifier → router → quota → approval → endpoints → metr
 
 ## 7. Deployment plan
 
-**Strategy:** single-node first (the Quadro box is the whole platform), then optionally split stateful
-services later. All services already defined in `docker-compose.yml`.
+**Strategy:** single rented GPU instance on aiccloud.in runs the whole platform; split stateful services
+out later if needed. All services already defined in `docker-compose.yml`. **Full step-by-step:
+docs/CLOUD_SETUP_GUIDE.md.**
 
-### 7.1 Host prerequisites
-1. OS + NVIDIA driver for Turing (data-center/studio driver supporting CUDA ≥ 12.x).
-2. Docker + **NVIDIA Container Toolkit** (so the `vllm` container sees the GPU).
-3. Verify: `docker run --rm --gpus all nvidia/cuda:12.4.0-base nvidia-smi` lists the Quadro 8000.
+### 7.1 Host prerequisites (rented instance)
+1. Provision a GPU on aiccloud.in (see CLOUD_SETUP_GUIDE §2 for card choice) with an Ubuntu 22.04 + CUDA image and ≥ 100 GB disk; add your SSH key.
+2. Install Docker + **NVIDIA Container Toolkit** on the instance (so the `vllm` container sees the GPU).
+3. Verify: `docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi` lists the rented GPU.
+4. **Billing is per-minute** — stop/terminate the instance when idle; keep off-box backups (§7.4) since the disk may be wiped on terminate.
 
 ### 7.2 Secrets & config
 4. `cp .env.example .env`; generate `VAULT_MASTER_KEY` (32 bytes base64) and a long `JWT_SECRET`.

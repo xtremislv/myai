@@ -1,0 +1,192 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "title": "AI Platform — Diagnostics & Logs",
+  "uid": "ai-platform-diag",
+  "tags": ["ai-platform", "ops"],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Service health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 1,
+      "title": "Gateway up",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }
+      },
+      "targets": [ { "refId": "A", "expr": "up{job=\"gateway\"}" } ]
+    },
+    {
+      "id": 2,
+      "title": "vLLM up",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }
+      },
+      "targets": [ { "refId": "A", "expr": "up{job=\"vllm\"}" } ]
+    },
+    {
+      "id": 3,
+      "title": "Collector up",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }
+      },
+      "targets": [ { "refId": "A", "expr": "up{job=\"otel-collector\"}" } ]
+    },
+    {
+      "id": 4,
+      "title": "LLM error rate",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.01 }, { "color": "red", "value": 0.1 } ] }
+        }
+      },
+      "targets": [ { "refId": "A", "expr": "sum(rate(llm_requests_total{status=\"error\"}[5m]))" } ]
+    },
+    {
+      "id": 5,
+      "title": "Access denials (rate)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.05 }, { "color": "red", "value": 0.5 } ] }
+        }
+      },
+      "targets": [ { "refId": "A", "expr": "sum(rate(acl_decisions_total{decision=\"deny\"}[5m]))" } ]
+    },
+
+    {
+      "id": 110,
+      "type": "row",
+      "title": "Inference health (vLLM)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "id": 6,
+      "title": "Requests running / waiting",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 7 },
+      "targets": [
+        { "refId": "A", "expr": "vllm:num_requests_running", "legendFormat": "running" },
+        { "refId": "B", "expr": "vllm:num_requests_waiting", "legendFormat": "waiting" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "GPU KV-cache usage %",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "min": 0 } },
+      "targets": [ { "refId": "A", "expr": "vllm:gpu_cache_usage_perc", "legendFormat": "kv cache" } ]
+    },
+    {
+      "id": 8,
+      "title": "LLM latency p95 (gateway view)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_latency_seconds_bucket[5m])))", "legendFormat": "p95" }
+      ]
+    },
+
+    {
+      "id": 120,
+      "type": "row",
+      "title": "Workflow (LangGraph nodes)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }
+    },
+    {
+      "id": 9,
+      "title": "Node execution rate (by node)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (node) (rate(graph_node_total[5m]))", "legendFormat": "{{node}}" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Node executions (total, by node)",
+      "type": "bargauge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 15 },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (node) (graph_node_total)", "legendFormat": "{{node}}" }
+      ]
+    },
+
+    {
+      "id": 130,
+      "type": "row",
+      "title": "Logs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }
+    },
+    {
+      "id": 11,
+      "title": "Errors & warnings",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 23 },
+      "options": { "showTime": true, "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [
+        { "refId": "A", "expr": "{service_name=\"ai-platform-gateway\"} | json | levelname =~ \"ERROR|WARNING|CRITICAL\"" }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "All gateway logs (live)",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 32 },
+      "options": { "showTime": true, "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [
+        { "refId": "A", "expr": "{service_name=\"ai-platform-gateway\"}" }
+      ]
+    }
+  ]
+}

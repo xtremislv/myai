@@ -1,10 +1,14 @@
 # AI Platform
 
-Self-hosted AI cloud server: a local LLM on an RTX Quadro 8000 (48 GB), served by
-**vLLM**, with a **LangGraph** agent orchestrator, an app-managed **vault**, a
-**storage access-control** module, and a full **observability** stack.
+Self-hosted AI cloud server: a local LLM on a **rented NVIDIA cloud GPU** (hosted on
+[aiccloud.in](https://aiccloud.in/)), served by **vLLM**, with a **LangGraph** agent orchestrator, an
+app-managed **vault**, a **storage access-control** module, and a full **observability** stack.
 
-See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full design.
+**Docs:**
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full design
+- [`docs/CLOUD_SETUP_GUIDE.md`](./docs/CLOUD_SETUP_GUIDE.md) — provision & deploy on aiccloud.in
+- [`docs/USER_GUIDE.md`](./docs/USER_GUIDE.md) — how users authenticate & send requests
+- [`docs/PROGRESS_AND_ROADMAP.md`](./docs/PROGRESS_AND_ROADMAP.md) — status, departments, Request Manager, plan
 
 ## Stack
 
@@ -49,7 +53,7 @@ curl -s localhost:8000/v1/auth/login \
 | `http://localhost:8001/v1` | vLLM OpenAI API |
 | `http://localhost:9001` | MinIO console |
 | `http://localhost:9090` | Prometheus |
-| `http://localhost:3000` | Grafana (admin / `GRAFANA_PASSWORD`) |
+| `http://localhost:3000` | Grafana — dashboards: *LLM & ACL*, *Diagnostics & Logs* |
 | `http://localhost:3100` | Loki |
 
 ## Using it
@@ -72,15 +76,17 @@ curl -s localhost:8000/v1/chat -H "authorization: Bearer $TOKEN" \
   -d '{"thread_id":"demo-1","message":"List the documents under reports/ and summarize q3."}'
 ```
 
-## Model notes (Quadro 8000 / Turing)
+## Model notes (rented cloud GPU)
 
 - **Default: a 26B / A4B MoE** (~4B active params per token). At INT4 the weights are ~13–15 GB — a
-  comfortable fit in 48 GB with lots of room for KV cache — and only the active experts compute per
-  token, so throughput is well above a dense 27B.
+  comfortable fit on a 48 GB L40S (and roomy on A100/H100 80 GB) — and only the active experts compute
+  per token, so throughput is well above a dense 27B.
 - **Switch to Nemotron** by setting `LLM_MODEL` (and usually `HUGGING_FACE_HUB_TOKEN`) in `.env`. No
   code change needed — the client talks to whatever vLLM serves.
-- Turing has **no FP8** — do not pass `--quantization fp8`. Use `awq`/`gptq` (INT4) or FP16 for small models.
+- **FP8 depends on the card:** available on Ada/Hopper (L40S, RTX 4090, H100); **not** on Ampere
+  (A100, RTX 3090) — use `awq`/`gptq` (INT4) there. The compose default `awq` works everywhere.
 - Set the exact Hugging Face repo id for your chosen weights in `LLM_MODEL`.
+- GPU selection + full deploy steps: [`docs/CLOUD_SETUP_GUIDE.md`](./docs/CLOUD_SETUP_GUIDE.md).
 
 ## Local dev without Docker
 

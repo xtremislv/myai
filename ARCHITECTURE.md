@@ -1,8 +1,9 @@
 # AI Cloud Server — Architecture
 
-A self-hosted, single-node AI platform running a local LLM on an **NVIDIA RTX Quadro 8000 (48 GB)**,
-with a **LangGraph** agent orchestrator, an app-managed **Vault**, a **storage access-control** module,
-and a full observability stack.
+A self-hosted, single-node AI platform running a local LLM on a **rented NVIDIA cloud GPU** (hosted on
+[aiccloud.in](https://aiccloud.in/) — e.g. L40S 48 GB, A100, or H100), with a **LangGraph** agent
+orchestrator, an app-managed **Vault**, a **storage access-control** module, and a full observability
+stack. See **docs/CLOUD_SETUP_GUIDE.md** for provisioning and **docs/USER_GUIDE.md** for sending requests.
 
 ---
 
@@ -10,19 +11,21 @@ and a full observability stack.
 
 | Item | Choice | Notes |
 |------|--------|-------|
-| GPU | RTX Quadro 8000, 48 GB | Turing, no FP8 tensor cores — prefer AWQ/GPTQ **INT4** or FP16 |
+| GPU | **Rented** on aiccloud.in | L40S 48 GB (recommended), A100 80 GB, or H100; billed per-minute |
 | Model (default) | **26B / A4B MoE** (~4B active) | INT4 weights ≈ 13–15 GB; only active experts compute per token → fast |
 | Model (option) | NVIDIA Nemotron | swap via `LLM_MODEL` in `.env`; no code change |
 | Server | **vLLM** | OpenAI-compatible API at `:8001`, high concurrent throughput |
 
-### VRAM budget (26B-A4B, INT4-AWQ, 48 GB)
+### VRAM budget (26B-A4B, INT4-AWQ)
 - Weights: ~13–15 GB (all experts must be resident even though only ~4B activate per token)
-- KV cache: large remainder → long context / many concurrent requests
+- KV cache: remainder → long context / many concurrent requests (far larger on A100/H100 80 GB)
 - Launch: `--quantization awq --max-model-len 8192 --gpu-memory-utilization 0.90`
 
-> Turing lacks FP8; do **not** use `--quantization fp8`. Use AWQ/GPTQ INT4 or plain FP16.
-> A MoE keeps all expert weights in VRAM (so plan for the full ~26B footprint) but activates only a
-> subset per token, cutting compute/latency versus a dense model of the same size.
+> **FP8 depends on the rented card.** Ada/Hopper (L40S, RTX 4090, H100) support `--quantization fp8`;
+> Ampere (A100, RTX 3090) does **not** — use AWQ/GPTQ INT4 or BF16 there. The compose default `awq`
+> works on every card. A MoE keeps all expert weights resident (plan for the full ~26B footprint) but
+> activates only a subset per token, cutting latency versus a dense model of the same size.
+> GPU selection guidance: **docs/CLOUD_SETUP_GUIDE.md §2**.
 
 ---
 
