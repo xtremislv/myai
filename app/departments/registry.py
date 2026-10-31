@@ -1,8 +1,10 @@
 """Seed/read departments and expand their grants into ACL policies.
 
+- Real departments (DEFAULT_DEPARTMENTS) get a row in the `departments` table.
+- All specs (incl. the "*" global and "$self" owner pseudo-roles) have their
+  grants expanded into `acl_policies`.
 Seeding is idempotent: policy rows use a deterministic id derived from
-(subject, effect, action, resource), so re-running updates in place without
-creating duplicates.
+(subject, effect, action, resource).
 """
 from __future__ import annotations
 
@@ -11,23 +13,25 @@ import hashlib
 from sqlalchemy.orm import Session
 
 from app.db.session import ACLPolicy, Department
-from app.departments.packs import DEFAULT_DEPARTMENTS, DepartmentSpec
+from app.departments.packs import DEFAULT_DEPARTMENTS, POLICY_SPECS, DepartmentSpec
 
 
 def _policy_id(subject: str, effect: str, action: str, resource: str) -> str:
     raw = f"{subject}|{effect}|{action}|{resource}".encode()
-    return hashlib.sha1(raw).hexdigest()  # 40 chars, fits String(64)
+    return hashlib.sha1(raw).hexdigest()
 
 
 def _grants_json(spec: DepartmentSpec) -> list[dict]:
-    return [{"resource": g.resource, "actions": list(g.actions)} for g in spec.grants]
+    return [{"resource": g.resource, "actions": list(g.actions), "effect": g.effect} for g in spec.grants]
 
 
-def seed_departments(session: Session, specs: tuple[DepartmentSpec, ...] = DEFAULT_DEPARTMENTS) -> dict:
-    """Upsert department rows and their allow-policies. Returns a small summary."""
+def seed_departments(session: Session) -> dict:
+    """Upsert department rows and expand all policy specs. Returns a summary."""
     dept_count = 0
     policy_count = 0
-    for spec in specs:
+
+    # 1. department-table rows (real departments only)
+    for spec in DEFAULT_DEPARTMENTS:
         row = session.get(Department, spec.name)
         if row is None:
             row = Department(name=spec.name)
@@ -41,15 +45,18 @@ def seed_departments(session: Session, specs: tuple[DepartmentSpec, ...] = DEFAU
         row.critical_resources = list(spec.critical_resources)
         dept_count += 1
 
+    # 2. ACL policies (all specs, incl. "*" and "$self")
+    for spec in POLICY_SPECS:
         for grant in spec.grants:
+            subject = grant.subject or spec.name
             for action in grant.actions:
-                pid = _policy_id(spec.name, "allow", action, grant.resource)
+                pid = _policy_id(subject, grant.effect, action, grant.resource)
                 if session.get(ACLPolicy, pid) is None:
                     session.add(
                         ACLPolicy(
                             id=pid,
-                            subject=spec.name,
-                            effect="allow",
+                            subject=subject,
+                            effect=grant.effect,
                             action=action,
                             resource=grant.resource,
                         )

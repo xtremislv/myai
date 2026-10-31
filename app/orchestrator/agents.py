@@ -15,8 +15,8 @@ from typing import Any
 
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
-from app.orchestrator.nodes import _parse_tool_call
-from app.orchestrator.tools import TOOLS
+from app.orchestrator.nodes import _department, _parse_tool_call
+from app.orchestrator.tools import tools_for
 
 MAX_RESEARCH_STEPS = 6
 
@@ -26,14 +26,14 @@ PLANNER_PROMPT = (
     "to answer. Reply with the plan only — no preamble."
 )
 
-RESEARCHER_PROMPT = (
-    "You are the RESEARCHER. Follow the plan and gather facts using tools. "
-    "To call a tool, reply with ONLY a JSON object: "
-    '{"tool": "<name>", "args": {...}}. '
-    f"Available tools: {list(TOOLS)}. "
-    "When you have gathered everything the plan needs, reply with ONLY the JSON "
-    '{"done": true} and nothing else.'
-)
+def _researcher_prompt(state: dict) -> str:
+    allowed = list(tools_for(_department(state)))
+    return (
+        "You are the RESEARCHER. Follow the plan and gather facts using ONLY your department's tools. "
+        'To call a tool, reply with ONLY a JSON object: {"tool": "<name>", "args": {...}}. '
+        f"Available tools: {allowed}. "
+        'When you have gathered everything the plan needs, reply with ONLY the JSON {"done": true}.'
+    )
 
 WRITER_PROMPT = (
     "You are the WRITER. Using the plan and the research notes, write the final answer "
@@ -62,7 +62,7 @@ def researcher(state: dict[str, Any]) -> dict[str, Any]:
 
     with tracer.start_as_current_span("team.researcher"):
         convo = [
-            {"role": "system", "content": RESEARCHER_PROMPT},
+            {"role": "system", "content": _researcher_prompt(state)},
             {"role": "assistant", "content": f"[plan]\n{state.get('plan', '')}"},
             *_notes_as_messages(state),
             *state.get("messages", [])[:1],  # the original user request
@@ -87,10 +87,10 @@ def research_tools(state: dict[str, Any]) -> dict[str, Any]:
     last = state["messages"][-1]["content"]
     call = _parse_tool_call(last) or {}
     name, args = call.get("tool"), call.get("args", {})
-    fn = TOOLS.get(name)
+    fn = tools_for(_department(state)).get(name)  # department-scoped dispatch
     with tracer.start_as_current_span("team.tool") as span:
         span.set_attribute("tool.name", name or "unknown")
-        result = f"ERROR: unknown tool '{name}'" if fn is None else fn(state, **args)
+        result = f"ERROR: tool '{name}' not available to this department" if fn is None else fn(state, **args)
     note = f"{name}({json.dumps(args, default=str)}) -> {json.dumps(result, default=str)}"
     return {
         "research_notes": [note],

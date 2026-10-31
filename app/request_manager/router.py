@@ -26,6 +26,7 @@ from app.observability import (
     tracer,
 )
 from app.request_manager import approvals as approvals_store
+from app.request_manager import guards
 from app.request_manager.classifier import classify
 from app.request_manager.quota import QuotaLimiter, default_quota
 
@@ -40,10 +41,13 @@ class RMRequest:
 
 @dataclass
 class RMResult:
-    outcome: str                 # ok | denied_auth | denied_quota | pending_approval | error
+    # ok | denied_auth | denied_quota | pending_approval | flagged_nsfw | forwarded | error
+    outcome: str
     department: str | None = None
     reply: str | None = None
     approval_id: str | None = None
+    task_id: str | None = None
+    report_id: str | None = None
     reason: str = ""
 
 
@@ -95,6 +99,23 @@ def handle_request(
 
     with tracer.start_as_current_span("rm.handle_request") as span:
         span.set_attribute("rm.subject", subject.id)
+
+        # 0a. NSFW guard — block and escalate to HR + Admin.
+        nsfw, why = guards.is_nsfw(req.message)
+        if nsfw:
+            report = guards.report_nsfw(session, subject.id, req.message)
+            _finish(session, subject, None, "flagged_nsfw", why, start)
+            return RMResult("flagged_nsfw", report_id=report.id, reason=f"NSFW flagged ({why}); reported to hr, admin")
+
+        # 0b. Intent routing — orders/products/services/bills go to accounts.
+        kind = guards.detect_forward_intent(req.message)
+        if kind:
+            task = guards.forward_to_account(
+                session, kind=kind, requester_id=subject.id,
+                message=req.message, thread_id=req.thread_id, mode=req.mode,
+            )
+            _finish(session, subject, "account", "forwarded", f"{kind} -> account inbox", start)
+            return RMResult("forwarded", department="account", task_id=task.id, reason=f"{kind} forwarded to accounts")
 
         # 1. classify
         cls = classify(subject, req.message, req.department)
@@ -150,6 +171,14 @@ def execute_approved(session: Session, approval, *, runner=run_graph) -> str:
     req = RMRequest(message=approval.message, thread_id=approval.thread_id, mode=approval.mode)
     rm_approvals_total.labels(department=approval.department, state="executed").inc()
     return runner(subject, req, approval.department)
+
+
+def execute_task(session: Session, task, processor_id: str, *, runner=run_graph) -> str:
+    """Run a forwarded inbox task under the department role (the processor acts
+    as a member of that department)."""
+    subject = Subject(id=processor_id, roles=(task.department,))
+    req = RMRequest(message=task.message, thread_id=task.thread_id, mode=task.mode)
+    return runner(subject, req, task.department)
 
 
 def _finish(session, subject, department, outcome, reason, start) -> None:

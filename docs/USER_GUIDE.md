@@ -19,14 +19,24 @@ can only touch data and tools your department is granted. The departments:
 
 | Department | Can ask agents to… | Data it can reach |
 |-----------|--------------------|-------------------|
-| **finance** | run/initiate transactions, manage invoices, reconcile | finance records, payment secrets (approval-gated) |
-| **logistics** | track shipments, send notifications/reminders, manage inventory | inventory & shipment data |
-| **research** | gather info, summarize, build reports | research & report documents |
-| **misc** | general, low-privilege tasks | shared documents |
-| **admin** | manage users, policies, secrets, departments | everything |
+| **account** | accounts data, balance sheets, finance mail, orders/bills/bookings (payments approval-gated) | `accounts:*`, `balance_sheet:*`, `mail:finance/*`, `order/bill/booking:*` |
+| **hr** | review career mail and NSFW reports | `mail:career/*`, `report:nsfw/*` |
+| **logistics** | manage inventory, track shipments, notify, remind | `inventory:*` (write), `shipments:*` |
+| **researcher** | gather info, summarize, build reports | `research:*`, `reports:*` |
+| **superuser** | manage inventory | `inventory:*` (write) |
+| **admin** | manage users, policies, secrets — **everything except** chat history & personal data | all except `chat_history:*`, `personal_info:*`, `mail:personal/*` |
 
-If you request something outside your department's grants, you get **403 Forbidden** with the reason —
-this is expected, not a bug.
+**Data that belongs to you, not a department** (owner-only — *only you* can read it, not even admin):
+your **personal info** (`personal_info:<you>/*`), **personal mail** (`mail:personal/<you>/*`), and
+**chat history** (`chat_history:<you>/*`). In chat history, text is kept but non-text attachments are
+**deleted after 3 days**.
+
+**Inventory** is readable by **everyone**, but only **logistics** and **superuser** can edit it.
+
+If you request something outside your grants, you get **403 Forbidden** with the reason — expected, not a
+bug. Two requests are handled specially: anything that **places an order / buys a product / books a
+service / is a bill** is **forwarded to the accounts inbox** (returns `forwarded`); anything **NSFW** is
+**blocked and reported to HR + admin** (returns `flagged_nsfw`).
 
 ---
 
@@ -61,7 +71,8 @@ curl -s $BASE/v1/request \
   -d '{"thread_id":"log-1","mode":"single","message":"Track shipment SHP-8842."}'
 ```
 Response: `{"outcome":"ok","department":"logistics","reply":"…"}`.
-Outcomes: `ok`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (returns an `approval_id`).
+Outcomes: `ok`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (`approval_id`),
+`forwarded` (order/bill/service → `task_id` in the accounts inbox), `flagged_nsfw` (`report_id`).
 
 `POST /v1/chat` runs the orchestrator directly. Pick a `mode`:
 - `single` — one agent + tools, fast; good for direct questions/actions.
@@ -110,14 +121,13 @@ print(r.json()["reply"])
 
 ## 4. Department examples
 
-**Finance — manage an invoice / request a transaction**
+**Account — balances, finance mail, orders/bills**
 ```bash
-curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"thread_id":"fin-1","mode":"single",
-       "message":"Create an invoice for ACME, 12 units at 500 INR, due in 30 days."}'
+curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"thread_id":"acc-1","mode":"single","message":"Look up the balance sheet for the ACME account."}'
 ```
-> Transactions and critical-data access are **approval-gated**: the agent prepares the action and it
-> waits for an admin/finance approver before anything executes (see §5). This is by design.
+> Payments/transfers are **approval-gated** (return `pending_approval`); an admin approves before
+> anything executes (see §5). Placing an order or paying a bill is **forwarded to the accounts inbox**.
 
 **Logistics — tracking, reminders, inventory**
 ```bash
@@ -126,9 +136,9 @@ curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: applic
        "message":"Track shipment SHP-8842 and remind the warehouse if it slips past tomorrow."}'
 ```
 
-**Research — gather & summarize**
+**Researcher — gather & summarize**
 ```bash
-curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"thread_id":"res-1","mode":"team",
        "message":"Compare our last three quarterly reports and highlight trends."}'
 ```
@@ -151,6 +161,20 @@ curl -s -X POST $BASE/v1/approvals/<id>/deny    -H "authorization: Bearer $TOKEN
 ```
 
 ---
+
+## 5b. Department inbox & reports
+
+Orders/products/services/bills are forwarded to the **accounts inbox**. Accounts members (or admin)
+work the queue:
+```bash
+curl -s "$BASE/v1/inbox?department=account" -H "authorization: Bearer $TOKEN"   # list queued tasks
+curl -s -X POST $BASE/v1/inbox/<task_id>/process -H "authorization: Bearer $TOKEN"  # run it
+```
+
+NSFW reports are visible to **hr** and **admin**:
+```bash
+curl -s $BASE/v1/reports -H "authorization: Bearer $TOKEN"
+```
 
 ## 6. Admin tasks
 

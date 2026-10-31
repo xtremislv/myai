@@ -18,9 +18,10 @@ KNOWN = {d.name for d in DEFAULT_DEPARTMENTS}
 
 # Lightweight keyword hints (heuristic; the authoritative signal is the role).
 KEYWORDS: dict[str, tuple[str, ...]] = {
-    "finance": ("invoice", "payment", "pay ", "transaction", "transfer", "refund", "ledger", "reconcile"),
+    "account": ("account", "balance", "ledger", "reconcile", "finance mail"),
+    "hr": ("career", "hiring", "recruit", "employee", "onboard", "leave request"),
     "logistics": ("shipment", "ship ", "track", "inventory", "stock", "reminder", "notify", "delivery"),
-    "research": ("research", "summar", "report", "analyze", "compare", "literature"),
+    "researcher": ("research", "summar", "report", "analyze", "compare", "literature"),
 }
 
 

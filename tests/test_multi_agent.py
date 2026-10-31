@@ -10,7 +10,7 @@ import json
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.orchestrator import agents
+from app.orchestrator import agents, tools as tools_mod
 from app.orchestrator.multi_graph import build_team_graph
 
 
@@ -39,7 +39,7 @@ def fake_llm(monkeypatch):
 @pytest.fixture
 def fake_tool(monkeypatch):
     """Replace read_document with a stub so no DB/MinIO is touched."""
-    monkeypatch.setitem(agents.TOOLS, "read_document", lambda state, key: f"[contents of {key}]")
+    monkeypatch.setitem(tools_mod.TOOLS, "read_document", lambda state, key: f"[contents of {key}]")
 
 
 def test_team_graph_runs_planner_research_writer(fake_llm, fake_tool):
@@ -47,7 +47,8 @@ def test_team_graph_runs_planner_research_writer(fake_llm, fake_tool):
     initial = {
         "messages": [{"role": "user", "content": "Summarize the Q3 report."}],
         "subject_id": "u1",
-        "subject_roles": ["analyst"],
+        "subject_roles": ["researcher"],
+        "scratchpad": {"department": "researcher"},
     }
     final = graph.invoke(initial, config={"configurable": {"thread_id": "t1"}})
 
@@ -78,7 +79,8 @@ def test_team_graph_respects_max_steps(fake_llm, fake_tool, monkeypatch):
     )
     graph = build_team_graph().compile(checkpointer=MemorySaver())
     final = graph.invoke(
-        {"messages": [{"role": "user", "content": "go"}], "subject_id": "u1", "subject_roles": []},
+        {"messages": [{"role": "user", "content": "go"}], "subject_id": "u1",
+         "subject_roles": ["researcher"], "scratchpad": {"department": "researcher"}},
         config={"configurable": {"thread_id": "t2"}},
     )
     assert final["messages"][-1]["content"] == "final answer"

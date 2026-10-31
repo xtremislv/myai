@@ -14,10 +14,10 @@ from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
 from app.api.deps import current_subject, require_admin
-from app.db.session import get_session
+from app.db.session import DepartmentTask, get_session
 from app.observability import rm_approvals_total
 from app.request_manager import approvals as approvals_store
-from app.request_manager.router import RMRequest, execute_approved, handle_request
+from app.request_manager.router import RMRequest, execute_approved, execute_task, handle_request
 
 router = APIRouter(tags=["request-manager"])
 
@@ -34,6 +34,8 @@ class RequestOut(BaseModel):
     department: str | None = None
     reply: str | None = None
     approval_id: str | None = None
+    task_id: str | None = None
+    report_id: str | None = None
     reason: str = ""
 
 
@@ -113,3 +115,79 @@ def deny(
         raise HTTPException(status.HTTP_409_CONFLICT, f"already {row.state}")
     rm_approvals_total.labels(department=row.department, state="denied").inc()
     return RequestOut(outcome="denied", department=row.department, approval_id=row.id, reason="denied by admin")
+
+
+# ---- Department inbox (forwarded tasks, e.g. orders/bills to accounts) ----
+class TaskOut(BaseModel):
+    id: str
+    department: str
+    requester_id: str
+    kind: str
+    message: str
+    state: str
+
+
+def _member_or_admin(subject: Subject, department: str) -> bool:
+    return department in subject.roles or "admin" in subject.roles
+
+
+@router.get("/v1/inbox", response_model=list[TaskOut])
+def list_inbox(
+    department: str,
+    subject: Subject = Depends(current_subject),
+    session: Session = Depends(get_session),
+) -> list[TaskOut]:
+    if not _member_or_admin(subject, department):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a member of '{department}'")
+    tasks = (
+        session.query(DepartmentTask)
+        .filter(DepartmentTask.department == department, DepartmentTask.state == "queued")
+        .order_by(DepartmentTask.created_at)
+        .all()
+    )
+    return [
+        TaskOut(id=t.id, department=t.department, requester_id=t.requester_id, kind=t.kind, message=t.message, state=t.state)
+        for t in tasks
+    ]
+
+
+@router.post("/v1/inbox/{task_id}/process", response_model=RequestOut)
+def process_task(
+    task_id: str,
+    subject: Subject = Depends(current_subject),
+    session: Session = Depends(get_session),
+) -> RequestOut:
+    task = session.get(DepartmentTask, task_id)
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
+    if not _member_or_admin(subject, task.department):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a member of '{task.department}'")
+    if task.state != "queued":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"already {task.state}")
+    reply = execute_task(session, task, subject.id)
+    task.state = "done"
+    task.result = reply
+    session.commit()
+    return RequestOut(outcome="ok", department=task.department, reply=reply, task_id=task.id)
+
+
+# ---- Reports (NSFW) — HR / Admin ----
+class ReportOut(BaseModel):
+    id: str
+    kind: str
+    subject_id: str
+    message: str
+    state: str
+
+
+@router.get("/v1/reports", response_model=list[ReportOut])
+def list_reports(
+    subject: Subject = Depends(current_subject),
+    session: Session = Depends(get_session),
+) -> list[ReportOut]:
+    if not ({"hr", "admin"} & set(subject.roles)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "reports are visible to hr and admin only")
+    from app.db.session import Report
+
+    rows = session.query(Report).filter(Report.state == "open").order_by(Report.created_at).all()
+    return [ReportOut(id=r.id, kind=r.kind, subject_id=r.subject_id, message=r.message, state=r.state) for r in rows]

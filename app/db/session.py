@@ -102,6 +102,49 @@ class Approval(Base):
     decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class Report(Base):
+    """A flagged request (e.g. NSFW) escalated to one or more departments."""
+
+    __tablename__ = "reports"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # e.g. "nsfw"
+    subject_id: Mapped[str] = mapped_column(String(128), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    notified: Mapped[list] = mapped_column(JSON, default=list)  # departments notified
+    state: Mapped[str] = mapped_column(String(16), default="open")  # open|reviewed
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DepartmentTask(Base):
+    """A request forwarded to a department's inbox (e.g. order/bill to account)."""
+
+    __tablename__ = "department_tasks"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    department: Mapped[str] = mapped_column(String(64), index=True)
+    requester_id: Mapped[str] = mapped_column(String(128), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="request")  # order|bill|service|request
+    message: Mapped[str] = mapped_column(Text)
+    thread_id: Mapped[str] = mapped_column(String(128))
+    mode: Mapped[str] = mapped_column(String(16), default="single")
+    state: Mapped[str] = mapped_column(String(16), default="queued", index=True)  # queued|done
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChatHistory(Base):
+    """Per-user chat history. Text is retained; non-text artifacts are purged
+    after 3 days by scripts/purge_history.py (retention policy)."""
+
+    __tablename__ = "chat_history"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    thread_id: Mapped[str] = mapped_column(String(128), index=True)
+    text: Mapped[str] = mapped_column(Text, default="")
+    artifacts: Mapped[list] = mapped_column(JSON, default=list)  # media/file refs; purged after 3d
+    artifacts_purged: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

@@ -6,16 +6,23 @@ from typing import Any
 
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
-from app.orchestrator.tools import TOOLS
+from app.orchestrator.tools import tools_for
 
-SYSTEM_PROMPT = (
-    "You are an orchestrated agent running on a private AI platform. "
-    "You may call tools to access the user's authorized documents and secrets. "
-    "To call a tool, reply with ONLY a JSON object: "
-    '{"tool": "<name>", "args": {...}}. '
-    f"Available tools: {list(TOOLS)}. "
-    "When you have the final answer, reply with plain text (no JSON)."
-)
+
+def _department(state: dict[str, Any]) -> str | None:
+    return (state.get("scratchpad") or {}).get("department")
+
+
+def _system_prompt(state: dict[str, Any]) -> str:
+    dept = _department(state)
+    allowed = list(tools_for(dept))
+    return (
+        f"You are an orchestrated agent for the '{dept or 'general'}' department on a private AI "
+        "platform. You may call ONLY your department's tools to access authorized data. "
+        'To call a tool, reply with ONLY a JSON object: {"tool": "<name>", "args": {...}}. '
+        f"Available tools: {allowed}. "
+        "When you have the final answer, reply with plain text (no JSON)."
+    )
 
 
 def router(state: dict[str, Any]) -> dict[str, Any]:
@@ -32,7 +39,7 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
     """Call the LLM. If it emits a tool-call JSON, route to tools; else finish."""
     graph_node_total.labels(node="agent").inc()
     with tracer.start_as_current_span("graph.agent"):
-        convo = [{"role": "system", "content": SYSTEM_PROMPT}, *state.get("messages", [])]
+        convo = [{"role": "system", "content": _system_prompt(state)}, *state.get("messages", [])]
         reply = llm.chat(convo)
 
     tool_call = _parse_tool_call(reply)
@@ -47,11 +54,11 @@ def tools_node(state: dict[str, Any]) -> dict[str, Any]:
     last = state["messages"][-1]["content"]
     call = _parse_tool_call(last) or {}
     name, args = call.get("tool"), call.get("args", {})
-    fn = TOOLS.get(name)
+    fn = tools_for(_department(state)).get(name)  # department-scoped dispatch
     with tracer.start_as_current_span("graph.tool") as span:
         span.set_attribute("tool.name", name or "unknown")
         if fn is None:
-            result = f"ERROR: unknown tool '{name}'"
+            result = f"ERROR: tool '{name}' not available to this department"
         else:
             result = fn(state, **args)
     return {

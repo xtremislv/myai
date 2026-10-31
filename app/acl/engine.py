@@ -38,14 +38,20 @@ class ACLEngine:
             span.set_attribute("acl.action", action.value)
             span.set_attribute("acl.resource", urn)
 
+            # "$self" policies express owner-based access: their resource pattern
+            # contains "{owner}", substituted with the requesting subject's id.
+            principals = [*subject.principals, "$self"]
             rows = (
                 self._session.query(ACLPolicy)
-                .filter(ACLPolicy.subject.in_(list(subject.principals)))
+                .filter(ACLPolicy.subject.in_(principals))
                 .all()
             )
 
+            def _pattern(r: ACLPolicy) -> str:
+                return r.resource.replace("{owner}", subject.id) if r.subject == "$self" else r.resource
+
             matched = [
-                r for r in rows if _action_matches(r.action, action) and _resource_matches(r.resource, urn)
+                r for r in rows if _action_matches(r.action, action) and _resource_matches(_pattern(r), urn)
             ]
             denied = [r for r in matched if r.effect == Effect.DENY.value]
             allowed = [r for r in matched if r.effect == Effect.ALLOW.value]

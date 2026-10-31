@@ -41,7 +41,11 @@ and (5) a staged deployment. This document is the step-by-step plan for all of i
 | Request Manager: classify, authorize, quota, critical-approval gate | ✅ | `app/request_manager/`, `app/api/routes_request.py` |
 | Approvals store + `/v1/request` + `/v1/approvals` API | ✅ | `app/db/session.py` (`approvals`), `routes_request.py` |
 | RM per-department metrics + Grafana row | ✅ | `app/observability.py`, `deploy/grafana/` |
-| Tests (vault, ACL, team graph, departments, request manager) — 21 passing | ✅ | `tests/` |
+| **Data-access schema** (owner-based `$self`, mail categories, inventory, admin exclusions) | ✅ | `app/acl/engine.py`, `app/departments/packs.py` |
+| **Per-department tool registries** (Phase 3) | ✅ | `app/orchestrator/tools.py`, `nodes.py`, `agents.py` |
+| **NSFW guard** (block + report to hr/admin) & **order/bill forwarding** to accounts inbox | ✅ | `app/request_manager/guards.py` |
+| Inbox + reports API; chat-history **3-day retention** | ✅ | `routes_request.py`, `retention.py`, `scripts/purge_history.py` |
+| Tests — 32 passing | ✅ | `tests/` |
 
 **Not yet built:** DB migrations, streaming, rate limiting, department agents, the Request Manager,
 human-in-the-loop approvals, TLS/reverse proxy, backups, CI, load/security testing, real model weights.
@@ -66,10 +70,10 @@ Phases are ordered by dependency. Each task has an acceptance check (AC).
 9. **Benchmark.** Measure tokens/s and concurrency; tune `--max-model-len` and `--max-num-seqs`. *AC:* documented throughput at the target concurrency.
 10. **Nemotron switch test.** Confirm swapping `LLM_MODEL` to Nemotron works with no code change. *AC:* both models serve the same API.
 
-### Phase 3 — Department agents (see §5)
-11. **Tool registry per department.** Scope each department's agents to only its tools + data prefixes. *AC:* a finance agent cannot call a logistics-only tool.
-12. **Department team graphs.** Reuse the team graph with department-specific prompts/tools. *AC:* each department has its own runnable graph.
-13. **Human-in-the-loop approval node.** For critical actions (finance transactions), pause the graph for approval before executing. *AC:* a transaction is not executed until approved; LangGraph checkpoint resumes on approval.
+### Phase 3 — Department agents (see §5) — **done**
+11. **Tool registry per department.** ✅ `DEPARTMENT_TOOLS` + `tools_for()`; agent prompt and dispatch are department-scoped (`tools.py`, `nodes.py`, `agents.py`). An agent cannot call a tool outside its department.
+12. **Department team graphs.** ✅ The single/team graphs run with department context in state; tools + ACL both scope by department.
+13. **Human-in-the-loop approval.** ✅ at the RM level (approvals store + API). *Remaining:* move the gate *in-graph* via LangGraph `interrupt()` so it triggers on the actual critical tool call rather than a pre-execution keyword heuristic.
 
 ### Phase 4 — Request Manager (see §6) — **largely done**
 14. **Request classification + routing.** ✅ Resolve department from JWT/role + explicit hint + keyword fallback (`classifier.py`); router runs the orchestrator with department context. *Remaining:* per-department **tool registries** (depends on Phase 3) so routing also narrows the toolset, not just ACL.
@@ -109,20 +113,32 @@ scoped tools:
 
 ---
 
-## 5. Department model
+## 5. Department & data model (implemented — see `app/departments/packs.py`)
 
-| Department | Responsibilities | Primary tools (to build) | Data scope (ACL) | Sensitivity |
-|-----------|------------------|--------------------------|------------------|-------------|
-| **Finance** | Run/initiate transactions, manage invoices, reconcile | `create_invoice`, `get_invoice`, `initiate_payment` (approval-gated), `ledger_query` | `object:finance/*`, `secret:payment/*` | **Critical** |
-| **Logistics** | Shipment tracking, notifications, reminders, inventory | `track_shipment`, `send_notification`, `set_reminder`, `inventory_lookup`, `inventory_adjust` | `object:inventory/*`, `object:shipments/*` | Medium |
-| **Research** | Information gathering, synthesis, reports | `read_document`, `list_documents`, `web_search` (if enabled), `summarize` | `object:research/*`, `object:reports/*` | Low–Medium |
-| **Misc** | General/uncategorized tasks | general read-only tools | `object:shared/*` | Low |
-| **Admin** | Manage users, policies, secrets, departments | admin API + `*` | `*` | **Critical** |
+**Departments (roles):** `account, hr, logistics, researcher, superuser, admin`.
 
-**Rules**
-- Deny-by-default across departments; a department sees only its own prefixes unless explicitly granted.
-- Finance **transactions** and all **critical-data** reads require an approval step + elevated grant.
-- Admin is the only role with cross-department and policy-management rights.
+| Department | Responsibilities | Tools | Data scope |
+|-----------|------------------|-------|------------|
+| **account** | accounts data, balance sheets, finance mail, orders/bills/bookings | `balance_lookup`, `read_mail`, `manage_order`, `manage_bill`, `book_service`, `inventory_lookup` | `accounts:*`, `balance_sheet:*`, `mail:finance/*`, `order/bill/booking:*`, inventory (read) |
+| **hr** | career mail, NSFW reports | `read_mail`, `review_report` | `mail:career/*`, `report:nsfw/*` |
+| **logistics** | inventory, shipments, notifications, reminders | `inventory_lookup/adjust`, `track_shipment`, `send_notification`, `set_reminder` | `inventory:*` (write), `shipments:*` |
+| **researcher** | gather/synthesize/report | `read_document`, `list_documents`, `web_search`, `summarize` | `research:*`, `reports:*` |
+| **superuser** | manage inventory | `inventory_lookup/adjust` | `inventory:*` (write) |
+| **admin** | manage everything **except** history & personal data | `*` | `*` minus `chat_history:*`, `personal_info:*`, `mail:personal/*` |
+
+**Data types & rules**
+- `accounts:*`, `balance_sheet:*` → **account** only.
+- `personal_info:<owner>/*`, `mail:personal/<owner>/*`, `chat_history:<owner>/*` → **owner only** (`$self`
+  ACL rule). Not even admin can read another user's personal data.
+- Mail categories: `finance`→account, `career`→hr, `contact`→admin, `personal`→owner.
+- `inventory:*` → **read by anyone** (global `*` grant), **write by logistics + superuser** only.
+- **Chat history:** text retained; non-text artifacts purged after **3 days** (`retention.py`).
+
+**Workflow rules**
+- Deny-by-default across departments.
+- Order/product/service/booking/bill requests → **forwarded to the accounts inbox** (`DepartmentTask`).
+- NSFW requests → **blocked and reported to hr + admin** (`Report`).
+- Account payments/critical actions → **approval-gated** (RM approvals).
 
 ---
 
