@@ -46,9 +46,24 @@ Send the token on every request as `Authorization: Bearer $TOKEN`.
 
 ---
 
-## 3. Send a chat/agent request
+## 3. Send a request
 
-`POST /v1/chat` runs the orchestrator. Pick a `mode`:
+There are two entrypoints:
+
+- **`POST /v1/request`** — the **governed** path (recommended). The Request Manager classifies your
+  request to a department, enforces your department's access + quota, and parks **critical** actions for
+  approval. Body is the same as `/v1/chat` plus an optional `"department"` hint.
+- **`POST /v1/chat`** — the raw orchestrator (still ACL-gated), without department quotas/approval.
+
+```bash
+curl -s $BASE/v1/request \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"thread_id":"log-1","mode":"single","message":"Track shipment SHP-8842."}'
+```
+Response: `{"outcome":"ok","department":"logistics","reply":"…"}`.
+Outcomes: `ok`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (returns an `approval_id`).
+
+`POST /v1/chat` runs the orchestrator directly. Pick a `mode`:
 - `single` — one agent + tools, fast; good for direct questions/actions.
 - `team` — planner → researcher → writer; good for multi-step tasks.
 
@@ -120,10 +135,11 @@ curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: applic
 
 ---
 
-## 5. Approvals (critical actions) — *planned, Phase 4*
+## 5. Approvals (critical actions)
 
-When an agent proposes a **critical** action (e.g. a finance transaction), the request pauses and an
-approval is created. Approvers act on it:
+When a request to a department that `requires_approval` (e.g. finance) hints at a **critical** action —
+a payment/transfer/transaction — `/v1/request` returns `{"outcome":"pending_approval","approval_id":...}`
+instead of executing. An admin then acts on it (the request runs only after approval):
 
 ```bash
 # list pending approvals (approver/admin)

@@ -26,6 +26,13 @@ llm_latency_seconds = Histogram("llm_latency_seconds", "LLM call latency", ["mod
 acl_decisions_total = Counter("acl_decisions_total", "ACL decisions", ["decision", "action"])
 graph_node_total = Counter("graph_node_total", "LangGraph node executions", ["node"])
 
+# --- Request Manager metrics (labeled by department) ---
+rm_requests_total = Counter("rm_requests_total", "Request Manager requests", ["department", "outcome"])
+rm_request_latency_seconds = Histogram("rm_request_latency_seconds", "RM end-to-end latency", ["department"])
+rm_quota_rejections_total = Counter("rm_quota_rejections_total", "RM quota rejections", ["department"])
+rm_approvals_total = Counter("rm_approvals_total", "RM approvals by state", ["department", "state"])
+rm_critical_gated_total = Counter("rm_critical_gated_total", "RM critical requests gated", ["department"])
+
 tracer = trace.get_tracer(_settings.otel_service_name)
 
 

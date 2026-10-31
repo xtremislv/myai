@@ -38,7 +38,10 @@ and (5) a staged deployment. This document is the step-by-step plan for all of i
 | Observability: OTel → Prometheus/Loki/Grafana | ✅ | `app/observability.py`, `deploy/` |
 | Grafana dashboard (LLM/ACL/logs) provisioned | ✅ | `deploy/grafana/` |
 | Department packs + `departments` table + seed (ACL grants) | ✅ | `app/departments/`, `scripts/seed_departments.py` |
-| Tests (vault, ACL, team graph, departments) — 13 passing | ✅ | `tests/` |
+| Request Manager: classify, authorize, quota, critical-approval gate | ✅ | `app/request_manager/`, `app/api/routes_request.py` |
+| Approvals store + `/v1/request` + `/v1/approvals` API | ✅ | `app/db/session.py` (`approvals`), `routes_request.py` |
+| RM per-department metrics + Grafana row | ✅ | `app/observability.py`, `deploy/grafana/` |
+| Tests (vault, ACL, team graph, departments, request manager) — 21 passing | ✅ | `tests/` |
 
 **Not yet built:** DB migrations, streaming, rate limiting, department agents, the Request Manager,
 human-in-the-loop approvals, TLS/reverse proxy, backups, CI, load/security testing, real model weights.
@@ -68,11 +71,11 @@ Phases are ordered by dependency. Each task has an acceptance check (AC).
 12. **Department team graphs.** Reuse the team graph with department-specific prompts/tools. *AC:* each department has its own runnable graph.
 13. **Human-in-the-loop approval node.** For critical actions (finance transactions), pause the graph for approval before executing. *AC:* a transaction is not executed until approved; LangGraph checkpoint resumes on approval.
 
-### Phase 4 — Request Manager (see §6)
-14. **Request classification + routing.** Resolve department from JWT/role (and optional classifier), route to the right team. *AC:* a finance request runs the finance team only.
-15. **Department policy packs.** Seed ACL policies per department (resource prefixes, actions). *AC:* cross-department data access is denied by default.
-16. **Per-department quotas & concurrency.** Redis-backed limits per department. *AC:* a department over quota is throttled without affecting others.
-17. **Critical-data guard.** Explicit allow-list of critical resources (`secret:payment/*`, etc.) with extra checks/approval. *AC:* critical reads require elevated grant + audit entry.
+### Phase 4 — Request Manager (see §6) — **largely done**
+14. **Request classification + routing.** ✅ Resolve department from JWT/role + explicit hint + keyword fallback (`classifier.py`); router runs the orchestrator with department context. *Remaining:* per-department **tool registries** (depends on Phase 3) so routing also narrows the toolset, not just ACL.
+15. **Department policy packs.** ✅ Done (`app/departments/`). Cross-department access denied by default.
+16. **Per-department quotas.** ✅ Redis token bucket w/ in-memory fallback (`quota.py`). *Remaining:* max-concurrency limiter (rate done).
+17. **Critical-data guard.** ✅ Critical detection + approval gate + `approvals` store + API (`approvals.py`, `routes_request.py`). *Remaining:* replace the pre-execution keyword heuristic with in-graph **LangGraph interrupts** once Phase 3 agents exist.
 
 ### Phase 5 — Observability depth
 18. **Per-department dashboard.** Requests, denials, latency, quota usage, approvals pending — grouped by department. *AC:* Grafana shows a row per department.

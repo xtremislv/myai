@@ -130,6 +130,46 @@
           "expr": "{service_name=\"ai-platform-gateway\"}"
         }
       ]
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Request Manager (by department)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 }
+    },
+    {
+      "id": 8,
+      "title": "Requests by department",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 31 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (department) (rate(rm_requests_total[5m]))", "legendFormat": "{{department}}" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Outcomes",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 31 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (outcome) (rate(rm_requests_total[5m]))", "legendFormat": "{{outcome}}" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Quota rejections & critical gates (by dept)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 31 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (department) (rate(rm_quota_rejections_total[5m]))", "legendFormat": "quota deny {{department}}" },
+        { "refId": "B", "expr": "sum by (department) (rate(rm_critical_gated_total[5m]))", "legendFormat": "gated {{department}}" }
+      ]
     }
   ]
 }

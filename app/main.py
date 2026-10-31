@@ -9,7 +9,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api import routes_admin, routes_auth, routes_chat
+from app.api import routes_admin, routes_auth, routes_chat, routes_request
 from app.config import get_settings
 from app.db.session import engine, init_db
 from app.observability import setup_logging, setup_tracing
@@ -37,6 +37,7 @@ FastAPIInstrumentor.instrument_app(app)
 app.include_router(routes_auth.router)
 app.include_router(routes_chat.router)
 app.include_router(routes_admin.router)
+app.include_router(routes_request.router)
 
 
 @app.get("/healthz")

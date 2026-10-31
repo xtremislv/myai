@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     LargeBinary,
     String,
+    Text,
     create_engine,
     func,
 )
@@ -82,6 +83,23 @@ class Department(Base):
     requires_approval: Mapped[bool] = mapped_column(default=False)
     critical_resources: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Approval(Base):
+    """A critical request parked for human approval before it executes."""
+
+    __tablename__ = "approvals"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    department: Mapped[str] = mapped_column(String(64), index=True)
+    subject_id: Mapped[str] = mapped_column(String(128), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    thread_id: Mapped[str] = mapped_column(String(128))
+    mode: Mapped[str] = mapped_column(String(16), default="single")
+    state: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|approved|denied
+    reason: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class AuditLog(Base):
