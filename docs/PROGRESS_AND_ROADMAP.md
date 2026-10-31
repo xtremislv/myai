@@ -37,7 +37,8 @@ and (5) a staged deployment. This document is the step-by-step plan for all of i
 | vLLM service + GPU reservation in compose | ✅ | `docker-compose.yml` |
 | Observability: OTel → Prometheus/Loki/Grafana | ✅ | `app/observability.py`, `deploy/` |
 | Grafana dashboard (LLM/ACL/logs) provisioned | ✅ | `deploy/grafana/` |
-| Tests (vault, ACL, team graph) — 7 passing | ✅ | `tests/` |
+| Department packs + `departments` table + seed (ACL grants) | ✅ | `app/departments/`, `scripts/seed_departments.py` |
+| Tests (vault, ACL, team graph, departments) — 13 passing | ✅ | `tests/` |
 
 **Not yet built:** DB migrations, streaming, rate limiting, department agents, the Request Manager,
 human-in-the-loop approvals, TLS/reverse proxy, backups, CI, load/security testing, real model weights.
@@ -232,5 +233,40 @@ docs/CLOUD_SETUP_GUIDE.md.**
 3. Acquire the real **model weights** and bring vLLM up on the GPU (Phase 2.7–2.8).
 4. Scaffold the **department policy packs** + `departments` table (Phase 15) — unblocks both agents and the RM.
 
-> Say the word and I'll start with any of these — the Request Manager scaffold (`app/request_manager/`)
-> and the department policy packs are the highest-leverage next build.
+> **Done:** department policy packs + `departments` table + seed (`app/departments/`). **Next:** the
+> Request Manager scaffold (`app/request_manager/`).
+
+---
+
+## 10. Build-now vs. build-on-server split
+
+Division line: **pure code/config is built & tested here and pulled on the server; anything needing the
+real GPU, real DNS/secrets, or an external vendor account happens on the server (Claude Code in the
+instance terminal) or waits on procurement.**
+
+### Build now — in the repo (no GPU/infra; tested with SQLite/in-memory + fakes)
+- **Core hardening (Phase 1):** Alembic migrations, boot-time secret validation, `/readyz`, global JSON
+  error handler, SSE streaming code, Redis rate-limit middleware, CI (ruff + pytest).
+- **Request Manager (Phase 4):** classifier, policy packs *(done)*, router, quota, approval gate,
+  `/v1/request` + `/v1/approvals`, per-department metrics.
+- **Department agents (Phase 3):** tool registries, prompts, team graphs, approval gate; tools that touch
+  only our Postgres/MinIO. External-connector tools get an **interface + stub** now.
+- **Ops artifacts:** more dashboards + Prometheus alert rules, Caddy/Cloudflare config templates,
+  `pg_dump` backup script, systemd unit, runbooks.
+
+### Build on the server — Claude Code in the instance terminal
+- NVIDIA driver + Container Toolkit; GPU-in-container verify.
+- Pull/quantize the **real weights**, launch vLLM, choose FP8 vs AWQ **for the rented card**, tune
+  `--max-model-len`/`--max-num-seqs`, **benchmark**.
+- End-to-end runs against the real model; **prompt/agent-quality tuning**.
+- Real TLS + DNS (Cloudflare tunnel / Caddy); confirm vLLM metric scrape + GPU panels show live data.
+- Load testing at real concurrency; production secrets; security review of the live deploy.
+
+### Blocked on procurement (not code, not the server)
+External accounts before the "wire for real" step: **payment gateway** (finance), **email/SMS provider**
+(logistics), any **ERP/inventory source** we don't own, and a **web-search API** (research). Until these
+exist, those tools run as stubs.
+
+**Highest-leverage path here:** Request Manager → department agents (stubbed connectors) → Phase-1
+hardening + CI. That's ~80% of remaining engineering with zero GPU dependency; the server session then
+only does GPU/model/DNS bring-up and live prompt tuning.

@@ -63,6 +63,27 @@ class VaultSecret(Base):
     )
 
 
+class Department(Base):
+    """Department (= an ACL role) with its routing/quota config.
+
+    The ACL *grants* for a department live in `acl_policies` (subject = the
+    department name); this row holds the metadata the Request Manager needs:
+    which tools the department may use, its quota/concurrency, whether its
+    critical actions require approval, and which resources count as critical.
+    """
+
+    __tablename__ = "departments"
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    grants: Mapped[list] = mapped_column(JSON, default=list)            # [{resource, actions:[...]}]
+    tools: Mapped[list] = mapped_column(JSON, default=list)             # tool names ("*" = all)
+    quota_per_min: Mapped[int] = mapped_column(default=60)
+    max_concurrency: Mapped[int] = mapped_column(default=4)
+    requires_approval: Mapped[bool] = mapped_column(default=False)
+    critical_resources: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

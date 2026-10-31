@@ -8,8 +8,9 @@ from __future__ import annotations
 import argparse
 import uuid
 
-from app.db.session import ACLPolicy, SessionLocal, User, init_db
+from app.db.session import SessionLocal, User, init_db
 from app.auth.security import hash_password
+from app.departments.registry import seed_departments
 
 
 def main() -> None:
@@ -29,29 +30,11 @@ def main() -> None:
                     roles=["admin"],
                 )
             )
-        # Baseline: admins can do everything; deny-by-default for everyone else.
-        baseline = [
-            ("admin", "allow", "*", "*"),
-            ("admin", "allow", "admin", "system:*"),
-        ]
-        for subject, effect, action, resource in baseline:
-            exists = (
-                s.query(ACLPolicy)
-                .filter_by(subject=subject, effect=effect, action=action, resource=resource)
-                .first()
-            )
-            if not exists:
-                s.add(
-                    ACLPolicy(
-                        id=uuid.uuid4().hex,
-                        subject=subject,
-                        effect=effect,
-                        action=action,
-                        resource=resource,
-                    )
-                )
-        s.commit()
-    print("init complete: admin user + baseline policies ready")
+            s.commit()
+        # All access policies come from the department packs (incl. admin's
+        # full-access grant). Deny-by-default applies to everything else.
+        summary = seed_departments(s)
+    print(f"init complete: admin user ready; departments seeded: {summary}")
 
 
 if __name__ == "__main__":
