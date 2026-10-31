@@ -1,0 +1,13 @@
+"""Swappable vault interface. Default impl is AES-GCM envelope encryption;
+a HashiCorp Vault / Infisical adapter can implement the same protocol later."""
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class VaultBackend(Protocol):
+    def put(self, name: str, value: str) -> None: ...
+    def get(self, name: str) -> str | None: ...
+    def delete(self, name: str) -> None: ...
+    def list_names(self) -> list[str]: ...
