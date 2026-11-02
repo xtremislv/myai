@@ -13,10 +13,11 @@ from sqlalchemy.orm import sessionmaker
 from app.acl.models import Subject
 from app.db.session import Approval, Base, Department, DepartmentTask, Report
 from app.departments.registry import seed_departments
+from app.orchestrator.execution import PendingAction
 from app.request_manager import approvals as approvals_store
 from app.request_manager.classifier import classify
 from app.request_manager.quota import InMemoryQuota
-from app.request_manager.router import RMRequest, execute_approved, handle_request
+from app.request_manager.router import RMRequest, handle_request, resolve_approval
 
 
 @pytest.fixture
@@ -103,14 +104,18 @@ def test_quota_enforced(session):
     assert r.outcome == "denied_quota"
 
 
-def test_critical_gated_then_approved(session):
+def test_paused_run_is_parked_then_resumed_on_approval(session):
+    pending = PendingAction("manage_bill", {"bill_id": "B1"}, "alice:t9")
     subj = Subject("alice", ("account",))
     res = handle_request(
-        session, subj, RMRequest("initiate a wire transfer to ACME", "t9"),
-        quota=InMemoryQuota(), runner=_runner,
+        session, subj, RMRequest("record the ACME ledger entry", "t9"),
+        quota=InMemoryQuota(), runner=lambda *a: pending,
     )
     assert res.outcome == "pending_approval" and res.approval_id
-    assert session.get(Approval, res.approval_id).state == "pending"
-    decided = approvals_store.decide(session, res.approval_id, approve=True, decided_by="admin-1")
-    assert decided.state == "approved"
-    assert "handled" in execute_approved(session, decided, runner=_runner)
+    row = session.get(Approval, res.approval_id)
+    assert (row.state, row.tool, row.checkpoint_thread) == ("pending", "manage_bill", "alice:t9")
+
+    decided, won = approvals_store.decide(session, res.approval_id, approve=True, decided_by="admin-1")
+    assert won and decided.state == "approved"
+    done = resolve_approval(session, decided, resumer=lambda approval, approved, reason: "recorded")
+    assert done.outcome == "ok" and done.reply == "recorded"

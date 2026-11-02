@@ -10,7 +10,8 @@ import json
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.orchestrator import agents, tools as tools_mod
+from app.orchestrator import agents
+from app.orchestrator import tools as tools_mod
 from app.orchestrator.multi_graph import build_team_graph
 
 

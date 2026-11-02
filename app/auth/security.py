@@ -4,21 +4,23 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from app.config import get_settings
 
 _settings = get_settings()
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# bcrypt only uses the first 72 bytes of a password, and the library raises on longer input.
+_BCRYPT_MAX_BYTES = 72
 
 
 def hash_password(raw: str) -> str:
-    return _pwd.hash(raw)
+    return bcrypt.hashpw(raw.encode()[:_BCRYPT_MAX_BYTES], bcrypt.gensalt()).decode()
 
 
 def verify_password(raw: str, hashed: str) -> bool:
-    return _pwd.verify(raw, hashed)
+    return bcrypt.checkpw(raw.encode()[:_BCRYPT_MAX_BYTES], hashed.encode())
 
 
 def issue_token(user_id: str, username: str, roles: list[str]) -> str:

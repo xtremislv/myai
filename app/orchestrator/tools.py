@@ -83,6 +83,14 @@ def manage_bill(state: dict[str, Any], bill_id: str = "new", detail: str = "") -
     return f"[stub] bill {bill_id} recorded: {detail} (connect billing)"
 
 
+def initiate_payment(
+    state: dict[str, Any], payee: str, amount: float, currency: str = "INR", reference: str = ""
+) -> str:
+    if (err := _enforce(state, "write", "payment", payee)) is not None:
+        return err
+    return f"[stub] payment of {amount} {currency} to {payee} ({reference}) (connect payment gateway)"
+
+
 def book_service(state: dict[str, Any], service: str, detail: str = "") -> str:
     if (err := _enforce(state, "write", "booking", service)) is not None:
         return err
@@ -90,7 +98,9 @@ def book_service(state: dict[str, Any], service: str, detail: str = "") -> str:
 
 
 def read_mail(state: dict[str, Any], category: str, box: str = "") -> str:
-    rid = f"{category}/{box}" if box else category
+    # Personal mail is always the caller's own: the owner is never LLM-supplied.
+    owner = f"{_subject(state).id}/" if category == "personal" else ""
+    rid = f"{category}/{owner}{box or 'inbox'}"
     if (err := _enforce(state, "read", "mail", rid)) is not None:
         return err
     return f"[stub] {category} mailbox '{box or 'inbox'}' (connect mail server)"
@@ -147,6 +157,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "balance_lookup": balance_lookup,
     "manage_order": manage_order,
     "manage_bill": manage_bill,
+    "initiate_payment": initiate_payment,
     "book_service": book_service,
     "read_mail": read_mail,
     "inventory_lookup": inventory_lookup,
@@ -161,7 +172,10 @@ TOOLS: dict[str, Callable[..., Any]] = {
 
 # Per-department tool allow-lists. "*" = all tools.
 DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
-    "account": ("balance_lookup", "read_mail", "manage_order", "manage_bill", "book_service", "inventory_lookup"),
+    "account": (
+        "balance_lookup", "read_mail", "manage_order", "manage_bill",
+        "initiate_payment", "book_service", "inventory_lookup",
+    ),
     "hr": ("read_mail", "review_report"),
     "logistics": ("inventory_lookup", "inventory_adjust", "track_shipment", "send_notification", "set_reminder"),
     "researcher": ("read_document", "list_documents", "web_search", "summarize"),

@@ -15,7 +15,7 @@ from typing import Any
 
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
-from app.orchestrator.nodes import _department, _parse_tool_call
+from app.orchestrator.nodes import _department, _parse_tool_call, run_tool
 from app.orchestrator.tools import tools_for
 
 MAX_RESEARCH_STEPS = 6
@@ -44,7 +44,7 @@ WRITER_PROMPT = (
 def planner(state: dict[str, Any]) -> dict[str, Any]:
     graph_node_total.labels(node="planner").inc()
     with tracer.start_as_current_span("team.planner"):
-        convo = [{"role": "system", "content": PLANNER_PROMPT}, *state.get("messages", [])]
+        convo = [{"role": "system", "content": PLANNER_PROMPT}, *_conversation(state)]
         plan = llm.chat(convo)
     return {
         "plan": plan,
@@ -65,7 +65,7 @@ def researcher(state: dict[str, Any]) -> dict[str, Any]:
             {"role": "system", "content": _researcher_prompt(state)},
             {"role": "assistant", "content": f"[plan]\n{state.get('plan', '')}"},
             *_notes_as_messages(state),
-            *state.get("messages", [])[:1],  # the original user request
+            *_conversation(state),
         ]
         reply = llm.chat(convo)
 
@@ -87,10 +87,9 @@ def research_tools(state: dict[str, Any]) -> dict[str, Any]:
     last = state["messages"][-1]["content"]
     call = _parse_tool_call(last) or {}
     name, args = call.get("tool"), call.get("args", {})
-    fn = tools_for(_department(state)).get(name)  # department-scoped dispatch
     with tracer.start_as_current_span("team.tool") as span:
         span.set_attribute("tool.name", name or "unknown")
-        result = f"ERROR: tool '{name}' not available to this department" if fn is None else fn(state, **args)
+        result = run_tool(state, name, args)
     note = f"{name}({json.dumps(args, default=str)}) -> {json.dumps(result, default=str)}"
     return {
         "research_notes": [note],
@@ -106,10 +105,25 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
             {"role": "system", "content": WRITER_PROMPT},
             {"role": "assistant", "content": f"[plan]\n{state.get('plan', '')}"},
             *_notes_as_messages(state),
-            *state.get("messages", [])[:1],
+            *_conversation(state),
         ]
         answer = llm.chat(convo)
     return {"messages": [{"role": "assistant", "content": answer}], "next": "__end__"}
+
+
+def _conversation(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the user and the team said to each other, ending with the current
+    request. Excludes internal plans, tool calls and tool results."""
+    return [
+        m
+        for m in state.get("messages", [])
+        if m.get("role") == "user"
+        or (
+            m.get("role") == "assistant"
+            and not m.get("content", "").startswith("[plan]")
+            and _parse_tool_call(m.get("content", "")) is None
+        )
+    ]
 
 
 def _notes_as_messages(state: dict[str, Any]) -> list[dict[str, str]]:

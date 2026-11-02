@@ -4,10 +4,11 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.api.deps import current_subject
 from app.acl.models import Subject
+from app.api.deps import current_subject
+from app.orchestrator.execution import scoped_thread
 from app.orchestrator.graph import compiled_graph
 from app.orchestrator.multi_graph import compiled_team_graph
 
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/v1/chat", tags=["chat"])
 
 class ChatIn(BaseModel):
     message: str
-    thread_id: str  # conversation id -> maps to a checkpoint
+    thread_id: str = Field(min_length=1, max_length=128)  # conversation id, private to the caller
     # "single" = one agent + tools loop; "team" = planner -> researcher -> writer.
     mode: Literal["single", "team"] = "single"
 
@@ -29,7 +30,7 @@ class ChatOut(BaseModel):
 
 @router.post("", response_model=ChatOut)
 def chat(body: ChatIn, subject: Subject = Depends(current_subject)) -> ChatOut:
-    config = {"configurable": {"thread_id": body.thread_id}}
+    config = {"configurable": {"thread_id": scoped_thread(subject.id, body.thread_id)}}
     initial = {
         "messages": [{"role": "user", "content": body.message}],
         "subject_id": subject.id,

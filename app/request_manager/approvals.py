@@ -1,10 +1,8 @@
-"""Approval store for critical requests + critical-action detection.
+"""Approval store for critical tool calls.
 
-MVP gate: a request is 'critical' when its department requires approval and the
-message hints at a critical operation (derived from the department's
-`critical_resources` plus a small keyword set). This pre-execution heuristic
-will be complemented by in-graph LangGraph interrupts once department agents
-(Phase 3) land — the store and API stay the same.
+The gate itself is in the graph: orchestrator.nodes.run_tool pauses on any tool
+listed as critical in the department packs. This module persists what is being
+decided, so an approver sees the exact tool and arguments.
 """
 from __future__ import annotations
 
@@ -13,25 +11,22 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from app.db.session import Approval, Department
-
-# Keywords implying a side-effecting critical action.
-CRITICAL_KEYWORDS = ("pay", "payment", "transfer", "transaction", "wire", "refund", "disburse", "remit")
+from app.db.session import Approval
 
 
-def is_critical(session: Session, department: str, message: str) -> tuple[bool, str]:
-    dept = session.get(Department, department)
-    if dept is None or not dept.requires_approval:
-        return False, "department does not require approval"
-    text = message.lower()
-    # tool:<name> critical resources contribute their bare tool name as a keyword.
-    tool_words = [c.split(":", 1)[1] for c in (dept.critical_resources or []) if c.startswith("tool:")]
-    words = list(CRITICAL_KEYWORDS) + [w.replace("_", " ") for w in tool_words] + tool_words
-    hit = next((w for w in words if w and w in text), None)
-    return (hit is not None), (f"matched '{hit}'" if hit else "no critical keyword")
-
-
-def create(session: Session, *, department: str, subject_id: str, message: str, thread_id: str, mode: str) -> Approval:
+def create(
+    session: Session,
+    *,
+    department: str,
+    subject_id: str,
+    message: str,
+    thread_id: str,
+    mode: str,
+    tool: str,
+    tool_args: dict,
+    checkpoint_thread: str,
+    task_id: str | None = None,
+) -> Approval:
     row = Approval(
         id=uuid.uuid4().hex,
         department=department,
@@ -39,11 +34,23 @@ def create(session: Session, *, department: str, subject_id: str, message: str, 
         message=message,
         thread_id=thread_id,
         mode=mode,
+        tool=tool,
+        tool_args=tool_args,
+        checkpoint_thread=checkpoint_thread,
+        task_id=task_id,
         state="pending",
     )
     session.add(row)
     session.commit()
     return row
+
+
+def pending_for_thread(session: Session, checkpoint_thread: str) -> Approval | None:
+    return (
+        session.query(Approval)
+        .filter(Approval.checkpoint_thread == checkpoint_thread, Approval.state == "pending")
+        .first()
+    )
 
 
 def list_pending(session: Session, department: str | None = None) -> list[Approval]:
@@ -53,13 +60,27 @@ def list_pending(session: Session, department: str | None = None) -> list[Approv
     return q.order_by(Approval.created_at).all()
 
 
-def decide(session: Session, approval_id: str, *, approve: bool, decided_by: str, reason: str = "") -> Approval | None:
-    row = session.get(Approval, approval_id)
-    if row is None or row.state != "pending":
-        return row
-    row.state = "approved" if approve else "denied"
-    row.decided_by = decided_by
-    row.decided_at = dt.datetime.now(dt.timezone.utc)
-    row.reason = reason
+def decide(
+    session: Session, approval_id: str, *, approve: bool, decided_by: str, reason: str = ""
+) -> tuple[Approval | None, bool]:
+    """Record a decision. Returns (row, won): `won` is True only for the one caller
+    whose decision took effect, so a double approve cannot run a tool twice."""
+    won = (
+        session.query(Approval)
+        .filter(Approval.id == approval_id, Approval.state == "pending")
+        .update(
+            {
+                "state": "approved" if approve else "denied",
+                "decided_by": decided_by,
+                "decided_at": dt.datetime.now(dt.timezone.utc),
+                "reason": reason,
+            },
+            synchronize_session=False,
+        )
+        == 1
+    )
     session.commit()
-    return row
+    row = session.get(Approval, approval_id)
+    if row is not None:
+        session.refresh(row)
+    return row, won

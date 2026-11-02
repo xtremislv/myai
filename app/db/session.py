@@ -3,18 +3,26 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterator
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import (
     JSON,
     DateTime,
-    ForeignKey,
     LargeBinary,
     String,
     Text,
     create_engine,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    sessionmaker,
+)
 
 from app.config import get_settings
 
@@ -86,7 +94,7 @@ class Department(Base):
 
 
 class Approval(Base):
-    """A critical request parked for human approval before it executes."""
+    """A critical tool call paused in the graph, waiting on a human decision."""
 
     __tablename__ = "approvals"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -95,7 +103,11 @@ class Approval(Base):
     message: Mapped[str] = mapped_column(Text)
     thread_id: Mapped[str] = mapped_column(String(128))
     mode: Mapped[str] = mapped_column(String(16), default="single")
-    state: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|approved|denied
+    tool: Mapped[str] = mapped_column(String(64))
+    tool_args: Mapped[dict] = mapped_column(JSON, default=dict)
+    checkpoint_thread: Mapped[str] = mapped_column(String(256), index=True)  # where the run is paused
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # inbox task, if any
+    state: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|approved|denied|failed
     reason: Mapped[str] = mapped_column(String(512), default="")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     decided_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -126,7 +138,7 @@ class DepartmentTask(Base):
     message: Mapped[str] = mapped_column(Text)
     thread_id: Mapped[str] = mapped_column(String(128))
     mode: Mapped[str] = mapped_column(String(16), default="single")
-    state: Mapped[str] = mapped_column(String(16), default="queued", index=True)  # queued|done
+    state: Mapped[str] = mapped_column(String(16), default="queued", index=True)  # queued|processing|awaiting|done|denied|failed
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -163,4 +175,8 @@ def get_session() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    Base.metadata.create_all(engine)
+    """Bring the database schema up to the latest migration."""
+    root = Path(__file__).resolve().parents[2]
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "migrations"))
+    command.upgrade(config, "head")

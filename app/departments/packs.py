@@ -13,6 +13,7 @@ Resource type conventions (urn = "type:id"):
   chat_history:<owner>/*     chat history             -> owner only ($self); non-text purged after 3d
   inventory:*                inventory sheet          -> read: anyone; write: logistics, superuser
   order:* / bill:* / booking:*  orders/bills/bookings -> account (requests are forwarded here)
+  payment:*                  payments                 -> account (every call needs approval)
   research:* / reports:*     research data/reports    -> researcher
   report:nsfw/*              NSFW reports             -> hr, admin
 
@@ -55,9 +56,13 @@ ACCOUNT = DepartmentSpec(
         Grant("order:*", ("read", "write", "list")),
         Grant("bill:*", ("read", "write", "list")),
         Grant("booking:*", ("read", "write", "list")),
+        Grant("payment:*", ("read", "write", "list")),
         Grant("inventory:*", ("read", "list")),
     ),
-    tools=("balance_lookup", "read_mail", "manage_order", "manage_bill", "book_service", "inventory_lookup"),
+    tools=(
+        "balance_lookup", "read_mail", "manage_order", "manage_bill",
+        "initiate_payment", "book_service", "inventory_lookup",
+    ),
     quota_per_min=60,
     max_concurrency=4,
     requires_approval=True,
@@ -152,6 +157,18 @@ DEFAULT_DEPARTMENTS: tuple[DepartmentSpec, ...] = (ACCOUNT, HR, LOGISTICS, RESEA
 
 # All specs whose grants become ACL policies (includes GLOBAL + SELF pseudo-roles).
 POLICY_SPECS: tuple[DepartmentSpec, ...] = (*DEFAULT_DEPARTMENTS, GLOBAL, SELF)
+
+
+def critical_tools() -> frozenset[str]:
+    """Tools that always need human approval, whichever department calls them, so
+    admin's "*" tool access does not skip the gate."""
+    prefix = "tool:"
+    return frozenset(
+        c[len(prefix):]
+        for spec in DEFAULT_DEPARTMENTS
+        for c in spec.critical_resources
+        if c.startswith(prefix)
+    )
 
 
 def by_name(name: str) -> DepartmentSpec | None:

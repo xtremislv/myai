@@ -61,7 +61,7 @@ Send the token on every request as `Authorization: Bearer $TOKEN`.
 There are two entrypoints:
 
 - **`POST /v1/request`** — the **governed** path (recommended). The Request Manager classifies your
-  request to a department, enforces your department's access + quota, and parks **critical** actions for
+  request to a department, enforces your department's access + quota, and pauses **critical** actions for
   approval. Body is the same as `/v1/chat` plus an optional `"department"` hint.
 - **`POST /v1/chat`** — the raw orchestrator (still ACL-gated), without department quotas/approval.
 
@@ -71,7 +71,7 @@ curl -s $BASE/v1/request \
   -d '{"thread_id":"log-1","mode":"single","message":"Track shipment SHP-8842."}'
 ```
 Response: `{"outcome":"ok","department":"logistics","reply":"…"}`.
-Outcomes: `ok`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (`approval_id`),
+Outcomes: `ok`, `error`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (`approval_id`),
 `forwarded` (order/bill/service → `task_id` in the accounts inbox), `flagged_nsfw` (`report_id`).
 
 `POST /v1/chat` runs the orchestrator directly. Pick a `mode`:
@@ -79,6 +79,8 @@ Outcomes: `ok`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (`
 - `team` — planner → researcher → writer; good for multi-step tasks.
 
 `thread_id` ties messages into one conversation (the agent remembers earlier turns via checkpoints).
+Thread ids are private to you: another user sending the same `thread_id` gets a separate conversation.
+It can be up to 128 characters.
 
 ```bash
 curl -s $BASE/v1/chat \
@@ -126,8 +128,9 @@ print(r.json()["reply"])
 curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"thread_id":"acc-1","mode":"single","message":"Look up the balance sheet for the ACME account."}'
 ```
-> Payments/transfers are **approval-gated** (return `pending_approval`); an admin approves before
-> anything executes (see §5). Placing an order or paying a bill is **forwarded to the accounts inbox**.
+> When the agent tries to make a payment or record a bill, the run **pauses** and returns
+> `pending_approval`; nothing executes until an admin approves (see §5). Placing an order or paying a
+> bill is **forwarded to the accounts inbox**, and the same approval applies when accounts processes it.
 
 **Logistics — tracking, reminders, inventory**
 ```bash
@@ -147,18 +150,25 @@ curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: app
 
 ## 5. Approvals (critical actions)
 
-When a request to a department that `requires_approval` (e.g. finance) hints at a **critical** action —
-a payment/transfer/transaction — `/v1/request` returns `{"outcome":"pending_approval","approval_id":...}`
-instead of executing. An admin then acts on it (the request runs only after approval):
+When an agent calls a **critical tool** (`initiate_payment` or `manage_bill`), the run pauses just before
+the tool executes, and `/v1/request` returns `{"outcome":"pending_approval","approval_id":...}`. This
+depends on what the agent actually tries to do, not on the wording of your message, and it applies to
+every department, including admin. An admin reviews the exact tool and arguments, then decides:
 
 ```bash
 # list pending approvals (approver/admin)
 curl -s $BASE/v1/approvals -H "authorization: Bearer $TOKEN"
 
-# approve (resumes the paused agent run) or deny
+# approve (runs that one call, then resumes the agent) or deny (the agent is told it was rejected)
 curl -s -X POST $BASE/v1/approvals/<id>/approve -H "authorization: Bearer $TOKEN"
 curl -s -X POST $BASE/v1/approvals/<id>/deny    -H "authorization: Bearer $TOKEN"
 ```
+
+The final reply comes back in the approve/deny response. If the agent goes on to another critical call,
+that response is a new `pending_approval`, which needs its own decision. While a conversation is waiting,
+new messages on the same `thread_id` return the same `pending_approval`; use another `thread_id` for
+other work. A resume that fails is marked `failed` and is not retried, because the tool may already have
+taken effect, so check before submitting it again.
 
 ---
 
@@ -170,6 +180,7 @@ work the queue:
 curl -s "$BASE/v1/inbox?department=account" -H "authorization: Bearer $TOKEN"   # list queued tasks
 curl -s -X POST $BASE/v1/inbox/<task_id>/process -H "authorization: Bearer $TOKEN"  # run it
 ```
+Processing can return `pending_approval` like any other request (see §5).
 
 NSFW reports are visible to **hr** and **admin**:
 ```bash

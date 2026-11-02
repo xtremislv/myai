@@ -8,8 +8,8 @@ from __future__ import annotations
 import argparse
 import uuid
 
-from app.db.session import SessionLocal, User, init_db
 from app.auth.security import hash_password
+from app.db.session import SessionLocal, User, init_db
 from app.departments.registry import seed_departments
 
 

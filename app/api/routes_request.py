@@ -1,30 +1,30 @@
 """Governed request entrypoint + approvals API.
 
 `POST /v1/request` runs the Request Manager pipeline (classify → authorize →
-quota → critical/approval → execute). Critical requests return
-`pending_approval`; an admin then approves/denies via `/v1/approvals`.
+quota → execute). A critical tool call pauses the run and returns
+`pending_approval`; an admin then approves/denies via `/v1/approvals`, which
+resumes the run from its checkpoint.
 """
 from __future__ import annotations
 
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
 from app.api.deps import current_subject, require_admin
 from app.db.session import DepartmentTask, get_session
-from app.observability import rm_approvals_total
 from app.request_manager import approvals as approvals_store
-from app.request_manager.router import RMRequest, execute_approved, execute_task, handle_request
+from app.request_manager.router import RMRequest, execute_task, handle_request, resolve_approval
 
 router = APIRouter(tags=["request-manager"])
 
 
 class RequestIn(BaseModel):
     message: str
-    thread_id: str
+    thread_id: str = Field(min_length=1, max_length=128)
     mode: Literal["single", "team"] = "single"
     department: str | None = None  # optional explicit hint
 
@@ -63,6 +63,8 @@ class ApprovalOut(BaseModel):
     thread_id: str
     mode: str
     state: str
+    tool: str
+    tool_args: dict
 
 
 class DecisionIn(BaseModel):
@@ -78,6 +80,7 @@ def list_approvals(
         ApprovalOut(
             id=a.id, department=a.department, subject_id=a.subject_id,
             message=a.message, thread_id=a.thread_id, mode=a.mode, state=a.state,
+            tool=a.tool, tool_args=a.tool_args,
         )
         for a in approvals_store.list_pending(session)
     ]
@@ -91,13 +94,12 @@ def approve(
     body: DecisionIn | None = None,
 ) -> RequestOut:
     reason = body.reason if body else ""
-    row = approvals_store.decide(session, approval_id, approve=True, decided_by=admin.id, reason=reason)
+    row, won = approvals_store.decide(session, approval_id, approve=True, decided_by=admin.id, reason=reason)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
-    if row.state != "approved":
+    if not won:
         raise HTTPException(status.HTTP_409_CONFLICT, f"already {row.state}")
-    reply = execute_approved(session, row)
-    return RequestOut(outcome="ok", department=row.department, reply=reply, approval_id=row.id)
+    return RequestOut(**resolve_approval(session, row).__dict__)
 
 
 @router.post("/v1/approvals/{approval_id}/deny", response_model=RequestOut)
@@ -108,13 +110,12 @@ def deny(
     body: DecisionIn | None = None,
 ) -> RequestOut:
     reason = body.reason if body else ""
-    row = approvals_store.decide(session, approval_id, approve=False, decided_by=admin.id, reason=reason)
+    row, won = approvals_store.decide(session, approval_id, approve=False, decided_by=admin.id, reason=reason)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
-    if row.state != "denied":
+    if not won:
         raise HTTPException(status.HTTP_409_CONFLICT, f"already {row.state}")
-    rm_approvals_total.labels(department=row.department, state="denied").inc()
-    return RequestOut(outcome="denied", department=row.department, approval_id=row.id, reason="denied by admin")
+    return RequestOut(**resolve_approval(session, row).__dict__)
 
 
 # ---- Department inbox (forwarded tasks, e.g. orders/bills to accounts) ----
@@ -162,13 +163,17 @@ def process_task(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
     if not _member_or_admin(subject, task.department):
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a member of '{task.department}'")
-    if task.state != "queued":
-        raise HTTPException(status.HTTP_409_CONFLICT, f"already {task.state}")
-    reply = execute_task(session, task, subject.id)
-    task.state = "done"
-    task.result = reply
+    # Atomic claim, so two members processing the same task cannot both run it.
+    claimed = (
+        session.query(DepartmentTask)
+        .filter(DepartmentTask.id == task_id, DepartmentTask.state == "queued")
+        .update({"state": "processing"}, synchronize_session=False)
+    )
     session.commit()
-    return RequestOut(outcome="ok", department=task.department, reply=reply, task_id=task.id)
+    session.refresh(task)
+    if not claimed:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"already {task.state}")
+    return RequestOut(**execute_task(session, task, subject.id).__dict__)
 
 
 # ---- Reports (NSFW) — HR / Admin ----

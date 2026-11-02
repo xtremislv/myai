@@ -4,9 +4,9 @@ handle_request() runs the control-plane pipeline:
   1. classify the request to a department
   2. authorize (subject must hold the department role; admin may act for any)
   3. quota check (per-department, per-minute)
-  4. critical check -> park for approval instead of executing
-  5. execute the department's agent graph
-  6. emit per-department metrics + audit, return a structured result
+  4. execute the department's agent graph; a critical tool call pauses the graph
+     and parks an approval (see orchestrator.nodes.run_tool)
+  5. emit per-department metrics + audit, return a structured result
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
-from app.db.session import AuditLog, Department
+from app.db.session import Approval, AuditLog, Department, DepartmentTask
 from app.observability import (
     rm_approvals_total,
     rm_critical_gated_total,
@@ -25,6 +25,8 @@ from app.observability import (
     rm_requests_total,
     tracer,
 )
+from app.orchestrator import execution
+from app.orchestrator.execution import PendingAction, scoped_thread
 from app.request_manager import approvals as approvals_store
 from app.request_manager import guards
 from app.request_manager.classifier import classify
@@ -51,26 +53,21 @@ class RMResult:
     reason: str = ""
 
 
-def run_graph(subject: Subject, req: RMRequest, department: str) -> str:
+def run_graph(subject: Subject, req: RMRequest, department: str) -> str | PendingAction:
     """Default runner: execute the orchestrator (single or team graph)."""
-    # Lazy import so unit tests can inject a fake runner without Postgres/LLM.
-    from app.orchestrator.graph import compiled_graph
-    from app.orchestrator.multi_graph import compiled_team_graph
+    return execution.run(subject, req.message, req.thread_id, req.mode, department)
 
-    initial = {
-        "messages": [{"role": "user", "content": req.message}],
-        "subject_id": subject.id,
-        "subject_roles": list(subject.roles),
-        "scratchpad": {"department": department},
-    }
-    config = {"configurable": {"thread_id": req.thread_id}}
-    cm = compiled_team_graph() if req.mode == "team" else compiled_graph()
-    with cm as graph:
-        final = graph.invoke(initial, config=config)
-    for msg in reversed(final.get("messages", [])):
-        if msg.get("role") == "assistant":
-            return msg.get("content", "")
-    return ""
+
+def resume_graph(approval: Approval, approved: bool, reason: str) -> str | PendingAction:
+    """Default resumer: continue the paused run an approval belongs to."""
+    return execution.resume(
+        approval.checkpoint_thread,
+        approval.mode,
+        approved=approved,
+        reason=reason,
+        tool=approval.tool,
+        args=approval.tool_args,
+    )
 
 
 def _audit(session: Session, subject: Subject, department: str | None, outcome: str, reason: str) -> None:
@@ -138,47 +135,136 @@ def handle_request(
             _finish(session, subject, department, "denied_quota", "rate limit exceeded", start)
             return RMResult("denied_quota", department, reason="rate limit exceeded")
 
-        # 4. critical -> approval
-        critical, why = approvals_store.is_critical(session, department, req.message)
-        if critical:
-            rm_critical_gated_total.labels(department=department).inc()
-            approval = approvals_store.create(
-                session,
-                department=department,
-                subject_id=subject.id,
-                message=req.message,
-                thread_id=req.thread_id,
-                mode=req.mode,
-            )
-            rm_approvals_total.labels(department=department, state="pending").inc()
+        # 4. a conversation paused on an approval cannot take new work: running it
+        # would discard the paused tool call.
+        waiting = approvals_store.pending_for_thread(session, scoped_thread(subject.id, req.thread_id))
+        if waiting is not None:
+            why = "this conversation is waiting on an approval"
             _finish(session, subject, department, "pending_approval", why, start)
-            return RMResult("pending_approval", department, approval_id=approval.id, reason=why)
+            return RMResult("pending_approval", department, approval_id=waiting.id, reason=why)
 
         # 5. execute
         try:
-            reply = runner(subject, req, department)
+            out = runner(subject, req, department)
         except Exception as e:  # noqa: BLE001
             _finish(session, subject, department, "error", str(e), start)
             return RMResult("error", department, reason=str(e))
 
+        if isinstance(out, PendingAction):
+            approval = _park(session, subject.id, department, req.message, req.thread_id, req.mode, out)
+            why = f"{out.tool} requires approval"
+            _finish(session, subject, department, "pending_approval", why, start)
+            return RMResult("pending_approval", department, approval_id=approval.id, reason=why)
+
         _finish(session, subject, department, "ok", cls.reason, start)
-        return RMResult("ok", department, reply=reply, reason=cls.reason)
+        return RMResult("ok", department, reply=out, reason=cls.reason)
 
 
-def execute_approved(session: Session, approval, *, runner=run_graph) -> str:
-    """Run a now-approved request. Caller has verified state == 'approved'."""
-    subject = Subject(id=approval.subject_id, roles=(approval.department,))
-    req = RMRequest(message=approval.message, thread_id=approval.thread_id, mode=approval.mode)
-    rm_approvals_total.labels(department=approval.department, state="executed").inc()
-    return runner(subject, req, approval.department)
+def _park(
+    session: Session,
+    subject_id: str,
+    department: str,
+    message: str,
+    thread_id: str,
+    mode: str,
+    pending: PendingAction,
+    task_id: str | None = None,
+) -> Approval:
+    rm_critical_gated_total.labels(department=department).inc()
+    rm_approvals_total.labels(department=department, state="pending").inc()
+    return approvals_store.create(
+        session,
+        department=department,
+        subject_id=subject_id,
+        message=message,
+        thread_id=thread_id,
+        mode=mode,
+        tool=pending.tool,
+        tool_args=pending.args,
+        checkpoint_thread=pending.checkpoint_thread,
+        task_id=task_id,
+    )
 
 
-def execute_task(session: Session, task, processor_id: str, *, runner=run_graph) -> str:
-    """Run a forwarded inbox task under the department role (the processor acts
-    as a member of that department)."""
+def resolve_approval(session: Session, approval: Approval, *, resumer=resume_graph) -> RMResult:
+    """Resume the paused run after approval.state was set to approved or denied.
+
+    A failed resume is recorded and never retried: the tool may have had a side
+    effect before the failure.
+    """
+    approved = approval.state == "approved"
+    dept = approval.department
+    subject = Subject(id=approval.subject_id, roles=(dept,))
+    task = session.get(DepartmentTask, approval.task_id) if approval.task_id else None
+    rm_approvals_total.labels(department=dept, state=approval.state).inc()
+    start = time.perf_counter()
+
+    try:
+        out = resumer(approval, approved, approval.reason)
+    except Exception as e:  # noqa: BLE001 - includes StaleApproval
+        if approved:
+            approval.state = "failed"
+            approval.reason = str(e)[:512]
+            if task is not None:
+                task.state = "failed"
+            session.commit()
+            _finish(session, subject, dept, "error", str(e), start)
+            return RMResult("error", dept, approval_id=approval.id, task_id=approval.task_id, reason=str(e))
+        # A denied action did not run, so the denial stands even if the agent
+        # could not be resumed to report it.
+        out = ""
+
+    # The agent went on to another critical call: that needs its own decision.
+    if isinstance(out, PendingAction):
+        next_approval = _park(
+            session, approval.subject_id, dept, approval.message, approval.thread_id,
+            approval.mode, out, task_id=approval.task_id,
+        )
+        why = f"{out.tool} requires approval"
+        _finish(session, subject, dept, "pending_approval", why, start)
+        return RMResult("pending_approval", dept, approval_id=next_approval.id,
+                        task_id=approval.task_id, reason=why)
+
+    if task is not None:
+        task.state = "done" if approved else "denied"
+        task.result = out
+        session.commit()
+    outcome = "ok" if approved else "denied"
+    _finish(session, subject, dept, outcome, approval.reason, start)
+    return RMResult(outcome, dept, reply=out, approval_id=approval.id, task_id=approval.task_id,
+                    reason=approval.reason)
+
+
+def execute_task(session: Session, task: DepartmentTask, processor_id: str, *, runner=run_graph) -> RMResult:
+    """Run a claimed inbox task as a member of its department, on a thread of its
+    own so the processor's conversations stay separate."""
     subject = Subject(id=processor_id, roles=(task.department,))
-    req = RMRequest(message=task.message, thread_id=task.thread_id, mode=task.mode)
-    return runner(subject, req, task.department)
+    req = RMRequest(message=task.message, thread_id=f"task-{task.id}", mode=task.mode)
+    start = time.perf_counter()
+    try:
+        out = runner(subject, req, task.department)
+    except Exception as e:  # noqa: BLE001
+        task.state = "queued"  # back in the queue; critical tools cannot have run unapproved
+        session.commit()
+        _finish(session, subject, task.department, "error", str(e), start)
+        return RMResult("error", task.department, task_id=task.id, reason=str(e))
+
+    if isinstance(out, PendingAction):
+        approval = _park(
+            session, processor_id, task.department, task.message, req.thread_id, task.mode, out,
+            task_id=task.id,
+        )
+        task.state = "awaiting"
+        session.commit()
+        why = f"{out.tool} requires approval"
+        _finish(session, subject, task.department, "pending_approval", why, start)
+        return RMResult("pending_approval", task.department, approval_id=approval.id, task_id=task.id, reason=why)
+
+    task.state = "done"
+    task.result = out
+    session.commit()
+    _finish(session, subject, task.department, "ok", "inbox task", start)
+    return RMResult("ok", task.department, reply=out, task_id=task.id)
 
 
 def _finish(session, subject, department, outcome, reason, start) -> None:

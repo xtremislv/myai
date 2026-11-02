@@ -98,11 +98,16 @@ nano .env
 ```
 
 Set in `.env`:
+- `ENVIRONMENT=production` — turns on the checks for default service passwords.
 - `VAULT_MASTER_KEY` — generate: `python3 -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`
-- `JWT_SECRET` — a long random string.
+- `JWT_SECRET` — at least 32 characters: `python3 -c "import secrets;print(secrets.token_urlsafe(48))"`
 - `LLM_MODEL` — the exact HF repo id (default placeholder is `gemma-3-26b-a4b-it`).
 - `HUGGING_FACE_HUB_TOKEN` — if the model is gated.
-- Change `MINIO_*` and Postgres credentials from defaults.
+- `POSTGRES_PASSWORD` and the password inside `POSTGRES_DSN` — set both to the same new value.
+- `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` and `GRAFANA_PASSWORD` — change from the defaults.
+
+The gateway refuses to start if these secrets are missing or still placeholders, and the error lists
+which ones. `docker compose logs gateway` shows it.
 
 ```bash
 # bring up the whole stack
@@ -126,7 +131,8 @@ curl -s localhost:8000/readyz || true   # (added in Phase 1)
 
 ## 6. Expose the service securely
 
-**Do not** put the raw ports on the public internet. Pick one:
+**Do not** put the raw ports on the public internet. `docker-compose.yml` binds every port to
+`127.0.0.1`, so nothing is reachable from outside until you add one of these:
 
 ### Option A — Cloudflare Tunnel (works even with no public port)
 ```bash
@@ -146,7 +152,8 @@ Add a Caddy container (auto-HTTPS):
 api.yourdomain.com   { reverse_proxy gateway:8000 }
 grafana.yourdomain.com { reverse_proxy grafana:3000 }
 ```
-Expose only 443. Keep 8001/5432/6379/9000/9090/3100 bound to the internal Docker network.
+Publish only 443 on the Caddy container. All other services are bound to `127.0.0.1` in
+`docker-compose.yml`; keep them that way.
 
 ### Option C — SSH tunnel (admin-only, quickest)
 ```bash

@@ -10,7 +10,7 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.api import routes_admin, routes_auth, routes_chat, routes_request
-from app.config import get_settings
+from app.config import get_settings, validate_secrets
 from app.db.session import engine, init_db
 from app.observability import setup_logging, setup_tracing
 from app.storage.objects import ensure_bucket
@@ -20,6 +20,7 @@ _settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_secrets(_settings)
     setup_logging()
     setup_tracing()
     init_db()

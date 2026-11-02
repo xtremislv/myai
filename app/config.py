@@ -1,6 +1,8 @@
 """Centralized settings loaded from environment / .env."""
 from __future__ import annotations
 
+import base64
+import binascii
 from functools import lru_cache
 
 from pydantic import Field
@@ -56,3 +58,41 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+# Values shipped in code or in .env.example: public, so never valid as secrets.
+_PUBLIC_JWT_SECRETS = {"change-me-in-prod", "please-change-this-to-a-long-random-string"}
+_MIN_JWT_SECRET_LENGTH = 32
+
+
+def secret_problems(settings: Settings) -> list[str]:
+    """Why these settings are unsafe to boot with. Messages never include values."""
+    problems = []
+
+    if settings.jwt_secret in _PUBLIC_JWT_SECRETS or len(settings.jwt_secret) < _MIN_JWT_SECRET_LENGTH:
+        problems.append(
+            f"JWT_SECRET must be a private random string of at least {_MIN_JWT_SECRET_LENGTH} "
+            "characters: with a known secret, anyone can forge an admin token"
+        )
+
+    try:
+        key_length = len(base64.b64decode(settings.vault_master_key, validate=True))
+    except (binascii.Error, ValueError):
+        key_length = 0
+    if key_length != 32:
+        problems.append("VAULT_MASTER_KEY must be 32 random bytes, base64-encoded")
+
+    # Dev runs against the throwaway defaults in docker-compose.yml.
+    if settings.environment != "dev":
+        if settings.minio_secret_key == "minioadmin":
+            problems.append("MINIO_SECRET_KEY is still the default")
+        if ":ai@" in settings.postgres_dsn:
+            problems.append("POSTGRES_DSN is still using the default password")
+
+    return problems
+
+
+def validate_secrets(settings: Settings) -> None:
+    problems = secret_problems(settings)
+    if problems:
+        raise RuntimeError("Refusing to start:\n  - " + "\n  - ".join(problems))

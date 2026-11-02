@@ -21,8 +21,13 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Departments: `account, hr, logistics, researcher, superuser, admin`. Governed entrypoint: `POST /v1/request`.
 - Every tool is ACL-gated and listed in `DEPARTMENT_TOOLS` (`app/orchestrator/tools.py`).
 - Keep logic testable without infra (inject `runner`/`quota`; back stores with a Session). Tests:
-  `./.venv/Scripts/python.exe -m pytest tests/ -q` (32 passing, no GPU/Redis needed).
-- Metrics go in `app/observability.py`. New tables in `app/db/session.py` (no Alembic yet — see HANDOFF).
+  `./.venv/Scripts/python.exe -m pytest tests/ -q` (no GPU/Redis/Postgres needed); lint: `ruff check .`.
+- Metrics go in `app/observability.py`. Models live in `app/db/session.py`; after changing one, run
+  `alembic revision --autogenerate -m "..."` (a test fails if models and migrations differ).
+- Critical tools are listed as `tool:<name>` in `critical_resources` in `packs.py`. They pause in the graph
+  (`run_tool` in `app/orchestrator/nodes.py`) until approved. Code above that interrupt re-runs on resume,
+  so it must have no side effects.
+- Never use a client `thread_id` as a checkpoint key directly; use `scoped_thread()`.
 
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing

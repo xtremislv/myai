@@ -2,12 +2,16 @@
 
 Two interchangeable implementations behind a tiny protocol:
   * RedisQuota     — shared across gateway replicas (production)
-  * InMemoryQuota  — process-local (tests / single process)
+  * InMemoryQuota  — process-local (tests / fallback when Redis is down)
 """
 from __future__ import annotations
 
+import logging
 import time
+from functools import lru_cache
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -43,15 +47,30 @@ class RedisQuota:
         return int(n) <= limit_per_min
 
 
+class FailoverQuota:
+    """Use the primary limiter, and count in the fallback whenever it errors, so a
+    Redis outage degrades to per-process limits rather than no limits."""
+
+    def __init__(self, primary: QuotaLimiter, fallback: QuotaLimiter) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    def allow(self, department: str, limit_per_min: int) -> bool:
+        try:
+            return self._primary.allow(department, limit_per_min)
+        except Exception:  # noqa: BLE001
+            logger.warning("quota backend unavailable; using in-process limits", exc_info=True)
+            return self._fallback.allow(department, limit_per_min)
+
+
+@lru_cache
 def default_quota() -> QuotaLimiter:
-    """Build a Redis limiter from settings; fall back to in-memory if Redis is down."""
-    try:
-        import redis
+    """The process-wide limiter. Cached: the fallback's counts must outlive a request."""
+    import redis
 
-        from app.config import get_settings
+    from app.config import get_settings
 
-        client = redis.Redis.from_url(get_settings().redis_url)
-        client.ping()
-        return RedisQuota(client)
-    except Exception:
-        return InMemoryQuota()
+    client = redis.Redis.from_url(
+        get_settings().redis_url, socket_connect_timeout=0.25, socket_timeout=0.25
+    )
+    return FailoverQuota(RedisQuota(client), InMemoryQuota())
