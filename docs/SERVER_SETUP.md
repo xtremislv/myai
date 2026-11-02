@@ -156,7 +156,10 @@ Quadro RTX 8000 (Turing, compute capability 7.5) with vLLM 0.32.0.
 
 **1. Install vLLM in its own environment.** It needs Python 3.11 or newer. It takes about 8 GB, plus
 about 8 GB of download cache that `uv cache clean` removes afterwards.
+vLLM compiles GPU kernels at startup, so it needs a C compiler. Without one it fails with
+"Failed to find C compiler".
 ```bash
+apt-get install -y gcc g++
 pip install uv
 uv venv -p 3.12 /root/vllm-env
 VIRTUAL_ENV=/root/vllm-env uv pip install 'vllm==0.32.0'
@@ -222,17 +225,25 @@ scripts/start_native.sh status
 Logs are in `/var/log/ai-platform/`. Then create the admin (step 7 above, without `docker compose exec`):
 `.venv/bin/python -m scripts.init_db --admin-pass '<strong-password>'`.
 
-**9. Private access over Tailscale** (no open ports; each person installs Tailscale and joins your tailnet):
+**9. Access from the internet: Cloudflare quick tunnel** (no domain, no account, no open ports):
 ```bash
-curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg
-curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list
-apt-get update && apt-get install -y tailscale
-scripts/start_native.sh                 # starts tailscaled in userspace mode
-tailscale up --hostname=myai-gpu        # open the printed link to approve the server
-tailscale serve --bg 8000               # HTTPS at https://myai-gpu.<tailnet>.ts.net/ui/
+mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared jammy main' \
+  > /etc/apt/sources.list.d/cloudflared.list
+apt-get update && apt-get install -y cloudflared
+scripts/start_native.sh            # starts the tunnel
+scripts/start_native.sh status     # prints https://<random-words>.trycloudflare.com/ui/
 ```
-The first `serve` asks you to enable Serve and HTTPS certificates for the tailnet in the admin console.
-Use Tailscale ACLs to decide who may reach the server.
+Quick tunnels are meant for testing. **The address changes every time the tunnel restarts** and has no uptime
+guarantee, and the login page is on the public internet. For a fixed address, add a domain to Cloudflare and
+use a named tunnel (step 8, option B), ideally with Cloudflare Access in front.
+
+**10. vLLM patch for Turing cards.** Gemma 4's 512-wide attention heads need more shared memory than Turing has
+(64 KB). Apply the patch after every vLLM install or upgrade:
+```bash
+patch -p1 -d /root/vllm-env/lib/python3.12/site-packages < deploy/patches/vllm-0.32.0-turing-head512.patch
+```
 
 Not covered yet: the OpenTelemetry collector, Prometheus, Loki and Grafana. Until they run, the gateway
 logs harmless "Failed to export ... 127.0.0.1:4317" warnings.

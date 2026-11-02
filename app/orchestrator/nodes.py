@@ -1,9 +1,11 @@
 """Graph nodes: router, agent (LLM), and tool executor."""
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import logging
+import re
 from typing import Any
 
 from langgraph.types import interrupt
@@ -126,8 +128,35 @@ def tools_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_NATIVE_CALL = re.compile(r"call:([A-Za-z_][A-Za-z0-9_]*)\((.*)\)", re.DOTALL)
+
+
+def _parse_native_call(text: str) -> dict | None:
+    """Gemma 4 sometimes ignores the JSON instruction and answers in its own syntax,
+    call:name(key="value", n=3). Only keyword arguments with literal values are accepted:
+    the arguments are parsed with ast and literal_eval, never executed."""
+    match = _NATIVE_CALL.fullmatch(text)
+    if not match:
+        return None
+    name, inner = match.groups()
+    try:
+        call = ast.parse(f"f({inner})", mode="eval").body
+        if not isinstance(call, ast.Call) or call.args:
+            return None
+        args = {}
+        for kw in call.keywords:
+            if kw.arg is None:  # **kwargs
+                return None
+            args[kw.arg] = ast.literal_eval(kw.value)
+    except (SyntaxError, ValueError):
+        return None
+    return {"tool": name, "args": args}
+
+
 def _parse_tool_call(text: str) -> dict | None:
     text = text.strip()
+    if text.startswith("call:"):
+        return _parse_native_call(text)
     if not text.startswith("{"):
         return None
     try:

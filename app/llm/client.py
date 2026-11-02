@@ -28,6 +28,15 @@ def _record_usage(model: str, usage) -> None:
         llm_tokens_total.labels(model=model, kind="completion").inc(usage.completion_tokens)
 
 
+def _for_model(message: dict) -> dict:
+    """The graph stores tool output as role "tool" with no tool_call_id. Gemma's chat template
+    silently drops such messages, so the model never saw the result and repeated the call.
+    Send it as a labelled user turn instead; the stored conversation is unchanged."""
+    if message["role"] == "tool":
+        return {"role": "user", "content": f"Tool result:\n{message['content']}"}
+    return {"role": message["role"], "content": message["content"]}
+
+
 def chat(messages: list[dict], *, model: str | None = None, stream: bool = False, **kwargs) -> str:
     """Single completion. messages = [{"role": "...", "content": "..."}].
 
@@ -39,7 +48,7 @@ def chat(messages: list[dict], *, model: str | None = None, stream: bool = False
     model = model or _settings.llm_model
     params = {
         "model": model,
-        "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
+        "messages": [_for_model(m) for m in messages],
         "temperature": kwargs.get("temperature", _settings.llm_temperature),
         "max_tokens": kwargs.get("max_tokens", _settings.llm_max_tokens),
     }

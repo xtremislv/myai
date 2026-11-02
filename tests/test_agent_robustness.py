@@ -168,3 +168,59 @@ def test_personal_mail_resolves_to_the_caller_only(real_acl):
     finally:
         tools._enforce = original
     assert resource == ["personal/alice/bob/inbox"]
+
+
+# ---- tool results reach the model ----
+def test_tool_results_are_sent_as_labelled_user_turns(monkeypatch):
+    """Gemma's chat template silently drops role "tool" messages that carry no tool_call_id,
+    so the model never saw tool output and kept repeating the call. They go out as user turns."""
+    from types import SimpleNamespace
+
+    from app.llm import client as llm
+
+    sent = {}
+
+    def create(**params):
+        sent.update(params)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="42 laptops"))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+        )
+
+    monkeypatch.setattr(llm, "_client", SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    llm.chat([
+        {"role": "user", "content": "How many laptops?"},
+        {"role": "assistant", "content": '{"tool": "inventory_lookup", "args": {}}'},
+        {"role": "tool", "content": '{"on_hand": 42}'},
+    ])
+    roles = [m["role"] for m in sent["messages"]]
+    assert "tool" not in roles and roles[-1] == "user"
+    assert sent["messages"][-1]["content"].startswith("Tool result") and '{"on_hand": 42}' in sent["messages"][-1]["content"]
+
+
+# ---- Gemma's native tool-call syntax ----
+@pytest.mark.parametrize("text, expected", [
+    ('call:inventory_lookup(sku="laptop")', {"tool": "inventory_lookup", "args": {"sku": "laptop"}}),
+    ("call:set_reminder(when='9am', text=\"Call\")", {"tool": "set_reminder", "args": {"when": "9am", "text": "Call"}}),
+    ("call:list_documents()", {"tool": "list_documents", "args": {}}),
+    ('call:inventory_adjust(sku="x", delta=-3)', {"tool": "inventory_adjust", "args": {"sku": "x", "delta": -3}}),
+    ('{"tool": "summarize", "args": {"text": "hi"}}', {"tool": "summarize", "args": {"text": "hi"}}),
+])
+def test_tool_calls_parse_in_json_and_native_form(text, expected):
+    """Gemma 4 sometimes answers in its own call:name(...) syntax instead of the JSON asked for."""
+    from app.orchestrator.nodes import _parse_tool_call
+
+    assert _parse_tool_call(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    "call:x(__import__('os').system('id'))",   # not a literal: never evaluated
+    "call:x(*args)",
+    "call:os.system('id')",
+    "Here is the call:inventory_lookup(sku='a') you wanted",  # prose, not a call
+    "call:x(a=1",
+])
+def test_native_tool_calls_only_accept_literal_keyword_arguments(text):
+    from app.orchestrator.nodes import _parse_tool_call
+
+    assert _parse_tool_call(text) is None

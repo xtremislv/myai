@@ -39,8 +39,14 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   retention loop run via `scripts/start_native.sh`. Still missing: MinIO (build from source, see SERVER_SETUP),
   the admin user, and the monitoring stack. Weights: `cyankiwi/gemma-4-26B-A4B-it-qat-AWQ-INT4` (compressed-tensors
   W4A16, from Google's QAT checkpoint) in `/root/models/gemma-4-26b`.
-- Access is private, over Tailscale: the server is `myai-gpu` on the owner's tailnet (userspace networking) and
-  `tailscale serve` proxies `https://myai-gpu.<tailnet>.ts.net/` to the gateway. Nothing is exposed publicly.
+- Access is through a Cloudflare quick tunnel (`cloudflared`, started by `start_native.sh`): a random public
+  `https://<words>.trycloudflare.com` address that changes on every restart (`start_native.sh status` prints it).
+  Tailscale was tried and removed at the owner's request. The login page is public and failed logins are not
+  limited (owner's decision), so prefer a named tunnel with Cloudflare Access once there is a domain.
+- vLLM needs `gcc` (Triton compiles kernels at startup) and `deploy/patches/vllm-0.32.0-turing-head512.patch`:
+  Gemma 4's 512-wide full-attention heads exceed Turing's 64 KB shared memory with vLLM's default tiles. With both,
+  the model loads (16.6 GiB), has a 157k-token KV cache (about 19 concurrent 8k chats) and answers coherently in fp16
+  at about 90 tokens/s for a single chat. vLLM does not log prompts (verified).
 - The web UI was restyled (brand mark, sign-in card, welcome screen, sidebar sections). Same CSP, same class names.
 - `huggingface.co` works only because of `/etc/hosts` entries the owner added (real addresses from DNS-over-HTTPS).
   CDN addresses rotate, so redo them if downloads fail.
@@ -58,8 +64,9 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
    commands. Do a real restore test.
 6. **Does vLLM log prompts?** In 0.32.0 `--enable-log-requests` defaults to off, and `scripts/run_vllm.sh` refuses
    it. Still confirm in the vLLM log after a chat.
-7. **`role: tool` messages.** The single-agent graph sends them with no `tool_call_id`, and some chat templates reject
-   the order of roles. Test a work request early.
+7. ~~**`role: tool` messages.**~~ Fixed 2026-11-02. Gemma 4's template silently dropped them, so the model never saw
+   tool output and repeated the call. `llm.chat` now sends them as "Tool result:" user turns. Gemma also sometimes
+   answers in its own `call:name(k="v")` syntax: `_parse_tool_call` accepts that too (literal arguments only).
 
 ## Then do these
 1. Get the weights. The model id is now `google/gemma-4-26B-A4B-it`. The card is a Quadro RTX 8000 (48 GB, Turing,

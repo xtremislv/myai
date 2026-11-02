@@ -1,0 +1,39 @@
+--- a/vllm/v1/attention/ops/triton_unified_attention.py
++++ b/vllm/v1/attention/ops/triton_unified_attention.py
+@@ -7,6 +7,7 @@
+ #  - Chih-Chieh Yang <chih.chieh.yang@ibm.com>
+ #  - Thomas Parnell <tpa@zurich.ibm.com>
+ 
++import functools
+ from typing import Any
+ 
+ import torch
+@@ -794,6 +795,13 @@
+     return sliding_window == 1024 and head_size in (128, 256)
+ 
+ 
++@functools.lru_cache(maxsize=None)
++def _shared_mem_per_block(device) -> int:
++    """Largest shared memory a kernel may opt into on this device, in bytes."""
++    props = torch.cuda.get_device_properties(device)
++    return getattr(props, "shared_memory_per_block_optin", 0) or props.shared_memory_per_block
++
++
+ def _get_tile_size(
+     head_size: int,
+     sliding_window: int,
+@@ -1000,6 +1008,14 @@
+     if tuned_large_head:
+         TILE_SIZE_PREFILL = 128
+ 
++    # GPUs with ~64 KB of shared memory per block (Turing, e.g. Quadro RTX 8000) can't fit the
++    # default tiles for head_size >= 512 (Gemma 4 full attention): Q + K + V tiles at 512 wide in
++    # fp16 plus pipelining needs ~96 KB. Halve the KV tiles and drop pipelining (~48 KB).
++    if triton.next_power_of_2(head_size) >= 512 and _shared_mem_per_block(q.device) < 100 * 1024:
++        TILE_SIZE_PREFILL = min(TILE_SIZE_PREFILL, 16)
++        TILE_SIZE_DECODE = min(TILE_SIZE_DECODE, 16)
++        launch_num_stages = 1
++
+     # USE_TD requires BLOCK_SIZE % TILE_SIZE == 0 (enforced by a
+     # ``tl.static_assert`` in the kernel).  The default prefill tile
+     # size (32) is larger than a common ``block_size=16``, so clamp it

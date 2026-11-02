@@ -30,7 +30,11 @@ status() {
   up minio "curl -sf http://127.0.0.1:9000/minio/health/live"
   up vllm "curl -sf http://127.0.0.1:8001/v1/models"
   up gateway "curl -sf http://127.0.0.1:8000/healthz"
-  command -v tailscale >/dev/null && up tailscale "tailscale status"
+  if command -v cloudflared >/dev/null; then
+    up tunnel "kill -0 \$(cat '$LOG_DIR/cloudflared.pid')"
+    url=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/cloudflared.log" 2>/dev/null | tail -1)
+    [[ -n "$url" ]] && echo "        public address: $url/ui/"
+  fi
   up retention "kill -0 \$(cat '$LOG_DIR/retention.pid')"
 }
 
@@ -40,12 +44,13 @@ echo "Starting services (logs in $LOG_DIR):"
 
 pg_isready -q -h 127.0.0.1 -p 5432 || pg_ctlcluster 16 main start
 
-# Private-network access (docs/SERVER_SETUP.md, "Without Docker"). Userspace networking because a
-# container has no /dev/net/tun. The saved state rejoins the tailnet and restores `tailscale serve`.
-if command -v tailscaled >/dev/null && ! tailscale status >/dev/null 2>&1; then
-  mkdir -p /var/lib/tailscale /run/tailscale
-  nohup tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state \
-    --socket=/run/tailscale/tailscaled.sock >> "$LOG_DIR/tailscaled.log" 2>&1 &
+# Public access through a Cloudflare quick tunnel (no domain or account; outbound only, no open
+# ports). The address is random and changes every time the tunnel restarts: see `status`.
+TUNNEL_PID="$LOG_DIR/cloudflared.pid"
+if command -v cloudflared >/dev/null && ! { [[ -f "$TUNNEL_PID" ]] && kill -0 "$(cat "$TUNNEL_PID")" 2>/dev/null; }; then
+  : > "$LOG_DIR/cloudflared.log"
+  nohup cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8000 >> "$LOG_DIR/cloudflared.log" 2>&1 &
+  echo $! > "$TUNNEL_PID"
 fi
 
 redis-cli -h 127.0.0.1 ping >/dev/null 2>&1 || redis-server /etc/redis/redis.conf
