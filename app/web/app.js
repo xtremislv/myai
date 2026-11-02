@@ -60,6 +60,8 @@ const ICONS = {
   send: "M12 19V5M6 11l6-6 6 6",
   menu: "M4 7h16M4 12h16M4 17h16",
   pen: "M4 20l1-4L16 5l3 3L8 19l-4 1z",
+  spark: "M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
+  lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z",
 };
 
 // ---- small DOM helpers ----
@@ -90,6 +92,15 @@ function icon(name) {
   path.setAttribute("d", ICONS[name]);
   svg.append(path);
   return svg;
+}
+
+// The brand mark: a spark on the accent gradient. Size comes from the CSS class.
+function logo(size = "") {
+  return h("span", { class: `logo ${size}`, "aria-hidden": "true" }, icon("spark"));
+}
+
+function initials(name) {
+  return (name || "?").trim().slice(0, 1).toUpperCase();
 }
 
 function show(...nodes) {
@@ -238,15 +249,18 @@ function loginScreen(message) {
       }
     },
   },
-    h("h1", null, "AI Platform"),
+    h("div", { class: "auth-brand" }, logo("lg"), h("span", { class: "auth-name" }, "AI Platform")),
+    h("h1", null, "Welcome back"),
+    h("p", { class: "muted auth-sub" }, "Sign in to your company's private AI workspace."),
     message && h("div", { class: "notice info" }, message),
     error,
     h("label", null, "Username", username),
     h("label", null, "Password", password),
-    h("div", { class: "row spread" },
+    h("div", { class: "row spread auth-actions" },
       submit,
       h("button", { class: "link", type: "button", onclick: recoverScreen }, "Forgot password?"),
     ),
+    h("p", { class: "auth-foot" }, icon("lock"), "Private chats are encrypted with a key only you can unlock."),
   )));
   username.focus();
 }
@@ -437,12 +451,18 @@ function shell() {
 
   state.go = go;
   fill(side,
-    h("div", { class: "brand" }, "AI Platform"),
+    h("div", { class: "brand" }, logo(), h("span", null, "AI Platform")),
     h("button", { class: "new-chat", onclick: () => openChat(newThreadId()) }, icon("pen"), "New chat"),
+    h("div", { class: "side-label" }, "Recent chats"),
     chats,
+    h("div", { class: "side-label" }, "Workspace"),
     more,
     h("div", { class: "who" },
-      h("span", null, state.username),
+      h("span", { class: "avatar", "aria-hidden": "true" }, initials(state.username)),
+      h("span", { class: "who-text" },
+        h("span", { class: "who-name" }, state.username),
+        h("span", { class: "who-role" }, state.roles.map(departmentName).join(" · ") || "Member"),
+      ),
       h("button", { class: "link", onclick: () => signOut() }, "Sign out"),
     ),
   );
@@ -452,7 +472,7 @@ function shell() {
     h("div", { class: "main" },
       h("div", { class: "topbar" },
         h("button", { class: "icon-button", "aria-label": "Open menu", onclick: () => toggleSide(true) }, icon("menu")),
-        h("span", { class: "brand" }, "AI Platform"),
+        h("span", { class: "brand" }, logo(), h("span", null, "AI Platform")),
       ),
       view,
     ),
@@ -635,7 +655,11 @@ async function chatView(thread, { reloadThreads, paint }) {
 
   const content = h("div", { class: "chat is-empty" },
     h("h1", { class: "sr-only" }, "Chat"),
-    h("div", { class: "greeting column" }, h("h1", null, `What can I help with, ${state.username}?`)),
+    h("div", { class: "greeting column" },
+      logo("xl"),
+      h("h1", null, "What can I help with, ", h("span", { class: "accent-text" }, state.username), "?"),
+      h("p", { class: "muted greeting-sub" }, "Ask anything. Personal questions stay private; work goes to the right team."),
+    ),
     scroll,
     h("div", { class: "dock column" },
       error,
@@ -647,7 +671,7 @@ async function chatView(thread, { reloadThreads, paint }) {
           grow();
           input.focus();
         },
-      }, text))),
+      }, icon("spark"), h("span", null, text)))),
       h("p", { class: "fineprint" }, "Private chats are encrypted with your key. Work is visible to the department "
         + "that handles it. Explicit or illegal content is reported."),
     ),
