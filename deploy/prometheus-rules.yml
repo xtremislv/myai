@@ -35,7 +35,7 @@ groups:
         annotations:
           summary: Requests are queueing on the GPU. Replies will be slow.
       - alert: GpuCacheFull
-        expr: max(vllm:gpu_cache_usage_perc) > 0.95
+        expr: max(vllm:kv_cache_usage_perc) > 0.95
         for: 10m
         labels:
           severity: warning

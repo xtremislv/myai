@@ -199,7 +199,7 @@ def test_alert_rules_only_use_metrics_that_exist():
     rules = yaml.safe_load((ROOT / "deploy/prometheus-rules.yml").read_text())
     known = {m.name for m in REGISTRY.collect()}
     known |= {f"{name}_total" for name in known} | {f"{name}_bucket" for name in known}
-    external = {"up", "vllm:num_requests_waiting", "vllm:gpu_cache_usage_perc"}
+    external = {"up", "vllm:num_requests_waiting", "vllm:kv_cache_usage_perc"}
     alerts = [rule for group in rules["groups"] for rule in group["rules"]]
     assert {"GatewayDown", "ModelServerDown", "AccessDenialSpike", "QuotaExhausted", "ModelErrors", "ModelBacklog"} <= {
         a["alert"] for a in alerts

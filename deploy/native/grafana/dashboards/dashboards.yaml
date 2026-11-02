@@ -1,0 +1,12 @@
+apiVersion: 1
+
+# Serves the same dashboard JSON as compose, straight from the repo.
+providers:
+  - name: ai-platform
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: $AI_PLATFORM_ROOT/deploy/grafana/provisioning/dashboards

@@ -338,7 +338,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "vllm:gpu_cache_usage_perc",
+          "expr": "vllm:kv_cache_usage_perc",
           "legendFormat": "kv cache"
         }
       ]
