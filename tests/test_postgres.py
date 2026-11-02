@@ -20,7 +20,7 @@ from sqlalchemy import text
 
 from app.acl.models import Subject
 from app.auth.security import issue_token
-from app.db.session import Base, SessionLocal, engine, init_db
+from app.db.session import Base, SessionLocal, User, engine, init_db
 from app.departments.registry import seed_departments
 from app.llm import client as llm
 from app.main import app
@@ -195,6 +195,33 @@ def test_no_transaction_is_held_open_while_the_model_runs(monkeypatch, path, rol
     worker.join(timeout=30)
     assert not worker.is_alive(), "request hung"
     assert result["status"] == 200
+    assert seen and all(count == 0 for count in seen), seen
+
+
+def test_no_transaction_is_held_open_after_looking_up_a_real_user(monkeypatch):
+    """The role lookup runs on every request, right before the classifier calls the model."""
+    from app.api.deps import subject_from_claims
+
+    with SessionLocal() as session:
+        user_id = f"user-{uuid.uuid4().hex}"
+        session.add(User(id=user_id, username=user_id, password_hash="x", roles=["researcher"]))
+        session.commit()
+        assert subject_from_claims(session, {"sub": user_id}).roles == ("researcher",)
+        session.rollback()
+
+    seen = []
+
+    def _chat(messages, **kwargs):
+        seen.append(_idle_transactions())
+        return "ok"
+
+    monkeypatch.setattr(llm, "chat", _chat)
+    token = issue_token(user_id, user_id, [], chat_key=KEY)
+    response = TestClient(app).post(
+        "/v1/chat", headers={"authorization": f"Bearer {token}"},
+        json={"message": "hello", "thread_id": "t"},
+    )
+    assert response.status_code == 200
     assert seen and all(count == 0 for count in seen), seen
 
 

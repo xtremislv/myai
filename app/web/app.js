@@ -159,7 +159,7 @@ async function api(path, { method = "GET", body, form, raw } = {}) {
 function useToken(result, username) {
   state.token = result.access_token;
   const payload = result.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-  // For choosing which pages to show. The server checks every action itself.
+  // For choosing which pages to show until /v1/dashboard answers. The server checks every action itself.
   state.roles = JSON.parse(atob(payload)).roles || [];
   state.username = username;
 }
@@ -323,6 +323,7 @@ function newThreadId() {
 async function refreshCounts() {
   try {
     state.counts = await api("/v1/dashboard");
+    state.roles = state.counts.roles;
   } catch { /* the page itself reports errors */ }
   return state.counts;
 }
@@ -832,7 +833,7 @@ async function usersView(refresh) {
   const password = h("input", { type: "password", required: true, minLength: 12, autocomplete: "new-password" });
   const boxes = departmentBoxes([]);
   return h("div", null,
-    heading("Users", "A person can belong to several departments. Changes apply the next time they sign in."),
+    heading("Users", "A person can belong to several departments. Changes apply right away."),
     error,
     h("div", { class: "card" }, table(
       ["Username", "Departments", "Password", ""],
@@ -876,14 +877,11 @@ async function accountView() {
   const next = h("input", { type: "password", required: true, minLength: 12, autocomplete: "new-password" });
   const codePassword = h("input", { type: "password", required: true, autocomplete: "current-password" });
   const codeError = errorBox();
-  const tokenDepartments = state.roles.filter((role) => role !== "admin").sort().join();
-  const changed = tokenDepartments !== me.departments.join();
 
   return h("div", null,
     heading("My account"),
     h("div", { class: "card" },
       h("h2", null, "Profile"),
-      changed && h("div", { class: "notice info" }, "Your departments changed. Sign in again to start using them."),
       h("dl", { class: "facts" },
         h("dt", null, "Username"), h("dd", null, me.username),
         h("dt", null, "Role"), h("dd", null, me.is_admin ? "Administrator" : "Member"),

@@ -190,8 +190,8 @@ def set_departments(
     session: Session = Depends(get_session),
     _admin=Depends(require_admin),
 ) -> UserOut:
-    """Replace a user's departments. A profile can hold any number of them. This does not
-    change who is admin. It takes effect at the user's next sign-in."""
+    """Replace a user's departments, effective immediately. A profile can hold any number
+    of them. This does not change who is admin."""
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")

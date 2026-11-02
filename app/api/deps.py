@@ -8,20 +8,34 @@ from sqlalchemy.orm import Session
 from app.acl.engine import ACLEngine
 from app.acl.models import Action, Resource, Subject
 from app.auth.security import decode_token
-from app.db.session import get_session
+from app.db.session import User, get_session, release_connection
 from app.vault import user_keys
 
 _bearer = HTTPBearer(auto_error=True)
 
 
+def subject_from_claims(session: Session, claims: dict) -> Subject:
+    """Who the token belongs to, with their departments as they are right now. The roles
+    inside a token are ignored, so removing someone from a department or deleting them
+    takes effect immediately rather than when their token expires."""
+    user = session.get(User, claims["sub"])
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "this account no longer exists")
+    return Subject(id=user.id, roles=tuple(user.roles))
+
+
 def current_subject(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
+    session: Session = Depends(get_session),
 ) -> Subject:
     try:
         claims = decode_token(creds.credentials)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {e}") from e
-    return Subject(id=claims["sub"], roles=tuple(claims.get("roles", [])))
+    subject = subject_from_claims(session, claims)
+    # Routes may call the model next, so don't leave this lookup's transaction open.
+    release_connection(session)
+    return subject
 
 
 def chat_key(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> bytes:
