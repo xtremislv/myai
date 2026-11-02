@@ -54,7 +54,7 @@ def test_team_graph_runs_planner_research_writer(fake_llm, fake_tool):
     final = graph.invoke(initial, config={"configurable": {"thread_id": "t1"}})
 
     # Planner produced a plan.
-    assert "Summarize" in final["plan"] or "doc" in final["plan"]
+    assert "Summarize" in final["plan"][0] or "doc" in final["plan"][0]
     # The tool ran and a note was recorded.
     assert any("reports/q3.pdf" in n for n in final["research_notes"])
     # Researcher looped exactly twice (one tool call, then done).

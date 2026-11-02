@@ -15,6 +15,7 @@ from typing import Any
 from langgraph.types import Command
 
 from app.acl.models import Subject
+from app.vault import user_keys
 
 
 @dataclass(frozen=True)
@@ -40,12 +41,12 @@ def private_thread(subject_id: str, thread_id: str) -> str:
     return f"private:{subject_id}:{thread_id}"
 
 
-def _graph_cm(mode: str):
+def _graph_cm(mode: str, serde=None):
     # Lazy import: compiling needs a live Postgres connection.
     from app.orchestrator.graph import compiled_graph
     from app.orchestrator.multi_graph import compiled_team_graph
 
-    return compiled_team_graph() if mode == "team" else compiled_graph()
+    return compiled_team_graph(serde) if mode == "team" else compiled_graph(serde)
 
 
 def _pending_interrupt(graph, config: dict) -> dict[str, Any] | None:
@@ -76,9 +77,12 @@ def run(
     mode: str,
     department: str | None,
     *,
-    private: bool = False,
+    chat_key: bytes | None = None,
 ) -> str | PendingAction:
-    key = private_thread(subject.id, thread_id) if private else scoped_thread(subject.id, thread_id)
+    """With a chat_key this is a private conversation: its own checkpoint namespace,
+    encrypted with that user's key."""
+    key = private_thread(subject.id, thread_id) if chat_key else scoped_thread(subject.id, thread_id)
+    serde = user_keys.checkpoint_serde(chat_key) if chat_key else None
     config = {"configurable": {"thread_id": key}}
     initial = {
         "messages": [{"role": "user", "content": message}],
@@ -86,7 +90,7 @@ def run(
         "subject_roles": list(subject.roles),
         "scratchpad": {"department": department} if department else {},
     }
-    with _graph_cm(mode) as graph:
+    with _graph_cm(mode, serde) as graph:
         final = graph.invoke(initial, config=config)
         return _outcome(graph, config, final)
 

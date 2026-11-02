@@ -19,3 +19,32 @@ jobs:
         run: ruff check .
       - name: Test
         run: python -m pytest tests/ -q
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+          POSTGRES_DB: ai_platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_INTEGRATION: "1"
+      POSTGRES_DSN: postgresql://ai:ai@localhost:5432/ai_platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Test against Postgres
+        run: python -m pytest tests/test_postgres.py -q

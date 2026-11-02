@@ -43,6 +43,11 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(256))
     roles: Mapped[list] = mapped_column(JSON, default=list)
+    # Private-chat key, wrapped by the user's password (app/vault/user_keys.py).
+    # Empty until the user replaces the initial password the admin set.
+    chat_key_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    chat_key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    wrapped_chat_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -144,14 +149,17 @@ class DepartmentTask(Base):
 
 
 class ChatHistory(Base):
-    """Per-user chat history. Text is retained; non-text artifacts are purged
-    after 3 days by scripts/purge_history.py (retention policy)."""
+    """Attachments on a chat, deleted after 3 days by scripts/purge_history.py.
+
+    Message text is not stored here: it stays encrypted in the checkpoints, kept
+    indefinitely. `artifacts` is a list of {"type", "ref"}, where ref is the object
+    key in MinIO.
+    """
 
     __tablename__ = "chat_history"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(128), index=True)
     thread_id: Mapped[str] = mapped_column(String(128), index=True)
-    text: Mapped[str] = mapped_column(Text, default="")
     artifacts: Mapped[list] = mapped_column(JSON, default=list)  # media/file refs; purged after 3d
     artifacts_purged: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

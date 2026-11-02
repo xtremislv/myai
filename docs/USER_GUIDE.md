@@ -52,6 +52,18 @@ TOKEN=$(curl -s $BASE/v1/auth/login \
 echo "$TOKEN"   # a JWT; it expires (default 1h) — log in again to refresh
 ```
 
+**Replace your initial password first.** The admin chose it, so private chat stays off until you set your
+own (the login response has `"must_change_password": true`). New passwords need at least 12 characters:
+
+```bash
+TOKEN=$(curl -s $BASE/v1/auth/change-password \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"old_password":"from-the-admin","new_password":"your-own-long-password"}' | jq -r .access_token)
+```
+
+> **Your password protects your private chats, and nobody can recover it.** Your chat key can only be
+> unlocked with it. If you lose it, those chats cannot be read by anyone, including you and the admin.
+
 Send the token on every request as `Authorization: Bearer $TOKEN`.
 
 ---
@@ -79,6 +91,9 @@ Outcomes: `ok`, `error`, `denied_auth` (403), `denied_quota` (429), `pending_app
 This is a conversation between you and the AI. No user, department or admin has an API to read it,
 and it stays separate from your `/v1/request` conversations, even with the same `thread_id`. It has no
 access to department tools or data, so use `/v1/request` for work that needs them.
+
+The text is encrypted in the database with a key only your password unlocks, and it is kept indefinitely.
+Attachments are deleted after 3 days. While a message is being answered, the server handles it unencrypted.
 
 The one exception: a message classified as **explicit or illegal** is blocked and that single message is
 reported to HR and the admin (`"outcome":"flagged_nsfw"`). The rest of the conversation is not shared.
@@ -137,7 +152,8 @@ print(r.json()["reply"])
 curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"thread_id":"acc-1","mode":"single","message":"Look up the balance sheet for the ACME account."}'
 ```
-> When the agent tries to make a payment or record a bill, the run **pauses** and returns
+> When the agent tries to make a payment, record a bill, change an order or book a service, the run
+> **pauses** and returns
 > `pending_approval`; nothing executes until an admin approves (see §5). Placing an order or paying a
 > bill is **forwarded to the accounts inbox**, and the same approval applies when accounts processes it.
 
@@ -159,7 +175,8 @@ curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: app
 
 ## 5. Approvals (critical actions)
 
-When an agent calls a **critical tool** (`initiate_payment` or `manage_bill`), the run pauses just before
+When an agent calls a **critical tool** (`initiate_payment`, `manage_bill`, `manage_order` or
+`book_service`), the run pauses just before
 the tool executes, and `/v1/request` returns `{"outcome":"pending_approval","approval_id":...}`. This
 depends on what the agent actually tries to do, not on the wording of your message, and it applies to
 every department, including admin. An admin reviews the exact tool and arguments, then decides:

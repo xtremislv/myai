@@ -29,6 +29,9 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   so it must have no side effects.
 - Never use a client `thread_id` as a checkpoint key directly; use `scoped_thread()`, or `private_thread()`
   for `/v1/chat`.
+- Private chat text is encrypted per user (`app/vault/user_keys.py`). Keep conversation text out of `str`
+  fields on `AgentState`: PostgresSaver stores those as plain JSON, skipping encryption.
+- `tests/test_postgres.py` runs only with `POSTGRES_INTEGRATION=1` and a throwaway `POSTGRES_DSN`.
 - `/v1/chat` is the user's private channel: no tools, no logging or audit of content. Only a message flagged
   as explicit or illegal leaves it, reported to hr + admin. There is one admin, whose finance activity on
   `/v1/request` is reported to accounts (`guards.notify_accounts`).

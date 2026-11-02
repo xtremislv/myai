@@ -11,6 +11,7 @@ import uuid
 from app.auth.security import hash_password
 from app.db.session import SessionLocal, User, init_db
 from app.departments.registry import seed_departments
+from app.vault import user_keys
 
 
 def main() -> None:
@@ -22,14 +23,15 @@ def main() -> None:
     init_db()
     with SessionLocal() as s:
         if not s.query(User).filter(User.username == args.admin_user).first():
-            s.add(
-                User(
-                    id=uuid.uuid4().hex,
-                    username=args.admin_user,
-                    password_hash=hash_password(args.admin_pass),
-                    roles=["admin"],
-                )
+            admin = User(
+                id=uuid.uuid4().hex,
+                username=args.admin_user,
+                password_hash=hash_password(args.admin_pass),
+                roles=["admin"],
             )
+            # The admin chose this password, so it can hold their chat key right away.
+            user_keys.provision(admin, args.admin_pass)
+            s.add(admin)
             s.commit()
         # All access policies come from the department packs (incl. admin's
         # full-access grant). Deny-by-default applies to everything else.

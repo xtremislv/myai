@@ -1,0 +1,217 @@
+"""Per-user chat keys: the password flow over HTTP, key handling, and at-rest guards."""
+from __future__ import annotations
+
+import os
+import typing
+from contextlib import contextmanager
+from types import SimpleNamespace
+
+import pytest
+from cryptography.exceptions import InvalidTag
+from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.auth.security import hash_password, issue_token
+from app.db.session import Base, User, get_session
+from app.departments.registry import seed_departments
+from app.llm import client as llm
+from app.main import app
+from app.orchestrator import execution
+from app.orchestrator.graph import build_graph
+from app.orchestrator.state import AgentState
+from app.vault import user_keys
+
+INITIAL = "initial-from-admin"
+MINE = "my-own-long-password"
+ADMIN = {"authorization": f"Bearer {issue_token('root', 'root', ['admin'])}"}
+
+
+def _user():
+    return SimpleNamespace(id="u1", chat_key_salt=None, chat_key_nonce=None, wrapped_chat_key=None)
+
+
+# ---- keys ----
+def test_the_right_password_unlocks_and_a_wrong_one_does_not():
+    user = _user()
+    key = user_keys.provision(user, MINE)
+    assert key not in user.wrapped_chat_key
+    assert user_keys.unlock(user, MINE) == key
+    with pytest.raises(InvalidTag):
+        user_keys.unlock(user, "wrong-password")
+
+
+def test_wrapped_key_cannot_be_moved_to_another_user():
+    user = _user()
+    user_keys.provision(user, MINE)
+    user.id = "u2"
+    with pytest.raises(InvalidTag):
+        user_keys.unlock(user, MINE)
+
+
+def test_changing_password_keeps_the_key_and_retires_the_old_password():
+    user = _user()
+    key = user_keys.provision(user, MINE)
+    assert user_keys.rewrap(user, MINE, "another-long-password") == key
+    assert user_keys.unlock(user, "another-long-password") == key
+    with pytest.raises(InvalidTag):
+        user_keys.unlock(user, MINE)
+
+
+def test_sealed_key_only_opens_for_its_subject():
+    key = os.urandom(32)
+    sealed = user_keys.seal_for_token(key, "alice")
+    assert user_keys.open_from_token(sealed, "alice") == key
+    with pytest.raises(InvalidTag):
+        user_keys.open_from_token(sealed, "bob")
+
+
+def test_serializer_encrypts_and_needs_the_same_key():
+    key = os.urandom(32)
+    typed = user_keys.checkpoint_serde(key).dumps_typed({"text": "SECRET"})
+    assert b"SECRET" not in typed[1]
+    assert user_keys.checkpoint_serde(key).loads_typed(typed) == {"text": "SECRET"}
+    with pytest.raises(InvalidTag):
+        user_keys.checkpoint_serde(os.urandom(32)).loads_typed(typed)
+
+
+def test_state_has_no_free_text_string_fields():
+    """PostgresSaver stores str/int/float/bool channels inline as plain JSON, skipping the
+    serializer. Any free-text field must be a list or dict, or it is stored unencrypted."""
+    hints = typing.get_type_hints(AgentState)
+    assert {name for name, hint in hints.items() if hint is str} == {"subject_id", "next"}
+
+
+# ---- the flow over HTTP ----
+@pytest.fixture
+def api(monkeypatch):
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    with Session() as s:
+        seed_departments(s)
+
+    def _get_session():
+        with Session() as s:
+            yield s
+
+    saver = MemorySaver()
+    plain = saver.serde
+
+    @contextmanager
+    def _cm(mode, serde=None):
+        saver.serde = serde or plain
+        yield build_graph().compile(checkpointer=saver)
+
+    monkeypatch.setattr(execution, "_graph_cm", _cm)
+    prompts = []
+
+    def _chat(messages, **kwargs):
+        prompts.append(messages)
+        return "ok"
+
+    monkeypatch.setattr(llm, "chat", _chat)
+    app.dependency_overrides[get_session] = _get_session
+    client = TestClient(app)
+    assert client.post(
+        "/v1/auth/users", headers=ADMIN, json={"username": "alice", "password": INITIAL, "roles": ["hr"]}
+    ).status_code == 201
+    yield SimpleNamespace(client=client, prompts=prompts, Session=Session, saver=saver)
+    app.dependency_overrides.clear()
+
+
+def _login(api, password):
+    return api.client.post("/v1/auth/login", json={"username": "alice", "password": password})
+
+
+def _bearer(body):
+    return {"authorization": f"Bearer {body['access_token']}"}
+
+
+def _chat_as(api, headers, message="hello"):
+    return api.client.post("/v1/chat", headers=headers, json={"message": message, "thread_id": "t"})
+
+
+def _change(api, headers, old, new):
+    return api.client.post(
+        "/v1/auth/change-password", headers=headers, json={"old_password": old, "new_password": new}
+    )
+
+
+def _alice(api):
+    with api.Session() as s:
+        return s.query(User).filter(User.username == "alice").one()
+
+
+def test_private_chat_is_refused_until_the_user_sets_their_own_password(api):
+    first = _login(api, INITIAL).json()
+    assert first["must_change_password"] is True
+    refused = _chat_as(api, _bearer(first))
+    assert refused.status_code == 403 and "password" in refused.json()["detail"]
+    assert _alice(api).wrapped_chat_key is None  # nothing the admin's password could open
+
+    changed = _change(api, _bearer(first), INITIAL, MINE)
+    assert changed.status_code == 200 and changed.json()["must_change_password"] is False
+    assert _chat_as(api, _bearer(changed.json())).status_code == 200
+
+
+def test_key_is_not_derivable_from_the_admins_initial_password(api):
+    first = _login(api, INITIAL).json()
+    _change(api, _bearer(first), INITIAL, MINE)
+    with pytest.raises(InvalidTag):
+        user_keys.unlock(_alice(api), INITIAL)
+    assert _login(api, INITIAL).status_code == 401
+
+
+def test_chats_survive_a_later_password_change(api):
+    first = _change(api, _bearer(_login(api, INITIAL).json()), INITIAL, MINE).json()
+    _chat_as(api, _bearer(first), "REMEMBER THIS")
+
+    _change(api, _bearer(first), MINE, "a-different-long-password")
+    fresh = _login(api, "a-different-long-password").json()
+    _chat_as(api, _bearer(fresh), "what did I say?")
+
+    assert any("REMEMBER THIS" in m["content"] for m in api.prompts[-1])
+
+
+def test_login_gives_a_token_that_opens_earlier_chats(api):
+    first = _change(api, _bearer(_login(api, INITIAL).json()), INITIAL, MINE).json()
+    _chat_as(api, _bearer(first), "REMEMBER THIS")
+
+    _chat_as(api, _bearer(_login(api, MINE).json()), "what did I say?")
+
+    assert any("REMEMBER THIS" in m["content"] for m in api.prompts[-1])
+
+
+def test_change_password_rejects_bad_input(api):
+    headers = _bearer(_login(api, INITIAL).json())
+    assert _change(api, headers, "wrong-old-password", MINE).status_code == 401
+    assert _change(api, headers, INITIAL, INITIAL).status_code == 400
+    assert _change(api, headers, INITIAL, "short").status_code == 422
+
+
+def test_token_without_a_key_or_with_someone_elses_key_cannot_chat(api):
+    assert _chat_as(api, ADMIN).status_code == 403
+
+    import jwt
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    claims = {"sub": "bob", "roles": [], "ck": user_keys.seal_for_token(b"k" * 32, "alice")}
+    forged = jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    assert _chat_as(api, {"authorization": f"Bearer {forged}"}).status_code == 401
+
+
+def test_password_above_bcrypts_limit_cannot_login_with_a_matching_prefix(api):
+    """bcrypt ignores everything after 72 bytes; the key must still need the whole password."""
+    long_password = "x" * 80
+    with api.Session() as s:
+        user = s.query(User).filter(User.username == "alice").one()
+        user.password_hash = hash_password(long_password)
+        user_keys.provision(user, long_password)
+        s.commit()
+    assert _login(api, long_password).status_code == 200
+    assert _login(api, "x" * 72 + "y" * 8).status_code == 401

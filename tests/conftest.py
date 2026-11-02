@@ -1,8 +1,22 @@
 from __future__ import annotations
 
-import pytest
+import base64
+import os
 
-from app.request_manager import guards
+# Stable test secrets. Set before any app import, because settings are read at import time.
+os.environ.setdefault("JWT_SECRET", "test-only-secret-" + "x" * 32)
+os.environ.setdefault("VAULT_MASTER_KEY", base64.b64encode(b"t" * 32).decode())
+
+import pytest  # noqa: E402
+
+from app import config  # noqa: E402
+from app.request_manager import guards  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def fresh_settings():
+    """Some fixtures override secrets and leave the settings cache stale."""
+    config.get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)

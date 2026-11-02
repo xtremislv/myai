@@ -13,6 +13,15 @@ services:
     depends_on: [postgres, redis, minio, otel-collector]
     restart: unless-stopped
 
+  retention:
+    build: .
+    env_file: .env
+    # Deletes chat attachments after 3 days. Keeps running if one pass fails.
+    command: >
+      sh -c "while true; do python -m scripts.purge_history || echo purge failed; sleep 3600; done"
+    depends_on: [gateway, minio]
+    restart: unless-stopped
+
   vllm:
     image: vllm/vllm-openai:latest
     # Serves an OpenAI-compatible API on :8001. Quantization depends on the rented card

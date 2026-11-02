@@ -66,7 +66,13 @@ ACCOUNT = DepartmentSpec(
     quota_per_min=60,
     max_concurrency=4,
     requires_approval=True,
-    critical_resources=("balance_sheet:*", "tool:initiate_payment", "tool:manage_bill"),
+    critical_resources=(
+        "balance_sheet:*",
+        "tool:initiate_payment",
+        "tool:manage_bill",
+        "tool:manage_order",
+        "tool:book_service",
+    ),
 )
 
 HR = DepartmentSpec(

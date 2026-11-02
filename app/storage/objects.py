@@ -31,6 +31,12 @@ def ensure_bucket() -> None:
         c.make_bucket(_settings.minio_bucket)
 
 
+def remove_expired_object(key: str) -> None:
+    """For the retention job, which acts for the system and not for a subject, so it has
+    no ACL decision to make. Everything else goes through ObjectStore."""
+    _client().remove_object(_settings.minio_bucket, key)
+
+
 class ObjectStore:
     def __init__(self, acl: ACLEngine) -> None:
         self._c = _client()

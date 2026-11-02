@@ -47,7 +47,7 @@ def planner(state: dict[str, Any]) -> dict[str, Any]:
         convo = [{"role": "system", "content": PLANNER_PROMPT}, *_conversation(state)]
         plan = llm.chat(convo)
     return {
-        "plan": plan,
+        "plan": [plan],
         "research_steps": 0,
         "messages": [{"role": "assistant", "content": f"[plan]\n{plan}"}],
         "next": "researcher",
@@ -63,7 +63,7 @@ def researcher(state: dict[str, Any]) -> dict[str, Any]:
     with tracer.start_as_current_span("team.researcher"):
         convo = [
             {"role": "system", "content": _researcher_prompt(state)},
-            {"role": "assistant", "content": f"[plan]\n{state.get('plan', '')}"},
+            {"role": "assistant", "content": f"[plan]\n{_plan(state)}"},
             *_notes_as_messages(state),
             *_conversation(state),
         ]
@@ -103,12 +103,17 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
     with tracer.start_as_current_span("team.writer"):
         convo = [
             {"role": "system", "content": WRITER_PROMPT},
-            {"role": "assistant", "content": f"[plan]\n{state.get('plan', '')}"},
+            {"role": "assistant", "content": f"[plan]\n{_plan(state)}"},
             *_notes_as_messages(state),
             *_conversation(state),
         ]
         answer = llm.chat(convo)
     return {"messages": [{"role": "assistant", "content": answer}], "next": "__end__"}
+
+
+def _plan(state: dict[str, Any]) -> str:
+    plan = state.get("plan") or [""]
+    return plan[0]
 
 
 def _conversation(state: dict[str, Any]) -> list[dict[str, Any]]:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 
 import pytest
@@ -25,7 +26,8 @@ from app.request_manager.guards import model_verdict  # the real one; conftest p
 
 
 def _auth(user_id, *roles):
-    return {"authorization": f"Bearer {issue_token(user_id, user_id, list(roles))}"}
+    token = issue_token(user_id, user_id, list(roles), chat_key=os.urandom(32))
+    return {"authorization": f"Bearer {token}"}
 
 
 ALICE = _auth("alice", "researcher")
@@ -53,9 +55,11 @@ def client(db, monkeypatch):
             yield s
 
     saver = MemorySaver()
+    plain = saver.serde
 
     @contextmanager
-    def _cm(mode):
+    def _cm(mode, serde=None):
+        saver.serde = serde or plain
         builder = build_team_graph() if mode == "team" else build_graph()
         yield builder.compile(checkpointer=saver)
 

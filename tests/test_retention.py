@@ -20,37 +20,58 @@ def session():
         yield s
 
 
-def test_purge_old_artifacts_keeps_text(session):
-    now = dt.datetime(2026, 10, 31, 12, 0, tzinfo=dt.timezone.utc)
-    old = ChatHistory(
-        id="old", owner_id="u1", thread_id="t1", text="hello from four days ago",
-        artifacts=[{"type": "image", "ref": "img1"}], created_at=now - dt.timedelta(days=4),
+NOW = dt.datetime(2026, 10, 31, 12, 0, tzinfo=dt.timezone.utc)
+
+
+def _row(row_id, age, *refs):
+    return ChatHistory(
+        id=row_id, owner_id="u1", thread_id="t",
+        artifacts=[{"type": "image", "ref": r} for r in refs], created_at=NOW - age,
     )
-    fresh = ChatHistory(
-        id="new", owner_id="u1", thread_id="t2", text="recent",
-        artifacts=[{"type": "image", "ref": "img2"}], created_at=now - dt.timedelta(hours=2),
-    )
+
+
+def test_attachments_older_than_three_days_are_deleted_from_storage(session):
+    old = _row("old", dt.timedelta(days=4), "chat/a.png", "chat/b.pdf")
+    fresh = _row("new", dt.timedelta(hours=2), "chat/c.png")
     session.add_all([old, fresh])
     session.commit()
+    deleted = []
 
-    purged = purge_expired(session, now=now)
-    assert purged == 1
+    assert purge_expired(session, now=NOW, delete_object=deleted.append) == 1
 
+    assert deleted == ["chat/a.png", "chat/b.pdf"]
     session.refresh(old)
     session.refresh(fresh)
-    # old: artifacts gone, text retained
     assert old.artifacts == [] and old.artifacts_purged is True
-    assert old.text == "hello from four days ago"
-    # fresh: untouched
     assert fresh.artifacts and fresh.artifacts_purged is False
 
 
 def test_purge_is_idempotent(session):
-    now = dt.datetime(2026, 10, 31, 12, 0, tzinfo=dt.timezone.utc)
-    session.add(ChatHistory(
-        id="x", owner_id="u1", thread_id="t", text="t",
-        artifacts=[{"ref": "a"}], created_at=now - dt.timedelta(days=5),
-    ))
+    session.add(_row("x", dt.timedelta(days=5), "chat/a.png"))
     session.commit()
-    assert purge_expired(session, now=now) == 1
-    assert purge_expired(session, now=now) == 0  # already purged
+    deleted = []
+    assert purge_expired(session, now=NOW, delete_object=deleted.append) == 1
+    assert purge_expired(session, now=NOW, delete_object=deleted.append) == 0
+    assert deleted == ["chat/a.png"]
+
+
+def test_failed_deletion_is_retried_and_does_not_block_other_rows(session):
+    session.add_all([
+        _row("bad", dt.timedelta(days=5), "chat/bad.png"),
+        _row("good", dt.timedelta(days=5), "chat/good.png"),
+    ])
+    session.commit()
+
+    def _flaky(key):
+        if key == "chat/bad.png":
+            raise ConnectionError("minio is down")
+
+    assert purge_expired(session, now=NOW, delete_object=_flaky) == 1
+    assert session.get(ChatHistory, "bad").artifacts_purged is False
+    assert purge_expired(session, now=NOW, delete_object=lambda key: None) == 1
+    assert session.get(ChatHistory, "bad").artifacts_purged is True
+
+
+def test_chat_history_has_no_text_column():
+    """Message text lives encrypted in checkpoints; a plain copy here would undo that."""
+    assert "text" not in ChatHistory.__table__.columns

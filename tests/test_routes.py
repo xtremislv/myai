@@ -47,7 +47,7 @@ def client(monkeypatch):
     saver = MemorySaver()
 
     @contextmanager
-    def _cm(mode):
+    def _cm(mode, serde=None):
         yield build_graph().compile(checkpointer=saver)
 
     monkeypatch.setattr(execution, "_graph_cm", _cm)

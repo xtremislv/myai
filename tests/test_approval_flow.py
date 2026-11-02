@@ -45,7 +45,7 @@ def graphs(monkeypatch):
     saver = MemorySaver()
 
     @contextmanager
-    def _cm(mode):
+    def _cm(mode, serde=None):
         builder = build_team_graph() if mode == "team" else build_graph()
         yield builder.compile(checkpointer=saver)
 
@@ -216,8 +216,24 @@ def test_admin_tool_access_does_not_skip_the_gate(session, graphs, executed, mon
     assert executed == []
 
 
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [("manage_order", {"order_id": "O1"}), ("book_service", {"service": "courier"})],
+)
+def test_orders_and_bookings_need_approval(session, graphs, monkeypatch, tool, args):
+    ran = []
+    monkeypatch.setitem(tools.TOOLS, tool, lambda state, **kw: ran.append(kw) or "ok")
+    _script(monkeypatch, json.dumps({"tool": tool, "args": args}), "Done.")
+
+    res = _request(session, ALICE, "handle the ACME ledger entry")
+
+    assert res.outcome == "pending_approval" and ran == []
+    assert _decide(session, res.approval_id, approve=True).outcome == "ok"
+    assert ran == [args]
+
+
 def test_every_critical_tool_exists():
-    assert critical_tools() == {"manage_bill", "initiate_payment"}
+    assert critical_tools() == {"manage_bill", "initiate_payment", "manage_order", "book_service"}
     assert critical_tools() <= set(tools.TOOLS)
 
 
