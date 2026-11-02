@@ -8,10 +8,12 @@ from typing import Any
 
 from langgraph.types import interrupt
 
-from app.departments.packs import critical_tools
+from app.db.session import SessionLocal
+from app.departments.packs import critical_tools, is_finance_call
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
 from app.orchestrator.tools import tools_for
+from app.request_manager import guards
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,21 @@ def _system_prompt(state: dict[str, Any]) -> str:
         f"Available tools: {allowed}. "
         "When you have the final answer, reply with plain text (no JSON)."
     )
+
+
+def _notify_admin_finance(state: dict[str, Any], name: str, args: dict[str, Any]) -> None:
+    """Accounts sees the admin's finance tool calls. Requests in the account department
+    are noticed by the Request Manager, and critical tools when they are decided."""
+    if (
+        "admin" not in state.get("subject_roles", [])
+        or _department(state) == "account"
+        or name in critical_tools()
+        or not is_finance_call(name, args)
+    ):
+        return
+    actor = state.get("subject_id", "unknown")
+    with SessionLocal() as session:
+        guards.notify_accounts(session, actor, f"{actor} called {name}({json.dumps(args, default=str)})")
 
 
 def run_tool(state: dict[str, Any], name: str | None, args: Any) -> Any:
@@ -59,6 +76,7 @@ def run_tool(state: dict[str, Any], name: str | None, args: Any) -> Any:
             return f"DENIED: an approver rejected {name}" + (f": {why}" if why else "")
 
     try:
+        _notify_admin_finance(state, name, args)  # inside the try: no notice, no tool call
         return fn(state, **args)
     except Exception:  # noqa: BLE001 - one failing tool must not kill the run
         logger.exception("tool %s failed", name)

@@ -35,8 +35,8 @@ your **personal info** (`personal_info:<you>/*`), **personal mail** (`mail:perso
 
 If you request something outside your grants, you get **403 Forbidden** with the reason — expected, not a
 bug. Two requests are handled specially: anything that **places an order / buys a product / books a
-service / is a bill** is **forwarded to the accounts inbox** (returns `forwarded`); anything **NSFW** is
-**blocked and reported to HR + admin** (returns `flagged_nsfw`).
+service / is a bill** is **forwarded to the accounts inbox** (returns `forwarded`); anything **explicit or
+illegal** is **blocked and reported to HR + admin** (returns `flagged_nsfw`).
 
 ---
 
@@ -63,7 +63,7 @@ There are two entrypoints:
 - **`POST /v1/request`** — the **governed** path (recommended). The Request Manager classifies your
   request to a department, enforces your department's access + quota, and pauses **critical** actions for
   approval. Body is the same as `/v1/chat` plus an optional `"department"` hint.
-- **`POST /v1/chat`** — the raw orchestrator (still ACL-gated), without department quotas/approval.
+- **`POST /v1/chat`** — your **private** conversation with the AI. See "Private chat" below.
 
 ```bash
 curl -s $BASE/v1/request \
@@ -74,7 +74,16 @@ Response: `{"outcome":"ok","department":"logistics","reply":"…"}`.
 Outcomes: `ok`, `error`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (`approval_id`),
 `forwarded` (order/bill/service → `task_id` in the accounts inbox), `flagged_nsfw` (`report_id`).
 
-`POST /v1/chat` runs the orchestrator directly. Pick a `mode`:
+### Private chat (`POST /v1/chat`)
+
+This is a conversation between you and the AI. No user, department or admin has an API to read it,
+and it stays separate from your `/v1/request` conversations, even with the same `thread_id`. It has no
+access to department tools or data, so use `/v1/request` for work that needs them.
+
+The one exception: a message classified as **explicit or illegal** is blocked and that single message is
+reported to HR and the admin (`"outcome":"flagged_nsfw"`). The rest of the conversation is not shared.
+
+Pick a `mode`:
 - `single` — one agent + tools, fast; good for direct questions/actions.
 - `team` — planner → researcher → writer; good for multi-step tasks.
 
@@ -89,19 +98,19 @@ curl -s $BASE/v1/chat \
   -d '{
         "thread_id": "alice-2026-10-31-1",
         "mode": "team",
-        "message": "Summarize the Q3 logistics report and list any late shipments."
+        "message": "Help me plan a talk on supply chain basics."
       }'
 ```
 
 Response:
 ```json
-{ "thread_id": "alice-2026-10-31-1", "reply": "…", "mode": "team" }
+{ "thread_id": "alice-2026-10-31-1", "reply": "…", "mode": "team", "outcome": "ok", "reason": "" }
 ```
 
 Continue the same conversation by reusing the `thread_id`:
 ```bash
 curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"thread_id":"alice-2026-10-31-1","mode":"team","message":"Now draft reminders for those."}'
+  -d '{"thread_id":"alice-2026-10-31-1","mode":"team","message":"Now shorten that to five minutes."}'
 ```
 
 ### Python
@@ -112,7 +121,7 @@ BASE = "https://api.yourdomain.com"
 tok = requests.post(f"{BASE}/v1/auth/login",
                     json={"username": "alice", "password": "your-password"}).json()["access_token"]
 
-r = requests.post(f"{BASE}/v1/chat",
+r = requests.post(f"{BASE}/v1/request",
                   headers={"authorization": f"Bearer {tok}"},
                   json={"thread_id": "alice-1", "mode": "team",
                         "message": "List documents under reports/ and summarize q3."})
@@ -134,7 +143,7 @@ curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: app
 
 **Logistics — tracking, reminders, inventory**
 ```bash
-curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+curl -s $BASE/v1/request -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"thread_id":"log-1","mode":"single",
        "message":"Track shipment SHP-8842 and remind the warehouse if it slips past tomorrow."}'
 ```
@@ -182,7 +191,11 @@ curl -s -X POST $BASE/v1/inbox/<task_id>/process -H "authorization: Bearer $TOKE
 ```
 Processing can return `pending_approval` like any other request (see §5).
 
-NSFW reports are visible to **hr** and **admin**:
+Reports show what your role is notified about:
+- **hr** and **admin**: explicit or illegal messages that were flagged (`nsfw`).
+- **account**: the admin's finance activity (`finance_notice`): requests in the account department,
+  finance tool calls and approval decisions. Private chat and personal data never create a notice.
+
 ```bash
 curl -s $BASE/v1/reports -H "authorization: Bearer $TOKEN"
 ```

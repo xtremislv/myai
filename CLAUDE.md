@@ -27,7 +27,11 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Critical tools are listed as `tool:<name>` in `critical_resources` in `packs.py`. They pause in the graph
   (`run_tool` in `app/orchestrator/nodes.py`) until approved. Code above that interrupt re-runs on resume,
   so it must have no side effects.
-- Never use a client `thread_id` as a checkpoint key directly; use `scoped_thread()`.
+- Never use a client `thread_id` as a checkpoint key directly; use `scoped_thread()`, or `private_thread()`
+  for `/v1/chat`.
+- `/v1/chat` is the user's private channel: no tools, no logging or audit of content. Only a message flagged
+  as explicit or illegal leaves it, reported to hr + admin. There is one admin, whose finance activity on
+  `/v1/request` is reported to accounts (`guards.notify_accounts`).
 
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing

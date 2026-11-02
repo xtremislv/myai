@@ -176,7 +176,7 @@ def process_task(
     return RequestOut(**execute_task(session, task, subject.id).__dict__)
 
 
-# ---- Reports (NSFW) — HR / Admin ----
+# ---- Reports: NSFW flags (hr, admin) and finance notices (account) ----
 class ReportOut(BaseModel):
     id: str
     kind: str
@@ -190,9 +190,14 @@ def list_reports(
     subject: Subject = Depends(current_subject),
     session: Session = Depends(get_session),
 ) -> list[ReportOut]:
-    if not ({"hr", "admin"} & set(subject.roles)):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "reports are visible to hr and admin only")
+    roles = set(subject.roles)
+    if not ({"hr", "admin", "account"} & roles):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "reports are visible to hr, admin and account only")
     from app.db.session import Report
 
     rows = session.query(Report).filter(Report.state == "open").order_by(Report.created_at).all()
-    return [ReportOut(id=r.id, kind=r.kind, subject_id=r.subject_id, message=r.message, state=r.state) for r in rows]
+    return [
+        ReportOut(id=r.id, kind=r.kind, subject_id=r.subject_id, message=r.message, state=r.state)
+        for r in rows
+        if roles & set(r.notified)
+    ]

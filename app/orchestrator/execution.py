@@ -34,6 +34,12 @@ def scoped_thread(subject_id: str, thread_id: str) -> str:
     return f"{subject_id}:{thread_id}"
 
 
+def private_thread(subject_id: str, thread_id: str) -> str:
+    """Checkpoint key for the private channel (/v1/chat). Separate from
+    scoped_thread, so department work can never load a private conversation."""
+    return f"private:{subject_id}:{thread_id}"
+
+
 def _graph_cm(mode: str):
     # Lazy import: compiling needs a live Postgres connection.
     from app.orchestrator.graph import compiled_graph
@@ -64,9 +70,16 @@ def _outcome(graph, config: dict, final: dict[str, Any]) -> str | PendingAction:
 
 
 def run(
-    subject: Subject, message: str, thread_id: str, mode: str, department: str | None
+    subject: Subject,
+    message: str,
+    thread_id: str,
+    mode: str,
+    department: str | None,
+    *,
+    private: bool = False,
 ) -> str | PendingAction:
-    config = {"configurable": {"thread_id": scoped_thread(subject.id, thread_id)}}
+    key = private_thread(subject.id, thread_id) if private else scoped_thread(subject.id, thread_id)
+    config = {"configurable": {"thread_id": key}}
     initial = {
         "messages": [{"role": "user", "content": message}],
         "subject_id": subject.id,

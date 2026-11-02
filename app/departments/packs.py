@@ -171,5 +171,18 @@ def critical_tools() -> frozenset[str]:
     )
 
 
+# Tools whose use counts as finance activity. read_mail only counts for finance mail,
+# so the admin's own personal mail never triggers a notice.
+FINANCE_TOOLS = frozenset(
+    {"balance_lookup", "manage_order", "manage_bill", "initiate_payment", "book_service"}
+)
+
+
+def is_finance_call(tool: str, args: dict) -> bool:
+    if tool == "read_mail":
+        return args.get("category") == "finance"
+    return tool in FINANCE_TOOLS
+
+
 def by_name(name: str) -> DepartmentSpec | None:
     return next((d for d in DEFAULT_DEPARTMENTS if d.name == name), None)

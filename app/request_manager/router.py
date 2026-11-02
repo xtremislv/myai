@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
 from app.db.session import Approval, AuditLog, Department, DepartmentTask
+from app.departments.packs import is_finance_call
 from app.observability import (
     rm_approvals_total,
     rm_critical_gated_total,
@@ -143,7 +144,9 @@ def handle_request(
             _finish(session, subject, department, "pending_approval", why, start)
             return RMResult("pending_approval", department, approval_id=waiting.id, reason=why)
 
-        # 5. execute
+        # 5. execute. Accounts is told when the admin works in its department.
+        if "admin" in subject.roles and department == "account":
+            guards.notify_accounts(session, subject.id, req.message)
         try:
             out = runner(subject, req, department)
         except Exception as e:  # noqa: BLE001
@@ -198,6 +201,15 @@ def resolve_approval(session: Session, approval: Approval, *, resumer=resume_gra
     task = session.get(DepartmentTask, approval.task_id) if approval.task_id else None
     rm_approvals_total.labels(department=dept, state=approval.state).inc()
     start = time.perf_counter()
+
+    # With one admin, who may approve their own requests, this is the check on them.
+    if is_finance_call(approval.tool, approval.tool_args):
+        guards.notify_accounts(
+            session,
+            approval.decided_by or "unknown",
+            f"{approval.decided_by} {approval.state} {approval.tool}({approval.tool_args}) "
+            f"requested by {approval.subject_id}",
+        )
 
     try:
         out = resumer(approval, approved, approval.reason)
