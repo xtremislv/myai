@@ -1,0 +1,22 @@
+# Public entry point. Caddy gets and renews HTTPS certificates by itself, once DOMAIN and
+# GRAFANA_DOMAIN point at this server and ports 80 and 443 are open.
+{$DOMAIN} {
+	# Attachments are limited to 10 MB in the app.
+	request_body {
+		max_size 11MB
+	}
+
+	header Strict-Transport-Security "max-age=31536000"
+
+	# For checks from inside the server only.
+	@internal path /readyz /healthz
+	respond @internal 404
+
+	# Caddy passes streamed chat replies straight through.
+	reverse_proxy gateway:8000
+}
+
+{$GRAFANA_DOMAIN} {
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy grafana:3000
+}

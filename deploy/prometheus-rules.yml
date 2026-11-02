@@ -1,0 +1,60 @@
+# Alerts show in Prometheus (Alerts tab) and in Grafana. Nothing sends them anywhere yet:
+# to get email or chat notifications, add a contact point in Grafana.
+groups:
+  - name: availability
+    rules:
+      - alert: GatewayDown
+        expr: up{job="gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The gateway is down, so nobody can use the app.
+      - alert: ModelServerDown
+        expr: up{job="vllm"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: vLLM is down or still loading, so chats can't get replies.
+      - alert: ModelErrors
+        expr: sum(rate(llm_requests_total{status="error"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Calls to the model are failing.
+
+  - name: capacity
+    rules:
+      - alert: ModelBacklog
+        expr: sum(vllm:num_requests_waiting) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Requests are queueing on the GPU. Replies will be slow.
+      - alert: GpuCacheFull
+        expr: max(vllm:gpu_cache_usage_perc) > 0.95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: The GPU's memory for conversations is almost full.
+      - alert: QuotaExhausted
+        expr: sum by (department) (rate(rm_quota_rejections_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The {{ $labels.department }} department keeps hitting its request limit.'
+
+  - name: security
+    rules:
+      - alert: AccessDenialSpike
+        expr: sum(rate(acl_decisions_total{decision="deny"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Many access attempts are being denied. Someone may be probing for data.

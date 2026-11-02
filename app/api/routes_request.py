@@ -49,7 +49,7 @@ def submit_request(
     result = handle_request(session, subject, req)
     if result.outcome == "denied_auth":
         raise HTTPException(status.HTTP_403_FORBIDDEN, result.reason)
-    if result.outcome == "denied_quota":
+    if result.outcome in ("denied_quota", "denied_busy"):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, result.reason)
     return RequestOut(**result.__dict__)
 

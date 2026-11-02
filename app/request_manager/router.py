@@ -29,6 +29,7 @@ from app.observability import (
 from app.orchestrator import execution
 from app.orchestrator.execution import PendingAction, scoped_thread
 from app.request_manager import approvals as approvals_store
+from app.request_manager import concurrency as concurrency_limits
 from app.request_manager import guards
 from app.request_manager.classifier import classify
 from app.request_manager.quota import QuotaLimiter, default_quota
@@ -48,7 +49,7 @@ class RMRequest:
 
 @dataclass
 class RMResult:
-    # ok | denied_auth | denied_quota | pending_approval | flagged_nsfw | forwarded | error
+    # ok | denied_auth | denied_quota | denied_busy | pending_approval | flagged_nsfw | forwarded | error
     outcome: str
     department: str | None = None
     reply: str | None = None
@@ -94,9 +95,11 @@ def handle_request(
     req: RMRequest,
     *,
     quota: QuotaLimiter | None = None,
+    concurrency: concurrency_limits.ConcurrencyLimiter | None = None,
     runner=run_graph,
 ) -> RMResult:
     quota = quota or default_quota()
+    concurrency = concurrency or concurrency_limits.default_concurrency()
     start = time.perf_counter()
 
     with tracer.start_as_current_span("rm.handle_request") as span:
@@ -149,15 +152,22 @@ def handle_request(
             _finish(session, subject, department, "pending_approval", why, start)
             return RMResult("pending_approval", department, approval_id=waiting.id, reason=why)
 
-        # 5. execute. Accounts is told when the admin works in its department.
-        if "admin" in subject.roles and department == "account":
-            guards.notify_accounts(session, subject.id, req.message)
-        release_connection(session)
-        try:
-            out = runner(subject, req, department)
-        except Exception as e:  # noqa: BLE001
-            _finish(session, subject, department, "error", str(e), start)
-            return RMResult("error", department, reason=str(e))
+        # 5. execute, if the department has a free slot on the GPU.
+        with concurrency.slot(f"dept:{department}", dept_row.max_concurrency) as free:
+            if not free:
+                why = "too many requests in progress"
+                _finish(session, subject, department, "denied_busy", why, start)
+                return RMResult("denied_busy", department, reason=why)
+
+            # Accounts is told when the admin works in its department.
+            if "admin" in subject.roles and department == "account":
+                guards.notify_accounts(session, subject.id, req.message)
+            release_connection(session)
+            try:
+                out = runner(subject, req, department)
+            except Exception as e:  # noqa: BLE001
+                _finish(session, subject, department, "error", type(e).__name__, start)
+                return RMResult("error", department, reason="the request failed")
 
         if isinstance(out, PendingAction):
             approval = _park(
@@ -272,8 +282,8 @@ def execute_task(session: Session, task: DepartmentTask, processor_id: str, *, r
     except Exception as e:  # noqa: BLE001
         task.state = "queued"  # back in the queue; critical tools cannot have run unapproved
         session.commit()
-        _finish(session, subject, task.department, "error", str(e), start)
-        return RMResult("error", task.department, task_id=task.id, reason=str(e))
+        _finish(session, subject, task.department, "error", type(e).__name__, start)
+        return RMResult("error", task.department, task_id=task.id, reason="the task failed")
 
     if isinstance(out, PendingAction):
         approval = _park(

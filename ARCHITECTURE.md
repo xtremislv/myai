@@ -3,7 +3,7 @@
 A self-hosted, single-node AI platform running a local LLM on a **rented NVIDIA cloud GPU** (hosted on
 [aiccloud.in](https://aiccloud.in/) — e.g. L40S 48 GB, A100, or H100), with a **LangGraph** agent
 orchestrator, an app-managed **Vault**, a **storage access-control** module, and a full observability
-stack. See **docs/CLOUD_SETUP_GUIDE.md** for provisioning and **docs/USER_GUIDE.md** for sending requests.
+stack. See **docs/SERVER_SETUP.md** for provisioning and **docs/USER_GUIDE.md** for sending requests.
 
 ---
 
@@ -25,7 +25,7 @@ stack. See **docs/CLOUD_SETUP_GUIDE.md** for provisioning and **docs/USER_GUIDE.
 > Ampere (A100, RTX 3090) does **not** — use AWQ/GPTQ INT4 or BF16 there. The compose default `awq`
 > works on every card. A MoE keeps all expert weights resident (plan for the full ~26B footprint) but
 > activates only a subset per token, cutting latency versus a dense model of the same size.
-> GPU selection guidance: **docs/CLOUD_SETUP_GUIDE.md §2**.
+> GPU selection guidance: **docs/SERVER_SETUP.md §2**.
 
 ---
 

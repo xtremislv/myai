@@ -13,7 +13,7 @@ from app.departments.packs import critical_tools, is_finance_call
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
 from app.orchestrator.context import with_attachments
-from app.orchestrator.tools import tools_for
+from app.orchestrator.tools import tool_signatures, tools_for
 from app.request_manager import guards
 
 logger = logging.getLogger(__name__)
@@ -30,12 +30,11 @@ def _system_prompt(state: dict[str, Any]) -> str:
             "You are a helpful AI assistant in a private conversation with one person. "
             "Answer clearly and directly. You have no access to company data or systems here."
         )
-    allowed = list(tools_for(dept))
     return (
         f"You are an orchestrated agent for the '{dept}' department on a private AI "
         "platform. You may call ONLY your department's tools to access authorized data. "
         'To call a tool, reply with ONLY a JSON object: {"tool": "<name>", "args": {...}}. '
-        f"Available tools: {allowed}. "
+        f"Available tools, with their arguments (? means optional): {tool_signatures(dept)}. "
         "When you have the final answer, reply with plain text (no JSON)."
     )
 
@@ -104,7 +103,7 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
     graph_node_total.labels(node="agent").inc()
     with tracer.start_as_current_span("graph.agent"):
         convo = [{"role": "system", "content": _system_prompt(state)}, *state.get("messages", [])]
-        reply = llm.chat(with_attachments(convo))
+        reply = llm.chat(with_attachments(convo), stream=True)
 
     tool_call = _parse_tool_call(reply)
     if tool_call:

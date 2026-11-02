@@ -6,7 +6,7 @@ department; anything else stayed private. Approvals, the inbox, reports, the ove
 the sidebar. Below is the API it uses.
 
 How to authenticate and send requests to the platform's API. For hosting/setup see
-**CLOUD_SETUP_GUIDE.md**; for what's built vs. planned see **PROGRESS_AND_ROADMAP.md**.
+**SERVER_SETUP.md**; for what's built vs. planned see **PROGRESS_AND_ROADMAP.md**.
 
 > **Base URL.** Replace `$BASE` below with your endpoint — e.g. `https://api.yourdomain.com` in
 > production, or `http://localhost:8000` over an SSH/Cloudflare tunnel.
@@ -306,4 +306,4 @@ Admins/operators can watch requests flow through the system in **Grafana**:
   error/warning logs.
 
 Each request is traced end to end (gateway → orchestrator → tools), so a failed or slow request can be
-followed step by step. See **CLOUD_SETUP_GUIDE.md §6** for how to reach Grafana securely.
+followed step by step. See **SERVER_SETUP.md §6** for how to reach Grafana securely.

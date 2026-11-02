@@ -1,29 +1,35 @@
 """FastAPI application entrypoint: wiring, lifespan, observability, routes."""
 from __future__ import annotations
 
+import logging
+import traceback
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from app import health
 from app.api import routes_admin, routes_auth, routes_chat, routes_dashboard, routes_request
 from app.config import get_settings, validate_secrets
 from app.db.session import engine, init_db
-from app.observability import setup_logging, setup_tracing
+from app.observability import setup_log_export, setup_logging, setup_tracing, start_metrics_server
 from app.storage.objects import ensure_bucket
 
 _settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_secrets(_settings)
     setup_logging()
+    setup_log_export()
     setup_tracing()
     init_db()
     try:
@@ -31,10 +37,22 @@ async def lifespan(app: FastAPI):
     except Exception:  # MinIO may not be up yet in some dev flows; don't crash boot.
         pass
     SQLAlchemyInstrumentor().instrument(engine=engine)
+    metrics_server = start_metrics_server() if _settings.metrics_enabled else None
     yield
+    if metrics_server is not None:
+        metrics_server.shutdown()
 
 
-app = FastAPI(title=_settings.app_name, version="0.1.0", lifespan=lifespan)
+# The interactive API docs are for development; in production they just map the API for outsiders.
+_dev = _settings.environment == "dev"
+app = FastAPI(
+    title=_settings.app_name,
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _dev else None,
+    redoc_url="/redoc" if _dev else None,
+    openapi_url="/openapi.json" if _dev else None,
+)
 FastAPIInstrumentor.instrument_app(app)
 
 app.include_router(routes_auth.router)
@@ -60,6 +78,32 @@ async def ui_security_headers(request: Request, call_next):
     return response
 
 
+def _trace_id() -> str:
+    context = trace.get_current_span().get_span_context()
+    return format(context.trace_id, "032x") if context.is_valid else uuid.uuid4().hex
+
+
+@app.exception_handler(PermissionError)
+async def permission_denied(request: Request, exc: PermissionError) -> JSONResponse:
+    return JSONResponse({"detail": str(exc), "trace_id": _trace_id()}, status_code=403)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """Clients get a trace id, not internals. The log gets where it failed but not the
+    exception's message, which could quote a private chat."""
+    trace_id = _trace_id()
+    logger.error(
+        "unhandled %s on %s %s trace_id=%s\n%s",
+        type(exc).__name__, request.method, request.url.path, trace_id,
+        "".join(traceback.format_tb(exc.__traceback__)),
+    )
+    return JSONResponse(
+        {"detail": "The server hit an unexpected error. Try again.", "trace_id": trace_id},
+        status_code=500,
+    )
+
+
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
     return RedirectResponse("/ui/")
@@ -67,9 +111,12 @@ def root() -> RedirectResponse:
 
 @app.get("/healthz")
 def healthz() -> dict:
+    """Is the process alive?"""
     return {"status": "ok", "service": _settings.otel_service_name}
 
 
-@app.get("/metrics")
-def metrics() -> PlainTextResponse:
-    return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+@app.get("/readyz")
+def readyz() -> JSONResponse:
+    """Can it do its job? 503 until Postgres, Redis, object storage and the model are all up."""
+    ready, checks = health.readiness()
+    return JSONResponse({"ready": ready, "checks": checks}, status_code=200 if ready else 503)

@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str = "http://otel-collector:4317"
     otel_service_name: str = "ai-platform-gateway"
     metrics_enabled: bool = True
+    # A separate port that is never published, so metrics can't be reached from the internet.
+    metrics_port: int = 9100
+
+    # --- GPU fairness: private chat replies in progress ---
+    private_max_per_user: int = 2
+    private_max_total: int = 16
 
 
 @lru_cache

@@ -13,12 +13,17 @@ conversation reads as one, marked with the department that handled it.
 from __future__ import annotations
 
 import datetime as dt
+import json
+import logging
 import re
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -36,12 +41,16 @@ from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.orchestrator import execution
 from app.orchestrator.execution import scoped_thread
 from app.request_manager import approvals as approvals_store
+from app.request_manager import concurrency as concurrency_limits
 from app.request_manager import guards
 from app.request_manager.router import RMRequest, RMResult, handle_request
 from app.storage import attachments
 from app.vault import user_keys
 
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
+
+BUSY_MESSAGE = "The assistant is busy with other replies right now. Try again in a moment."
 
 TITLE_CHARS = 60
 THREAD_ID_MAX = 100  # stored with a suffix when a paused run needs a fresh one
@@ -123,20 +132,18 @@ def _remember_thread(session: Session, key: bytes, owner_id: str, thread_id: str
     session.commit()
 
 
-@router.post("", response_model=ChatOut)
-def chat(
-    body: ChatIn,
-    subject: Subject = Depends(current_subject),
-    key: bytes = Depends(chat_key),
-    session: Session = Depends(get_session),
-) -> ChatOut:
+def _before_the_model(
+    body: ChatIn, subject: Subject, key: bytes, session: Session
+) -> tuple[str, ChatOut | None]:
+    """Everything up to generating a private reply. Returns the mode, plus a finished answer
+    if nothing is left to generate: a flagged message, or work."""
     recent = execution.private_history(subject, body.thread_id, key)[-RECENT_MESSAGES:]
     sorted_message = guards.triage(body.message, _departments_of(subject), recent)
     mode = sorted_message.mode if body.mode == "auto" else body.mode
 
     if sorted_message.nsfw:
         guards.report_nsfw(session, subject.id, body.message)
-        return ChatOut(
+        return mode, ChatOut(
             thread_id=body.thread_id, reply="", mode=mode, outcome="flagged_nsfw",
             reason=f"{sorted_message.why}; reported to hr, admin",
         )
@@ -158,16 +165,100 @@ def chat(
         reply = _work_reply(result)
         execution.record_private(subject, body.thread_id, key, body.message, reply, result.department)
         _remember_thread(session, key, subject.id, body.thread_id, body.message)
-        return ChatOut(
+        return mode, ChatOut(
             thread_id=body.thread_id, reply=reply, mode=mode, outcome=result.outcome, route="work",
             department=result.department, approval_id=result.approval_id, task_id=result.task_id,
         )
+    return mode, None
+
+
+@contextmanager
+def _private_slot(subject: Subject) -> Iterator[bool]:
+    """A private reply needs a slot for this person and one in the shared pool, so one
+    person can't take the whole GPU."""
+    settings = get_settings()
+    slots = concurrency_limits.default_concurrency()
+    with slots.slot(f"user:{subject.id}", settings.private_max_per_user) as mine:
+        with slots.slot("private", settings.private_max_total) as shared:
+            yield mine and shared
+
+
+@router.post("", response_model=ChatOut)
+def chat(
+    body: ChatIn,
+    subject: Subject = Depends(current_subject),
+    key: bytes = Depends(chat_key),
+    session: Session = Depends(get_session),
+) -> ChatOut:
+    mode, finished = _before_the_model(body, subject, key, session)
+    if finished is not None:
+        return finished
 
     context = attachments.context_for_thread(session, key, subject.id, body.thread_id)
     release_connection(session)
-    reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key, attachments=context)
+    with _private_slot(subject) as free:
+        if not free:
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, BUSY_MESSAGE)
+        reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key, attachments=context)
     _remember_thread(session, key, subject.id, body.thread_id, body.message)
     return ChatOut(thread_id=body.thread_id, reply=reply, mode=mode)
+
+
+def _event(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _stream_response(events: Iterator[str]) -> StreamingResponse:
+    # X-Accel-Buffering stops proxies holding the words back until the reply ends.
+    return StreamingResponse(
+        events,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/stream")
+def chat_stream(
+    body: ChatIn,
+    subject: Subject = Depends(current_subject),
+    key: bytes = Depends(chat_key),
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    """Like POST /v1/chat, as server-sent events: {"type":"delta","text":...} as words arrive,
+    then {"type":"done",...the ChatOut fields...} or {"type":"error","detail":...}. Only
+    private replies stream word by word: work finishes first, then arrives whole."""
+    mode, finished = _before_the_model(body, subject, key, session)
+    if finished is not None:
+        done = {"type": "done", **finished.model_dump()}
+        return _stream_response(iter([_event(done)]))
+
+    context = attachments.context_for_thread(session, key, subject.id, body.thread_id)
+    bind = session.get_bind()
+    release_connection(session)
+
+    def events() -> Iterator[str]:
+        with _private_slot(subject) as free:
+            if not free:
+                yield _event({"type": "error", "detail": BUSY_MESSAGE})
+                return
+            for kind, value in execution.stream_private(
+                subject, body.message, body.thread_id, mode, key, context
+            ):
+                if kind == "delta":
+                    yield _event({"type": "delta", "text": value})
+                elif kind == "error":
+                    # The type only: an exception's text could quote the private message.
+                    logger.error("chat stream failed: %s", type(value).__name__)
+                    yield _event({"type": "error", "detail": "That reply failed on the server. Try again."})
+                    return
+                else:
+                    reply = value
+        # The request's own session has closed by the time a stream runs.
+        with Session(bind=bind) as later:
+            _remember_thread(later, key, subject.id, body.thread_id, body.message)
+        yield _event({"type": "done", **ChatOut(thread_id=body.thread_id, reply=reply, mode=mode).model_dump()})
+
+    return _stream_response(events())
 
 
 def _departments_of(subject: Subject) -> dict[str, str]:
@@ -197,6 +288,8 @@ def _work_reply(result: RMResult) -> str:
             return "I sent this to the accounts team. You can follow it here."
         case "pending_approval":
             return "This needs approval before it can go ahead. You can follow it here."
+        case "denied_busy":
+            return f"{department} is busy with other requests right now. Try again in a moment."
         case "denied_quota":
             return f"{department} has too many requests right now. Try again in a minute."
         case "denied_auth":

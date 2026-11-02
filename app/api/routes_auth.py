@@ -77,8 +77,8 @@ ASSIGNABLE = {d.name for d in DEFAULT_DEPARTMENTS} - {ADMIN_ROLE}
 
 
 class CreateUserIn(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=12)
     roles: list[str] = []
 
 

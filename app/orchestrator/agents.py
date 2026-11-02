@@ -17,7 +17,7 @@ from app.llm import client as llm
 from app.observability import graph_node_total, tracer
 from app.orchestrator.context import with_attachments
 from app.orchestrator.nodes import _department, _parse_tool_call, run_tool
-from app.orchestrator.tools import tools_for
+from app.orchestrator.tools import tool_signatures
 
 MAX_RESEARCH_STEPS = 6
 
@@ -28,11 +28,10 @@ PLANNER_PROMPT = (
 )
 
 def _researcher_prompt(state: dict) -> str:
-    allowed = list(tools_for(_department(state)))
     return (
         "You are the RESEARCHER. Follow the plan and gather facts using ONLY your department's tools. "
         'To call a tool, reply with ONLY a JSON object: {"tool": "<name>", "args": {...}}. '
-        f"Available tools: {allowed}. "
+        f"Available tools, with their arguments (? means optional): {tool_signatures(_department(state))}. "
         'When you have gathered everything the plan needs, reply with ONLY the JSON {"done": true}.'
     )
 
@@ -108,7 +107,7 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
             *_notes_as_messages(state),
             *_conversation(state),
         ]
-        answer = llm.chat(with_attachments(convo))
+        answer = llm.chat(with_attachments(convo), stream=True)  # the only part users see
     return {"messages": [{"role": "assistant", "content": answer}], "next": "__end__"}
 
 

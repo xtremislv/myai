@@ -15,6 +15,7 @@ const OUTCOMES = {
   denied: ["Denied", "bad"],
   denied_auth: ["Not allowed", "bad"],
   denied_quota: ["Rate limited", "bad"],
+  denied_busy: ["Busy", "warn"],
   error: ["Failed", "bad"],
 };
 
@@ -154,6 +155,44 @@ async function api(path, { method = "GET", body, form, raw } = {}) {
   }
   if (raw) return response.blob();
   return response.status === 204 ? null : response.json();
+}
+
+// Calls onDelta with each piece of the reply as it arrives. Resolves with the finished reply.
+async function streamChat(body, onDelta) {
+  const response = await fetch("/v1/chat/stream", {
+    method: "POST",
+    headers: { authorization: `Bearer ${state.token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 401) {
+    signOut("Your session ended. Sign in again.");
+    throw new Error("Session ended");
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(typeof data.detail === "string" ? data.detail : `The server returned an error (${response.status}). Try again.`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finished = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let end;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const line = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      if (!line.startsWith("data: ")) continue;
+      const event = JSON.parse(line.slice(6));
+      if (event.type === "delta") onDelta(event.text);
+      else if (event.type === "error") throw new Error(event.detail);
+      else if (event.type === "done") finished = event;
+    }
+  }
+  if (!finished) throw new Error("The reply was cut off. Try again.");
+  return finished;
 }
 
 function useToken(result, username) {
@@ -541,7 +580,16 @@ async function chatView(thread, { reloadThreads, paint }) {
       messages.append(thinking);
       toBottom();
       try {
-        const result = await api("/v1/chat", { method: "POST", body: { message: text, thread_id: thread } });
+        let started = false;
+        const result = await streamChat({ message: text, thread_id: thread }, (piece) => {
+          if (!started) {
+            started = true;
+            thinking.classList.remove("thinking");
+            thinking.textContent = "";
+          }
+          thinking.append(piece);
+          toBottom();
+        });
         thinking.remove();
         if (result.outcome === "flagged_nsfw") {
           mine.remove();

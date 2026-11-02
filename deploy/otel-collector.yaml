@@ -10,28 +10,28 @@ processors:
   batch: {}
 
 exporters:
-  # Traces + metrics can be scraped/visualized; logs forwarded to Loki.
-  prometheus:
-    endpoint: 0.0.0.0:8889
-  loki:
-    endpoint: http://loki:3100/loki/api/v1/push
+  # Loki accepts OTLP directly. It turns service.name into the service_name label the
+  # dashboards query, and keeps severity_text as metadata.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
   debug:
     verbosity: basic
 
 service:
   telemetry:
     metrics:
-      address: 0.0.0.0:8888
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
       exporters: [debug]
-    metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [prometheus]
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [loki]
+      exporters: [otlphttp/loki]

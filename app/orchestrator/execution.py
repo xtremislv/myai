@@ -9,12 +9,17 @@ Two guarantees live here:
 """
 from __future__ import annotations
 
+import contextvars
+import queue
+import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 from langgraph.types import Command
 
 from app.acl.models import Subject
+from app.llm.client import token_sink
 from app.orchestrator.context import attachment_text
 from app.vault import user_keys
 
@@ -99,6 +104,29 @@ def run(
             return _outcome(graph, config, final)
     finally:
         attachment_text.reset(token)
+
+
+def stream_private(
+    subject: Subject, message: str, thread_id: str, mode: str, chat_key: bytes, attachments: str | None
+) -> Iterator[tuple[str, Any]]:
+    """Run a private reply, yielding ("delta", text) as words arrive and then either
+    ("final", full_reply) or ("error", exception). The run finishes and is saved even if
+    the reader goes away."""
+    events: queue.Queue = queue.Queue()
+
+    def work() -> None:
+        token_sink.set(lambda text: events.put(("delta", text)))
+        try:
+            events.put(("final", run(subject, message, thread_id, mode, None, chat_key=chat_key, attachments=attachments)))
+        except Exception as e:  # noqa: BLE001 - reported to the reader
+            events.put(("error", e))
+
+    threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
+    while True:
+        event = events.get()
+        yield event
+        if event[0] != "delta":
+            return
 
 
 def private_history(subject: Subject, thread_id: str, chat_key: bytes) -> list[dict[str, Any]]:

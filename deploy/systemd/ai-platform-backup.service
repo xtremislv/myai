@@ -1,0 +1,9 @@
+[Unit]
+Description=AI Platform backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ai-platform
+ExecStart=/opt/ai-platform/scripts/backup.sh

@@ -13,13 +13,20 @@ from fastapi import HTTPException  # noqa: E402
 from app import config  # noqa: E402
 from app.acl.models import Subject  # noqa: E402
 from app.api import deps  # noqa: E402
-from app.request_manager import guards  # noqa: E402
+from app.request_manager import concurrency, guards  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def fresh_settings():
     """Some fixtures override secrets and leave the settings cache stale."""
     config.get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def local_concurrency_limits(monkeypatch):
+    """No Redis in tests."""
+    limiter = concurrency.ConcurrencyLimiter(concurrency.InMemorySlots())
+    monkeypatch.setattr(concurrency, "default_concurrency", lambda: limiter)
 
 
 _real_subject_from_claims = deps.subject_from_claims

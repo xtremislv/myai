@@ -10,6 +10,7 @@ credentials exist. Stubs are clearly marked "[stub]".
 """
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable
 
 from app.acl.engine import ACLEngine
@@ -190,6 +191,17 @@ DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
     "superuser": ("inventory_lookup", "inventory_adjust"),
     "admin": ("*",),
 }
+
+
+def tool_signatures(department: str | None) -> list[str]:
+    """How to call each of a department's tools, for the agent's prompt. "?" marks an
+    optional argument."""
+
+    def describe(fn: Callable[..., Any]) -> str:
+        params = list(inspect.signature(fn).parameters.values())[1:]  # the first is state
+        return ", ".join(p.name + ("?" if p.default is not inspect.Parameter.empty else "") for p in params)
+
+    return [f"{name}({describe(fn)})" for name, fn in tools_for(department).items()]
 
 
 def tools_for(department: str | None) -> dict[str, Callable[..., Any]]:

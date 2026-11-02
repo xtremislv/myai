@@ -11,7 +11,7 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 ## Key docs
 - `docs/HANDOFF.md` — state + next steps + limitations (start here)
 - `docs/PROGRESS_AND_ROADMAP.md` — phased plan; §5 = department/data schema
-- `docs/CLOUD_SETUP_GUIDE.md` — deploy on aiccloud.in
+- `docs/SERVER_SETUP.md` — deploy on aiccloud.in
 - `docs/USER_GUIDE.md` — how users send requests
 - `ARCHITECTURE.md` — design
 

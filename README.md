@@ -6,7 +6,7 @@ app-managed **vault**, a **storage access-control** module, and a full **observa
 
 **Docs:**
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full design
-- [`docs/CLOUD_SETUP_GUIDE.md`](./docs/CLOUD_SETUP_GUIDE.md) — provision & deploy on aiccloud.in
+- [`docs/SERVER_SETUP.md`](./docs/SERVER_SETUP.md) — provision & deploy on aiccloud.in
 - [`docs/USER_GUIDE.md`](./docs/USER_GUIDE.md) — how users authenticate & send requests
 - [`docs/PROGRESS_AND_ROADMAP.md`](./docs/PROGRESS_AND_ROADMAP.md) — status, departments, Request Manager, plan
 
@@ -86,7 +86,7 @@ curl -s localhost:8000/v1/chat -H "authorization: Bearer $TOKEN" \
 - **FP8 depends on the card:** available on Ada/Hopper (L40S, RTX 4090, H100); **not** on Ampere
   (A100, RTX 3090) — use `awq`/`gptq` (INT4) there. The compose default `awq` works everywhere.
 - Set the exact Hugging Face repo id for your chosen weights in `LLM_MODEL`.
-- GPU selection + full deploy steps: [`docs/CLOUD_SETUP_GUIDE.md`](./docs/CLOUD_SETUP_GUIDE.md).
+- GPU selection + full deploy steps: [`docs/SERVER_SETUP.md`](./docs/SERVER_SETUP.md).
 
 ## Local dev without Docker
 
