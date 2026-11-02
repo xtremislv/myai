@@ -15,6 +15,8 @@ Resource type conventions (urn = "type:id"):
   order:* / bill:* / booking:*  orders/bills/bookings -> account (requests are forwarded here)
   payment:*                  payments                 -> account (every call needs approval)
   research:* / reports:*     research data/reports    -> researcher
+  web:*                      web search               -> researcher
+  notification:* / reminder:*  notifications/reminders -> logistics
   report:nsfw/*              NSFW reports             -> hr, admin
 
 Owner-based access is modeled with the special subject "$self" and a "{owner}"
@@ -92,6 +94,8 @@ LOGISTICS = DepartmentSpec(
     grants=(
         Grant("inventory:*", ("read", "write", "list")),
         Grant("shipments:*", ("read", "write", "list")),
+        Grant("notification:*", ("write",)),
+        Grant("reminder:*", ("write",)),
     ),
     tools=("inventory_lookup", "inventory_adjust", "track_shipment", "send_notification", "set_reminder"),
     quota_per_min=120,
@@ -104,6 +108,7 @@ RESEARCHER = DepartmentSpec(
     grants=(
         Grant("research:*", ("read", "write", "list")),
         Grant("reports:*", ("read", "list")),
+        Grant("web:*", ("read",)),
         Grant("inventory:*", ("read", "list")),
     ),
     tools=("read_document", "list_documents", "web_search", "summarize"),

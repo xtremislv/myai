@@ -21,6 +21,7 @@ def fresh_settings():
 
 @pytest.fixture(autouse=True)
 def nsfw_model_unavailable(monkeypatch):
-    """Tests script the LLM's replies, so the NSFW model must not consume them.
-    is_nsfw uses its keyword fallback unless a test sets a verdict."""
+    """Tests script the LLM's replies, so the classifiers must not consume them. Guards
+    use their keyword fallback unless a test sets a verdict."""
     monkeypatch.setattr(guards, "model_verdict", lambda message: None)
+    monkeypatch.setattr(guards, "forward_verdict", lambda message: None)

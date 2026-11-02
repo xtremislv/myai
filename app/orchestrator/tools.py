@@ -126,19 +126,27 @@ def track_shipment(state: dict[str, Any], shipment_id: str) -> str:
 
 
 def send_notification(state: dict[str, Any], to: str, text: str) -> str:
+    if (err := _enforce(state, "write", "notification", "send")) is not None:
+        return err
     return f"[stub] notification to {to}: {text} (connect email/SMS provider)"
 
 
 def set_reminder(state: dict[str, Any], when: str, text: str) -> str:
+    if (err := _enforce(state, "write", "reminder", "set")) is not None:
+        return err
     return f"[stub] reminder set for {when}: {text} (connect scheduler)"
 
 
 # ---- research tools ----
 def web_search(state: dict[str, Any], query: str) -> str:
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
     return f"[stub] web search for '{query}' (connect search API)"
 
 
 def summarize(state: dict[str, Any], text: str) -> str:
+    if (err := _enforce(state, "read", "research", "summarize")) is not None:
+        return err
     return f"[stub] summary of {len(text)} chars (agent will summarize inline)"
 
 

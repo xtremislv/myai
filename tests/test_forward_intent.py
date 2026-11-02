@@ -12,7 +12,9 @@ from app.departments.registry import seed_departments
 from app.llm import client as llm
 from app.orchestrator import tools
 from app.request_manager import guards
-from app.request_manager.guards import forward_verdict  # the real one; conftest patches the attribute
+from app.request_manager.guards import (
+    forward_verdict,  # the real one; conftest patches the attribute
+)
 
 
 # ---- model verdict ----
