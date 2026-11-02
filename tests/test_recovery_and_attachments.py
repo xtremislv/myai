@@ -78,7 +78,7 @@ def _bearer(body):
 
 def _user(api, name="alice", roles=("hr",)):
     """Create a user who has set their own password. Returns their token response."""
-    initial = f"initial-{name}"
+    initial = f"initial-{name}-pw"
     assert api.client.post(
         "/v1/auth/users", headers=ADMIN, json={"username": name, "password": initial, "roles": list(roles)}
     ).status_code == 201
