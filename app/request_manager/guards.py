@@ -84,7 +84,9 @@ TRIAGE_PROMPT = (
     "or update company records, orders, bills, inventory, shipments, company mail or research "
     'files. Otherwise "private": questions, writing help, advice, personal matters, general '
     'knowledge. If you are unsure, choose "private".\n\n'
-    "department: for work, the best match from this list, otherwise null.\n{departments}\n\n"
+    "department: for work, the department that owns that data or system, from this list, otherwise "
+    "null. Choose the owner even if it is marked not available to this person: never substitute "
+    "a different department.\n{departments}\n\n"
     'action: "order" to buy or order products, "service" to book or subscribe to a service, '
     '"bill" to pay or record a bill or invoice, otherwise "none". Asking how these work is '
     '"none".\n\n'
@@ -107,10 +109,15 @@ class Triage:
 
 
 def triage_verdict(
-    message: str, departments: dict[str, str], recent: list[dict]
+    message: str, departments: dict[str, str], recent: list[dict], others: dict[str, str] | None = None
 ) -> dict | None:
-    """The model's sorting of this message, or None if it gave nothing usable."""
-    listed = "\n".join(f"- {name}: {about}" for name, about in departments.items()) or "(none)"
+    """The model's sorting of this message, or None if it gave nothing usable. `others` are
+    departments this person is not in: listed so the model names the real owner of a request
+    instead of squeezing it into one the person has."""
+    listed = "\n".join(
+        [f"- {name}: {about}" for name, about in departments.items()]
+        + [f"- {name}: {about} (not available to this person)" for name, about in (others or {}).items()]
+    ) or "(none)"
     system = TRIAGE_PROMPT.format(departments=listed)
     if recent:
         earlier = "\n".join(f"{m['role']}: {m['content'][:RECENT_CHARS]}" for m in recent)
@@ -140,10 +147,12 @@ def triage_verdict(
     return verdict
 
 
-def triage(message: str, departments: dict[str, str], recent: list[dict]) -> Triage:
+def triage(
+    message: str, departments: dict[str, str], recent: list[dict], others: dict[str, str] | None = None
+) -> Triage:
     """Decide what happens to a chat message. Anything uncertain stays private: wrongly
     treating a personal message as work would store it outside the user's encryption."""
-    verdict = triage_verdict(message, departments, recent)
+    verdict = triage_verdict(message, departments, recent, others)
     if verdict is None:
         flagged, why = is_nsfw(message)
         return Triage(nsfw=flagged, why=why)
@@ -155,9 +164,16 @@ def triage(message: str, departments: dict[str, str], recent: list[dict]) -> Tri
     if action:  # anyone may ask for these: they go to the accounts inbox
         return Triage(route="work", action=action, mode=mode)
     department = verdict.get("department")
+    # Someone with no department never has work: everything they send stays private.
     if verdict["route"] == "private" or not departments or not isinstance(department, str):
         return Triage(mode=mode)
-    return Triage(route="work", department=department, mode=mode)
+    if department in departments:
+        return Triage(route="work", department=department, mode=mode)
+    if department in (others or {}):
+        # Work this person can't do here. The Request Manager refuses it with a clear
+        # "not a member" reason; no data is touched.
+        return Triage(route="work", department=department, mode=mode)
+    return Triage(mode=mode)  # unknown name: stay private
 
 
 def _parse_verdict(reply: str, allowed: tuple[str, ...]) -> str | None:

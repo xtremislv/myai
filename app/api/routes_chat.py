@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from typing import Literal
 from urllib.parse import quote
 
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, Form, HTTPException, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -138,7 +139,9 @@ def _before_the_model(
     """Everything up to generating a private reply. Returns the mode, plus a finished answer
     if nothing is left to generate: a flagged message, or work."""
     recent = execution.private_history(subject, body.thread_id, key)[-RECENT_MESSAGES:]
-    sorted_message = guards.triage(body.message, _departments_of(subject), recent)
+    mine = _departments_of(subject)
+    others = {d.name: d.description for d in DEFAULT_DEPARTMENTS if d.name not in mine and d.name != "admin"}
+    sorted_message = guards.triage(body.message, mine, recent, others)
     mode = sorted_message.mode if body.mode == "auto" else body.mode
 
     if sorted_message.nsfw:
@@ -313,14 +316,16 @@ def list_threads(
         .order_by(ChatThread.updated_at.desc())
         .all()
     )
-    return [
-        ThreadOut(
-            thread_id=r.thread_id,
-            title=user_keys.decrypt_text(key, r.encrypted_title, f"{subject.id}:{r.thread_id}"),
-            updated_at=r.updated_at,
-        )
-        for r in rows
-    ]
+    threads = []
+    for r in rows:
+        try:
+            title = user_keys.decrypt_text(key, r.encrypted_title, f"{subject.id}:{r.thread_id}")
+        except InvalidTag:
+            # Encrypted under an earlier chat key (the admin reset this password and the user
+            # chose a new one): nobody can open it any more, so don't list it.
+            continue
+        threads.append(ThreadOut(thread_id=r.thread_id, title=title, updated_at=r.updated_at))
+    return threads
 
 
 @router.get("/threads/{thread_id}/messages", response_model=list[MessageOut])

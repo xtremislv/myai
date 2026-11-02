@@ -81,8 +81,8 @@ def api(monkeypatch):
 def _sorted_as(monkeypatch, **verdict):
     seen = {}
 
-    def _verdict(message, departments, recent):
-        seen.update(message=message, departments=departments, recent=recent)
+    def _verdict(message, departments, recent, others=None):
+        seen.update(message=message, departments=departments, recent=recent, others=others)
         return {"safety": "none", "route": "private", "action": "none", "steps": "one", **verdict}
 
     monkeypatch.setattr(guards, "triage_verdict", _verdict)
@@ -387,3 +387,11 @@ def test_changing_departments_keeps_the_admin_role(api):
     user = _make_user(api, "boss", ("admin",))
     url = f"/v1/auth/users/{user['id']}/departments"
     assert api.client.put(url, headers=ADMIN, json={"departments": ["hr"]}).json()["roles"] == ["admin", "hr"]
+
+
+def test_work_for_a_department_you_are_not_in_is_refused_not_rerouted(api, monkeypatch):
+    """Triage names the real owner; the Request Manager refuses instead of a wrong department guessing."""
+    seen = _sorted_as(monkeypatch, route="work", department="account")
+    out = _send(api, LEE, "pull up the balance sheet")
+    assert "account" in seen["others"] and "account" not in seen["departments"]
+    assert out["route"] == "work" and out["outcome"] == "denied_auth"
