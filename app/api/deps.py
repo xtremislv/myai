@@ -21,6 +21,8 @@ def subject_from_claims(session: Session, claims: dict) -> Subject:
     user = session.get(User, claims["sub"])
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "this account no longer exists")
+    if user.disabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
     return Subject(id=user.id, roles=tuple(user.roles))
 
 

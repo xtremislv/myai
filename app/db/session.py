@@ -9,6 +9,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     LargeBinary,
     String,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     create_engine,
     func,
 )
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -43,6 +45,8 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(256))
     roles: Mapped[list] = mapped_column(JSON, default=list)
+    # A disabled account can't sign in, and its live tokens stop working on the next request.
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
     # Private-chat key, wrapped by the user's password (app/vault/user_keys.py).
     # Empty until the user replaces the initial password the admin set.
     chat_key_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

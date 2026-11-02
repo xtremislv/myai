@@ -56,6 +56,7 @@ class UserOut(BaseModel):
     id: str
     username: str
     roles: list[str]
+    disabled: bool = False
     chat_enabled: bool
 
 
@@ -87,6 +88,8 @@ def login(body: LoginIn, session: Session = Depends(get_session)) -> TokenOut:
     user = session.query(User).filter(User.username == body.username).one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+    if user.disabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
     if user.wrapped_chat_key is None:
         return TokenOut(
             access_token=issue_token(user.id, user.username, user.roles), must_change_password=True
@@ -132,6 +135,8 @@ def recover(body: RecoverIn, session: Session = Depends(get_session)) -> TokenOu
     user = session.query(User).filter(User.username == body.username).one_or_none()
     if user is None or user.wrapped_recovery_key is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad username or recovery code")
+    if user.disabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
     try:
         chat_key = user_keys.unlock_with_recovery_code(user, body.recovery_code)
     except InvalidTag as e:
@@ -201,18 +206,12 @@ def set_departments(
     keep_admin = [ADMIN_ROLE] if ADMIN_ROLE in user.roles else []
     user.roles = keep_admin + sorted(set(body.departments))
     session.commit()
-    return UserOut(
-        id=user.id, username=user.username, roles=user.roles,
-        chat_enabled=user.wrapped_chat_key is not None,
-    )
+    return _user_out(user)
 
 
 @router.get("/users", response_model=list[UserOut])
 def list_users(session: Session = Depends(get_session), _admin=Depends(require_admin)) -> list[UserOut]:
-    return [
-        UserOut(id=u.id, username=u.username, roles=u.roles, chat_enabled=u.wrapped_chat_key is not None)
-        for u in session.query(User).order_by(User.username).all()
-    ]
+    return [_user_out(u) for u in session.query(User).order_by(User.username).all()]
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
@@ -232,3 +231,66 @@ def create_user(
     session.add(user)
     session.commit()
     return {"id": user.id, "username": user.username, "roles": user.roles}
+
+
+def _user_out(user: User) -> UserOut:
+    return UserOut(
+        id=user.id, username=user.username, roles=user.roles,
+        chat_enabled=user.wrapped_chat_key is not None, disabled=bool(user.disabled),
+    )
+
+
+def _other_user(session: Session, user_id: str, admin: Subject) -> User:
+    """The user an admin action targets. Admins manage their own account under My account,
+    and can't lock themselves out: there is only one admin."""
+    if user_id == admin.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "use My account to change your own account")
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    return user
+
+
+class DisabledIn(BaseModel):
+    disabled: bool
+
+
+@router.put("/users/{user_id}/disabled", response_model=UserOut)
+def set_disabled(
+    user_id: str,
+    body: DisabledIn,
+    session: Session = Depends(get_session),
+    admin: Subject = Depends(require_admin),
+) -> UserOut:
+    """Disable or re-enable an account. Takes effect on the user's next request, because
+    every request reads the account from the database. Nothing is deleted."""
+    user = _other_user(session, user_id, admin)
+    user.disabled = body.disabled
+    session.commit()
+    return _user_out(user)
+
+
+class ResetPasswordIn(BaseModel):
+    password: str = Field(min_length=12)
+
+
+@router.post("/users/{user_id}/reset-password", response_model=UserOut)
+def reset_password(
+    user_id: str,
+    body: ResetPasswordIn,
+    session: Session = Depends(get_session),
+    admin: Subject = Depends(require_admin),
+) -> UserOut:
+    """Give a user a temporary password, for someone who lost theirs and their recovery code.
+
+    The admin never gets a key to the user's private chats. The password's copy of the chat
+    key is removed and the recovery code's copy is kept, so:
+      - with their recovery code, "Forgot password?" still restores every private chat;
+      - signing in with the temporary password makes them choose a new one and starts a new
+        chat key: earlier private chats can no longer be opened (they stop being listed).
+    """
+    user = _other_user(session, user_id, admin)
+    user.password_hash = hash_password(body.password)
+    user.chat_key_salt = user.chat_key_nonce = user.wrapped_chat_key = None
+    session.commit()
+    return _user_out(user)

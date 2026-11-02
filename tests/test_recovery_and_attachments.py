@@ -467,7 +467,7 @@ def test_activity_is_everyones_for_admin_and_own_for_others(api):
 def test_user_list_is_admin_only_and_shows_no_key_material(api):
     _user(api)
     listed = api.client.get("/v1/auth/users", headers=ADMIN).json()
-    assert listed[0]["chat_enabled"] is True and set(listed[0]) == {"id", "username", "roles", "chat_enabled"}
+    assert listed[0]["chat_enabled"] is True and set(listed[0]) == {"id", "username", "roles", "chat_enabled", "disabled"}
     assert api.client.get("/v1/auth/users", headers=_token("hr")).status_code == 403
 
 

@@ -364,6 +364,7 @@ function morePages() {
     has("admin", "account") && ["inbox", "Accounts inbox", inboxView, "inbox_queued"],
     has("admin", "hr", "account") && ["reports", "Reports", reportsView, "open_reports"],
     has("admin") && ["users", "Users", usersView],
+    has("admin") && ["credentials", "Credentials", credentialsView],
     ["overview", "Overview", overviewView],
     ["account", "My account", accountView],
   ].filter(Boolean);
@@ -875,9 +876,33 @@ function departmentBoxes(selected, onChange) {
   };
 }
 
-function userRow(user, error) {
-  const save = h("button", { disabled: true }, "Save");
-  const boxes = departmentBoxes(user.roles, () => { save.disabled = false; save.textContent = "Save"; });
+// An inline "are you sure" step: the viewer has no dialogs, and a second click is clearer anyway.
+function confirmPanel(text, actionLabel, onConfirm, { danger = false } = {}) {
+  const error = errorBox();
+  const go = h("button", { class: danger ? "danger" : "primary", type: "button" }, actionLabel);
+  const panel = h("div", { class: "panel", hidden: true },
+    h("p", null, text), error,
+    h("div", { class: "row" }, go, h("button", { type: "button", onclick: () => { panel.hidden = true; } }, "Cancel")),
+  );
+  go.addEventListener("click", async () => {
+    error.clear();
+    go.disabled = true;
+    try {
+      await onConfirm();
+    } catch (err) {
+      error.fail(err);
+      go.disabled = false;
+    }
+  });
+  return panel;
+}
+
+function userCard(user, refresh) {
+  const isMe = user.username === state.username;
+  const isAdmin = user.roles.includes("admin");
+  const error = errorBox();
+  const save = h("button", { disabled: true }, "Save departments");
+  const boxes = departmentBoxes(user.roles, () => { save.disabled = false; save.textContent = "Save departments"; });
   save.addEventListener("click", async () => {
     error.clear();
     save.disabled = true;
@@ -889,53 +914,210 @@ function userRow(user, error) {
       save.disabled = false;
     }
   });
-  return [
-    h("div", null, user.username, user.roles.includes("admin") && h("div", { class: "small muted" }, "Administrator")),
-    boxes.node,
-    h("span", { class: `pill ${user.chat_enabled ? "good" : "warn"}` }, user.chat_enabled ? "Own password set" : "First password"),
-    save,
+
+  const temporary = h("input", { type: "password", minLength: 12, autocomplete: "new-password", "aria-label": "Temporary password" });
+  const resetError = errorBox();
+  const reset = h("form", {
+    class: "panel",
+    hidden: true,
+    onsubmit: async (event) => {
+      event.preventDefault();
+      resetError.clear();
+      try {
+        await api(`/v1/auth/users/${user.id}/reset-password`, { method: "POST", body: { password: temporary.value } });
+        refresh();
+      } catch (err) {
+        resetError.fail(err);
+      }
+    },
+  },
+    h("p", null, `Only for someone who lost both their password and their recovery code. If ${user.username} still has `
+      + "their recovery code, they should use \"Forgot password?\" on the sign-in page instead: that keeps their chats."),
+    h("p", { class: "small muted" }, "With a temporary password they choose a new one at sign-in. Their earlier "
+      + "private chats can't be opened again, by anyone. You still can't read their chats."),
+    resetError,
+    h("label", null, "Temporary password (at least 12 characters)", temporary),
+    h("div", { class: "row" },
+      h("button", { class: "primary", type: "submit" }, "Set temporary password"),
+      h("button", { type: "button", onclick: () => { reset.hidden = true; } }, "Cancel"),
+    ),
+  );
+
+  const toggle = confirmPanel(
+    user.disabled
+      ? `Let ${user.username} sign in again?`
+      : `Disable ${user.username}? They're signed out at once and can't sign in. Nothing is deleted, and you can enable them again.`,
+    user.disabled ? "Enable" : "Disable",
+    async () => {
+      await api(`/v1/auth/users/${user.id}/disabled`, { method: "PUT", body: { disabled: !user.disabled } });
+      refresh();
+    },
+    { danger: !user.disabled },
+  );
+
+  const pills = [
+    isAdmin && h("span", { class: "pill" }, "Administrator"),
+    user.disabled
+      ? h("span", { class: "pill bad" }, "Disabled")
+      : h("span", { class: "pill good" }, "Active"),
+    h("span", { class: `pill ${user.chat_enabled ? "" : "warn"}` }, user.chat_enabled ? "Own password set" : "Waiting for first sign-in"),
   ];
+
+  return h("div", { class: `card user-card ${user.disabled ? "is-disabled" : ""}` },
+    h("div", { class: "user-head" },
+      h("span", { class: "avatar", "aria-hidden": "true" }, initials(user.username)),
+      h("div", { class: "grow" },
+        h("div", { class: "user-name" }, user.username, isMe && h("span", { class: "muted small" }, " (you)")),
+        h("div", { class: "row pills" }, pills),
+      ),
+    ),
+    error,
+    h("div", { class: "user-section" },
+      h("div", { class: "small muted" }, "Departments"),
+      boxes.node,
+    ),
+    h("div", { class: "row user-actions" },
+      save,
+      !isMe && h("button", { type: "button", onclick: () => { reset.hidden = false; toggle.hidden = true; temporary.focus(); } }, "Reset password"),
+      !isMe && h("button", {
+        type: "button",
+        class: user.disabled ? "" : "danger",
+        onclick: () => { toggle.hidden = false; reset.hidden = true; },
+      }, user.disabled ? "Enable" : "Disable"),
+      isMe && h("span", { class: "small muted" }, "Change your own password under My account."),
+    ),
+    reset,
+    toggle,
+  );
 }
 
 async function usersView(refresh) {
-  const rows = await api("/v1/auth/users");
-  const error = errorBox();
+  const users = await api("/v1/auth/users");
   const createError = errorBox();
   const username = h("input", { required: true, autocomplete: "off" });
   const password = h("input", { type: "password", required: true, minLength: 12, autocomplete: "new-password" });
   const boxes = departmentBoxes([]);
+  const list = h("div", { class: "user-list" });
+  const search = h("input", { type: "search", placeholder: "Search people", "aria-label": "Search people" });
+  const paint = () => {
+    const q = search.value.trim().toLowerCase();
+    const shown = users.filter((u) => !q || u.username.toLowerCase().includes(q)
+      || u.roles.some((r) => departmentName(r).toLowerCase().includes(q)));
+    fill(list, shown.length ? shown.map((u) => userCard(u, refresh)) : h("div", { class: "card empty" }, "Nobody matches."));
+  };
+  search.addEventListener("input", paint);
+  paint();
+
+  const active = users.filter((u) => !u.disabled).length;
   return h("div", null,
-    heading("Users", "A person can belong to several departments. Changes apply right away."),
-    error,
-    h("div", { class: "card" }, table(
-      ["Username", "Departments", "Password", ""],
-      rows.map((u) => userRow(u, error)),
-      "No users yet.",
-    )),
-    h("form", {
-      class: "card",
-      onsubmit: async (event) => {
-        event.preventDefault();
-        createError.clear();
-        try {
-          await api("/v1/auth/users", {
-            method: "POST",
-            body: { username: username.value, password: password.value, roles: boxes.value() },
-          });
-          refresh();
-        } catch (err) {
-          createError.fail(err);
-        }
+    heading("Users", "Add people, choose their departments, and manage their sign-in. Changes apply right away."),
+    h("div", { class: "tiles" },
+      tile("People", users.length),
+      tile("Active", active),
+      tile("Disabled", users.length - active),
+      tile("Waiting for first sign-in", users.filter((u) => !u.chat_enabled).length),
+    ),
+    h("div", { class: "admin-grid" },
+      h("div", null,
+        h("div", { class: "toolbar" }, search),
+        list,
+      ),
+      h("form", {
+        class: "card add-user",
+        onsubmit: async (event) => {
+          event.preventDefault();
+          createError.clear();
+          try {
+            await api("/v1/auth/users", {
+              method: "POST",
+              body: { username: username.value, password: password.value, roles: boxes.value() },
+            });
+            refresh();
+          } catch (err) {
+            createError.fail(err);
+          }
+        },
       },
-    },
-      h("h2", null, "Add a user"),
-      h("p", { class: "muted" }, "You choose a first password. They replace it to start chatting, and you can't read their private chats."),
-      createError,
-      h("label", null, "Username", username),
-      h("label", null, "First password (at least 12 characters)", password),
-      h("p", { class: "small muted" }, "Departments"),
-      h("p", null, boxes.node),
-      h("button", { class: "primary", type: "submit" }, "Add user"),
+        h("h2", null, "Add a person"),
+        h("p", { class: "muted small" }, "You choose a first password. They replace it at first sign-in, which creates "
+          + "the key for their private chats. You can't read those chats."),
+        createError,
+        h("label", null, "Username", username),
+        h("label", null, "First password (at least 12 characters)", password),
+        h("div", { class: "small muted" }, "Departments"),
+        h("div", { class: "user-section" }, boxes.node),
+        h("button", { class: "primary", type: "submit" }, "Add person"),
+      ),
+    ),
+  );
+}
+
+// ---- credentials (vault secrets) ----
+async function credentialsView(refresh) {
+  const names = await api("/v1/admin/secrets");
+  const error = errorBox();
+  const name = h("input", {
+    required: true, autocomplete: "off", pattern: "[A-Za-z0-9_./-]{1,128}", placeholder: "payment_gateway_key",
+    title: "Letters, numbers, and _ . / - only",
+  });
+  const value = h("input", { type: "password", required: true, autocomplete: "new-password" });
+  const submit = h("button", { class: "primary", type: "submit" }, "Save credential");
+
+  const rows = names.map((secret) => {
+    const remove = confirmPanel(
+      `Delete "${secret}"? Tools that use it stop working until you add it again.`,
+      "Delete",
+      async () => {
+        await api(`/v1/admin/secrets/${encodeURIComponent(secret)}`, { method: "DELETE" });
+        refresh();
+      },
+      { danger: true },
+    );
+    return h("div", { class: "secret-row" },
+      h("div", { class: "row spread" },
+        h("div", { class: "row" }, icon("lock"), h("span", { class: "mono" }, secret)),
+        h("div", { class: "row" },
+          h("button", {
+            type: "button",
+            onclick: () => { name.value = secret; value.value = ""; value.focus(); submit.textContent = "Replace credential"; },
+          }, "Replace"),
+          h("button", { type: "button", class: "danger", onclick: () => { remove.hidden = false; } }, "Delete"),
+        ),
+      ),
+      remove,
+    );
+  });
+
+  return h("div", null,
+    heading("Credentials", "API keys and passwords the platform's tools use, such as a payment gateway or email provider."),
+    h("div", { class: "notice info" }, "Values are encrypted in the vault and are never shown again, not even here. "
+      + "To change one, replace it."),
+    h("div", { class: "admin-grid" },
+      h("div", { class: "card" },
+        h("h2", null, `Stored (${names.length})`),
+        rows.length ? h("div", { class: "secret-list" }, rows) : h("div", { class: "empty" }, "No credentials yet."),
+      ),
+      h("form", {
+        class: "card",
+        onsubmit: async (event) => {
+          event.preventDefault();
+          error.clear();
+          submit.disabled = true;
+          try {
+            await api("/v1/admin/secrets", { method: "PUT", body: { name: name.value, value: value.value } });
+            refresh();
+          } catch (err) {
+            error.fail(err);
+            submit.disabled = false;
+          }
+        },
+      },
+        h("h2", null, "Add or replace"),
+        error,
+        h("label", null, "Name", name),
+        h("label", null, "Value", value),
+        submit,
+      ),
     ),
   );
 }

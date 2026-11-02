@@ -560,6 +560,36 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .facts dt { color: var(--ink-2); }
 .facts dd { margin: 0; }
 
+/* ---- admin: users and credentials ---- */
+.admin-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.admin-grid > form.card { position: sticky; top: 16px; }
+.toolbar { margin-bottom: 12px; }
+.user-list { display: flex; flex-direction: column; gap: 12px; }
+.user-list .card { margin-bottom: 0; }
+.user-card.is-disabled { opacity: 0.72; }
+.user-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.user-head .avatar { width: 40px; height: 40px; font-size: 16px; }
+.user-name { font-weight: 650; font-size: 15.5px; }
+.pills { gap: 6px; margin-top: 2px; }
+.user-section { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.user-actions { padding-top: 12px; border-top: 1px solid var(--line); }
+
+.panel {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+}
+
+.panel p:last-of-type { margin-bottom: 12px; }
+.panel label { margin-bottom: 12px; }
+
+.secret-list { display: flex; flex-direction: column; }
+.secret-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.secret-row:last-child { border-bottom: 0; }
+.secret-row svg { color: var(--ink-2); flex: none; }
+
 /* ---- motion ---- */
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
@@ -586,6 +616,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .greeting h1 { font-size: 26px; }
   .greeting .logo { margin-bottom: 14px; }
   .ideas button { flex-basis: 100%; }
+  .admin-grid { grid-template-columns: minmax(0, 1fr); }
+  .admin-grid > form.card { position: static; }
   .auth { padding: 26px 20px 20px; }
 }
 

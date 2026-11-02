@@ -47,6 +47,10 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   Gemma 4's 512-wide full-attention heads exceed Turing's 64 KB shared memory with vLLM's default tiles. With both,
   the model loads (16.6 GiB), has a 157k-token KV cache (about 19 concurrent 8k chats) and answers coherently in fp16
   at about 90 tokens/s for a single chat. vLLM does not log prompts (verified).
+- Admin pages: Users (departments, reset password, disable/enable; migration 0005 adds `users.disabled`, checked at
+  login and on every request) and Credentials (vault secrets; values are write-only). An admin reset removes the
+  password's copy of the chat key but keeps the recovery code's copy, so "Forgot password?" still restores chats;
+  chats encrypted under a key nobody can unlock any more are left out of the chat list.
 - The web UI was restyled (brand mark, sign-in card, welcome screen, sidebar sections). Same CSP, same class names.
 - `huggingface.co` works only because of `/etc/hosts` entries the owner added (real addresses from DNS-over-HTTPS).
   CDN addresses rotate, so redo them if downloads fail.
@@ -54,9 +58,9 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.
-2. **Collector to Loki.** The old `loki` exporter no longer exists, so `deploy/otel-collector.yaml` now uses
-   `otlphttp` to `http://loki:3100/otlp`. Confirm logs reach Grafana's log panels with `service_name` and
-   `severity_text`. The telemetry setting and all image tags were checked against upstream, but nothing has run.
+2. ~~**Collector to Loki.**~~ Verified natively (Alloy in place of the collector): gateway logs reach Loki with
+   `service_name`, and both dashboards show live data. vLLM 0.32 renamed `vllm:gpu_cache_usage_perc` to
+   `vllm:kv_cache_usage_perc`; the dashboard and the GpuCacheFull alert now use the new name.
 3. **MinIO image.** Docker Hub returned nothing for `minio/minio`, so compose uses the tag from MinIO's own compose
    file on quay.io. Quay needed auth to confirm the tag: check that it pulls and that `mc ready local` works.
 4. **Attachments and retention against real MinIO.** Only fake storage has been used.
@@ -72,9 +76,12 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 1. Get the weights. The model id is now `google/gemma-4-26B-A4B-it`. The card is a Quadro RTX 8000 (48 GB, Turing,
    driver 580, CUDA 13.0): no FP8 and no bf16, so use AWQ or GPTQ INT4 weights with `--dtype half`.
 2. Benchmark, and tune `--max-model-len`, `--max-num-seqs`, and `max_concurrency` in `app/departments/packs.py`.
-3. **Test triage accuracy with the real model** (`TRIAGE_PROMPT` in `guards.py`). A personal message wrongly sorted as
-   work is stored outside the user's encryption, so measure that error especially. The NSFW and forwarding prompts
-   have also only seen a fake model.
+3. ~~**Test triage accuracy with the real model.**~~ Done 2026-11-02 with `scripts/eval_triage.py` (54 labelled
+   cases in `tests/eval/triage_cases.jsonl`, 3 runs, admin and logistics+research personas): 324/324 correct, and
+   0/180 personal messages sorted as work, including 78 that use work words ("my bill", "order a pizza"). Triage
+   now lists every department and marks the ones a person isn't in, so their requests name the real owner and the
+   Request Manager refuses them, instead of landing in a department they have. The set is small and hand-written:
+   add real misroutes to it as they appear, and re-run after any prompt or model change.
 4. Real TLS and DNS, load test, security review.
 5. Alert notifications: rules exist in `deploy/prometheus-rules.yml`, but nothing sends them. Add a Grafana contact point.
 

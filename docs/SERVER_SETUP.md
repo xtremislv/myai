@@ -245,5 +245,25 @@ use a named tunnel (step 8, option B), ideally with Cloudflare Access in front.
 patch -p1 -d /root/vllm-env/lib/python3.12/site-packages < deploy/patches/vllm-0.32.0-turing-head512.patch
 ```
 
-Not covered yet: the OpenTelemetry collector, Prometheus, Loki and Grafana. Until they run, the gateway
-logs harmless "Failed to export ... 127.0.0.1:4317" warnings.
+**11. Logs and dashboards.** Prometheus from Ubuntu; Grafana, Loki and Grafana Alloy from Grafana's apt
+repository. Alloy stands in for the OpenTelemetry collector (no apt package): it receives the gateway's OTLP on
+127.0.0.1:4317 and sends logs to Loki. Configs are in `deploy/native/`.
+```bash
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
+echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" > /etc/apt/sources.list.d/grafana.list
+apt-get update && apt-get install -y --no-install-recommends grafana=13.0.2 loki=3.7.9 alloy prometheus
+scripts/start_native.sh            # also opens a second quick tunnel for Grafana
+scripts/start_native.sh status     # prints both public addresses
+```
+| Service | Local port | Reached from outside |
+|---|---|---|
+| App (gateway) | 127.0.0.1:8000 | app quick tunnel, `/ui/` |
+| Grafana | 127.0.0.1:3000 | dashboards quick tunnel (user `admin`, password `GRAFANA_PASSWORD`) |
+| Prometheus | 127.0.0.1:9090 | no; use Grafana, or `ssh -L 9090:localhost:9090` |
+| Loki | 127.0.0.1:3100 | no; use Grafana's Explore |
+| Alloy (OTLP) | 127.0.0.1:4317/4318, UI :12345 | no |
+| vLLM | 127.0.0.1:8001 | no |
+
+Dashboards: *AI Platform — LLM & ACL* and *AI Platform — Diagnostics & Logs*. Prometheus keeps 15 days (max 2 GB)
+and Loki 14 days of logs.

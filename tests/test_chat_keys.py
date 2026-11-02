@@ -14,6 +14,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.deps import (
+    subject_from_claims as _REAL_SUBJECT_LOOKUP,  # conftest patches the attribute
+)
 from app.auth.security import hash_password, issue_token
 from app.db.session import Base, User, get_session
 from app.departments.registry import seed_departments
@@ -215,3 +218,84 @@ def test_password_above_bcrypts_limit_cannot_login_with_a_matching_prefix(api):
         s.commit()
     assert _login(api, long_password).status_code == 200
     assert _login(api, "x" * 72 + "y" * 8).status_code == 401
+
+
+# ---- admin: password reset and disabling accounts ----
+def _real_lookup(monkeypatch):
+    """conftest lets tokens without a user row through; these tests need the real check."""
+    from app.api import deps
+
+    monkeypatch.setattr(deps, "subject_from_claims", _REAL_SUBJECT_LOOKUP)
+
+
+def _own_password_and_a_chat(api):
+    first = _bearer(_login(api, INITIAL).json())
+    changed = _change(api, first, INITIAL, MINE).json()
+    headers = _bearer(changed)
+    assert _chat_as(api, headers).status_code == 200
+    return headers, changed["recovery_code"]
+
+
+def _threads(api, headers):
+    response = api.client.get("/v1/chat/threads", headers=headers)
+    assert response.status_code == 200, response.text
+    return [t["thread_id"] for t in response.json()]
+
+
+def test_reset_password_keeps_chats_for_someone_with_their_recovery_code(api):
+    headers, code = _own_password_and_a_chat(api)
+    assert _threads(api, headers) == ["t"]
+    alice = _alice(api).id
+    reset = api.client.post(f"/v1/auth/users/{alice}/reset-password", headers=ADMIN, json={"password": "temporary-from-admin"})
+    assert reset.status_code == 200 and reset.json()["chat_enabled"] is False
+    assert _login(api, MINE).status_code == 401
+    recovered = api.client.post(
+        "/v1/auth/recover", json={"username": "alice", "recovery_code": code, "new_password": "brand-new-password"}
+    )
+    assert recovered.status_code == 200
+    assert _threads(api, _bearer(recovered.json())) == ["t"]
+
+
+def test_reset_password_without_the_code_starts_fresh_and_never_gives_the_admin_the_key(api):
+    headers, _ = _own_password_and_a_chat(api)
+    alice = _alice(api).id
+    api.client.post(f"/v1/auth/users/{alice}/reset-password", headers=ADMIN, json={"password": "temporary-from-admin"})
+    temporary = _login(api, "temporary-from-admin").json()
+    assert temporary["must_change_password"] is True  # the admin's password never unlocks a chat key
+    fresh = _bearer(_change(api, _bearer(temporary), "temporary-from-admin", "brand-new-password").json())
+    assert _threads(api, fresh) == []  # the old chat can't be opened, and listing doesn't break
+
+
+def test_disabled_account_is_locked_out_at_once_and_can_be_re_enabled(api, monkeypatch):
+    _real_lookup(monkeypatch)
+    with api.Session() as s:  # the real lookup needs the admin to exist too
+        s.add(User(id="root", username="root", password_hash=hash_password("x" * 14), roles=["admin"]))
+        s.commit()
+    headers, code = _own_password_and_a_chat(api)
+    alice = _alice(api).id
+    url = f"/v1/auth/users/{alice}/disabled"
+    assert api.client.put(url, headers=ADMIN, json={"disabled": True}).json()["disabled"] is True
+    assert _chat_as(api, headers).status_code == 403  # a live token stops working
+    assert _login(api, MINE).status_code == 403
+    assert api.client.post(
+        "/v1/auth/recover", json={"username": "alice", "recovery_code": code, "new_password": "x" * 14}
+    ).status_code == 403
+    assert api.client.put(url, headers=ADMIN, json={"disabled": False}).status_code == 200
+    assert _login(api, MINE).status_code == 200
+
+
+def test_admin_cannot_disable_or_reset_their_own_account(api):
+    for method, path, body in [
+        ("put", "/v1/auth/users/root/disabled", {"disabled": True}),
+        ("post", "/v1/auth/users/root/reset-password", {"password": "another-long-pass"}),
+    ]:
+        assert getattr(api.client, method)(path, headers=ADMIN, json=body).status_code == 400
+
+
+def test_only_the_admin_can_manage_accounts(api):
+    alice = _alice(api).id
+    staff = {"authorization": f"Bearer {issue_token('bob', 'bob', ['hr'])}"}
+    assert api.client.put(f"/v1/auth/users/{alice}/disabled", headers=staff, json={"disabled": True}).status_code == 403
+    assert api.client.post(
+        f"/v1/auth/users/{alice}/reset-password", headers=staff, json={"password": "another-long-pass"}
+    ).status_code == 403
