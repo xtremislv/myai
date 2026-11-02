@@ -25,3 +25,4 @@ def nsfw_model_unavailable(monkeypatch):
     use their keyword fallback unless a test sets a verdict."""
     monkeypatch.setattr(guards, "model_verdict", lambda message: None)
     monkeypatch.setattr(guards, "forward_verdict", lambda message: None)
+    monkeypatch.setattr(guards, "triage_verdict", lambda message, departments, recent: None)

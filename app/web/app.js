@@ -2,7 +2,9 @@
 
 // The token can open the user's private chats, so it stays in memory only:
 // reloading the page signs out. All page text is set through textContent.
-const state = { token: null, username: "", roles: [], view: "overview", counts: {}, requests: [] };
+const state = {
+  token: null, username: "", roles: [], view: "chat", thread: null, threads: [], counts: {}, poll: null,
+};
 const root = document.getElementById("app");
 
 const OUTCOMES = {
@@ -16,7 +18,50 @@ const OUTCOMES = {
   error: ["Failed", "bad"],
 };
 
-// ---- small DOM helper ----
+const REQUEST_LABELS = {
+  manage_bill: "Record a bill",
+  initiate_payment: "Make a payment",
+  manage_order: "Change an order",
+  book_service: "Book a service",
+  order: "Order",
+  service: "Service booking",
+  bill: "Bill",
+};
+
+const REQUEST_STATES = {
+  pending: ["Waiting for approval", "warn"],
+  approved: ["Approved", "good"],
+  denied: ["Denied", "bad"],
+  failed: ["Failed", "bad"],
+  queued: ["With the accounts team", "warn"],
+  processing: ["In progress", "warn"],
+  awaiting: ["Waiting for approval", "warn"],
+  done: ["Done", "good"],
+};
+const FINISHED = new Set(["approved", "denied", "failed", "done"]);
+
+const DEPARTMENTS = ["account", "hr", "logistics", "researcher", "superuser"];
+const DEPARTMENT_NAMES = {
+  account: "Accounts", hr: "HR", logistics: "Logistics", researcher: "Research", superuser: "Superuser", admin: "Admin",
+};
+const departmentName = (name) => DEPARTMENT_NAMES[name] || name;
+
+const IDEAS = {
+  account: "Show the ledger summary",
+  logistics: "Track shipment SHP-8842",
+  researcher: "Summarize the Q3 research notes",
+  hr: "How many career emails came in?",
+  superuser: "Check stock of laptops",
+};
+
+const ICONS = {
+  plus: "M12 5v14M5 12h14",
+  send: "M12 19V5M6 11l6-6 6 6",
+  menu: "M4 7h16M4 12h16M4 17h16",
+  pen: "M4 20l1-4L16 5l3 3L8 19l-4 1z",
+};
+
+// ---- small DOM helpers ----
 function h(tag, props, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -33,6 +78,19 @@ function h(tag, props, ...children) {
   return el;
 }
 
+function icon(name) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  for (const [k, v] of Object.entries({
+    width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+    "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true",
+  })) svg.setAttribute(k, v);
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", ICONS[name]);
+  svg.append(path);
+  return svg;
+}
+
 function show(...nodes) {
   root.replaceChildren(...nodes);
 }
@@ -40,10 +98,6 @@ function show(...nodes) {
 // replaceChildren would print `false` from a `condition && node` as text.
 function fill(el, ...nodes) {
   el.replaceChildren(...nodes.flat().filter(Boolean));
-}
-
-function field(label, props) {
-  return h("label", null, label, h("input", props));
 }
 
 function outcomePill(outcome) {
@@ -86,11 +140,11 @@ async function api(path, { method = "GET", body, form, raw } = {}) {
   });
   if (response.status === 401 && state.token && path !== "/v1/auth/change-password"
       && path !== "/v1/auth/recovery-code") {
-    signOut("Your session ended. Please sign in again.");
+    signOut("Your session ended. Sign in again.");
     throw new Error("Session ended");
   }
   if (!response.ok) {
-    let detail = `Something went wrong (${response.status}).`;
+    let detail = `The server returned an error (${response.status}). Try again.`;
     try {
       const data = await response.json();
       if (typeof data.detail === "string") detail = data.detail;
@@ -111,7 +165,10 @@ function useToken(result, username) {
 }
 
 function signOut(message) {
-  Object.assign(state, { token: null, username: "", roles: [], view: "overview", counts: {}, requests: [] });
+  clearInterval(state.poll);
+  Object.assign(state, {
+    token: null, username: "", roles: [], view: "chat", thread: null, threads: [], counts: {}, poll: null,
+  });
   loginScreen(message);
 }
 
@@ -164,7 +221,7 @@ function firstPasswordScreen(oldPassword) {
     onsubmit: async (event) => {
       event.preventDefault();
       error.clear();
-      if (next.value !== again.value) return error.fail(new Error("The passwords do not match."));
+      if (next.value !== again.value) return error.fail(new Error("The passwords don't match."));
       try {
         const result = await api("/v1/auth/change-password", {
           method: "POST", body: { old_password: oldPassword, new_password: next.value },
@@ -177,8 +234,8 @@ function firstPasswordScreen(oldPassword) {
     },
   },
     h("h1", null, "Set your own password"),
-    h("p", { class: "muted" }, "Your administrator chose your first password. Set your own to turn on private chat. "
-      + "Only your password can unlock your chats, so your administrator will not be able to read them."),
+    h("p", { class: "muted" }, "Your administrator chose your first password. Set your own to start chatting. "
+      + "Only your password can unlock your private chats, so your administrator can't read them."),
     error,
     h("label", null, "New password (at least 12 characters)", next),
     h("label", null, "New password again", again),
@@ -201,9 +258,9 @@ function recoveryCodeScreen(code) {
   show(h("div", { class: "center" }, h("div", { class: "card auth" },
     h("h1", null, "Save your recovery code"),
     h("p", null, "If you forget your password, this code is the only way back into your private chats. "
-      + "It will not be shown again, and nobody can reset it for you."),
+      + "It won't be shown again, and nobody can reset it for you."),
     h("div", { class: "code", id: "recovery-code" }, code),
-    h("div", { class: "row" }, copy),
+    h("p", null, copy),
     h("div", { class: "notice warn" }, "Keep it somewhere private. Anyone with this code can read your private chats."),
     h("label", { class: "check" }, saved, h("span", null, "I have saved my recovery code")),
     proceed,
@@ -234,13 +291,13 @@ function recoverScreen() {
   },
     h("h1", null, "Recover your account"),
     h("p", { class: "muted" }, "Your recovery code sets a new password and keeps your chats. "
-      + "The code can be used once, and you will get a new one."),
+      + "The code works once, and you'll get a new one."),
     error,
     h("label", null, "Username", username),
     h("label", null, "Recovery code", code),
     h("label", null, "New password (at least 12 characters)", next),
     h("div", { class: "row spread" },
-      h("button", { class: "primary", type: "submit" }, "Recover"),
+      h("button", { class: "primary", type: "submit" }, "Recover account"),
       h("button", { class: "link", type: "button", onclick: () => loginScreen() }, "Back to sign in"),
     ),
   )));
@@ -248,20 +305,20 @@ function recoverScreen() {
 }
 
 // ---- shell ----
-function pages() {
+function morePages() {
   return [
-    ["overview", "Overview", overviewView],
-    ["chat", "Private chat", chatView],
-    ["requests", "Requests", requestsView],
-    has("admin") && ["approvals", "Approvals", approvalsView],
-    has("admin", "account") && ["inbox", "Accounts inbox", inboxView],
-    has("admin", "hr", "account") && ["reports", "Reports", reportsView],
+    has("admin") && ["approvals", "Approvals", approvalsView, "pending_approvals"],
+    has("admin", "account") && ["inbox", "Accounts inbox", inboxView, "inbox_queued"],
+    has("admin", "hr", "account") && ["reports", "Reports", reportsView, "open_reports"],
     has("admin") && ["users", "Users", usersView],
+    ["overview", "Overview", overviewView],
     ["account", "My account", accountView],
   ].filter(Boolean);
 }
 
-const BADGES = { approvals: "pending_approvals", inbox: "inbox_queued", reports: "open_reports" };
+function newThreadId() {
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
 async function refreshCounts() {
   try {
@@ -271,50 +328,291 @@ async function refreshCounts() {
 }
 
 function shell() {
-  const main = h("main", { class: "main" });
-  const nav = h("nav", { class: "nav", "aria-label": "Main" });
+  const view = h("div", { class: "view" });
+  const chats = h("div", { class: "chats", "aria-label": "Your chats" });
+  const more = h("div", { class: "side-more" });
+  const side = h("nav", { class: "side", "aria-label": "Main" });
+  const scrim = h("button", { class: "scrim", "aria-label": "Close menu", onclick: () => toggleSide(false) });
+  const toggleSide = (open) => {
+    side.classList.toggle("open", open);
+    scrim.classList.toggle("open", open);
+  };
 
   const paint = () => {
-    nav.replaceChildren(
-      h("div", { class: "brand" }, "AI Platform"),
-      ...pages().map(([id, label]) => {
-        const count = state.counts[BADGES[id]];
-        return h("button", {
-          class: state.view === id ? "active" : "",
-          "aria-current": state.view === id ? "page" : null,
-          onclick: () => go(id),
-        }, h("span", null, label), count > 0 && h("span", { class: "badge" }, count));
-      }),
-      h("div", { class: "who small" },
-        h("div", null, state.username),
-        h("div", { class: "muted" }, state.roles.join(", ") || "no department"),
-        h("button", { class: "link", onclick: () => signOut() }, "Sign out"),
-      ),
+    fill(chats,
+      !state.threads.length && h("div", { class: "chats-empty" }, "Your chats will appear here."),
+      state.threads.map((t) => h("button", {
+        class: `side-item ${state.view === "chat" && t.thread_id === state.thread ? "active" : ""}`,
+        onclick: () => openChat(t.thread_id),
+      }, h("span", { class: "title", title: t.title }, t.title || "Untitled chat"))),
     );
+    fill(more, morePages().map(([id, label, , badge]) => {
+      const count = badge && state.counts[badge];
+      return h("button", {
+        class: `side-item ${state.view === id ? "active" : ""}`,
+        "aria-current": state.view === id ? "page" : null,
+        onclick: () => go(id),
+      }, h("span", { class: "title" }, label), count > 0 && h("span", { class: "badge" }, count));
+    }));
+  };
+
+  const reloadThreads = async () => {
+    try {
+      state.threads = await api("/v1/chat/threads");
+    } catch (err) {
+      state.threads = [];
+      if (!err.message.includes("change your password")) throw err;
+    }
+    paint();
   };
 
   const go = async (id) => {
+    clearInterval(state.poll);
     state.view = id;
-    const [, , view] = pages().find(([page]) => page === id);
+    toggleSide(false);
     paint();
-    main.replaceChildren(h("div", { class: "muted" }, "Loading..."));
+    const [, , render] = morePages().find(([page]) => page === id);
+    view.replaceChildren(h("div", { class: "page muted" }, "Loading..."));
     try {
-      const content = await view(() => refresh());
-      main.replaceChildren(content);
+      const content = await render(() => go(id));
+      view.replaceChildren(h("div", { class: "page" }, content));
     } catch (err) {
-      if (state.token) main.replaceChildren(h("div", { class: "notice error", role: "alert" }, err.message));
+      if (state.token) view.replaceChildren(h("div", { class: "page" }, h("div", { class: "notice error", role: "alert" }, err.message)));
     }
     refreshCounts().then(() => { if (state.token) paint(); });
   };
-  const refresh = () => go(state.view);
-  state.go = go;
 
-  show(h("div", { class: "shell" }, nav, main));
-  go(state.view);
+  const openChat = async (threadId) => {
+    clearInterval(state.poll);
+    state.view = "chat";
+    state.thread = threadId;
+    toggleSide(false);
+    paint();
+    try {
+      view.replaceChildren(await chatView(threadId, { reloadThreads, paint }));
+    } catch (err) {
+      if (state.token) view.replaceChildren(h("div", { class: "page" }, h("div", { class: "notice error", role: "alert" }, err.message)));
+    }
+  };
+
+  state.go = go;
+  fill(side,
+    h("div", { class: "brand" }, "AI Platform"),
+    h("button", { class: "new-chat", onclick: () => openChat(newThreadId()) }, icon("pen"), "New chat"),
+    chats,
+    more,
+    h("div", { class: "who" },
+      h("span", null, state.username),
+      h("button", { class: "link", onclick: () => signOut() }, "Sign out"),
+    ),
+  );
+  show(h("div", { class: "shell" },
+    side,
+    scrim,
+    h("div", { class: "main" },
+      h("div", { class: "topbar" },
+        h("button", { class: "icon-button", "aria-label": "Open menu", onclick: () => toggleSide(true) }, icon("menu")),
+        h("span", { class: "brand" }, "AI Platform"),
+      ),
+      view,
+    ),
+  ));
+  reloadThreads().catch(() => {}).then(() => {
+    openChat(newThreadId());
+    refreshCounts().then(() => { if (state.token) paint(); });
+  });
 }
 
-function heading(title, subtitle) {
-  return h("div", { class: "head" }, h("h1", null, title), subtitle && h("p", { class: "muted" }, subtitle));
+function heading(text, subtitle) {
+  return h("div", { class: "head" }, h("h1", null, text), subtitle && h("p", { class: "muted" }, subtitle));
+}
+
+// ---- chat ----
+async function chatView(thread, { reloadThreads, paint }) {
+  const known = () => state.threads.some((t) => t.thread_id === thread);
+  const messages = h("div", { class: "messages column", "aria-live": "polite" });
+  const requests = h("div", { class: "reqs column" });
+  const scroll = h("div", { class: "scroll" }, messages, requests);
+  const files = h("div", { class: "files" });
+  const error = errorBox();
+  const input = h("textarea", { placeholder: "Message the assistant", "aria-label": "Message", rows: 1 });
+  const send = h("button", { class: "primary round", type: "submit", "aria-label": "Send" }, icon("send"));
+  const picker = h("input", { type: "file", class: "hidden-input", id: "file-picker", onchange: () => upload() });
+
+  const toBottom = () => { scroll.scrollTop = scroll.scrollHeight; };
+  const setEmpty = (empty) => content.classList.toggle("is-empty", empty);
+
+  const bubble = (role, text, handledBy) => {
+    const node = h("div", { class: `msg ${role}` }, text,
+      role === "assistant" && handledBy && h("span", { class: "handled" }, `Handled as work by ${departmentName(handledBy)}`));
+    messages.append(node);
+    toBottom();
+    return node;
+  };
+
+  const paintFiles = async () => {
+    const items = await api(`/v1/chat/attachments?thread_id=${encodeURIComponent(thread)}`);
+    files.replaceChildren(...items.map((item) => h("div", { class: "file" },
+      h("span", { title: item.name }, `${item.name} (${formatSize(item.size)})`),
+      h("button", {
+        type: "button",
+        onclick: async () => {
+          const blob = await api(`/v1/chat/attachments/${item.id}`, { raw: true });
+          const link = h("a", { href: URL.createObjectURL(blob), download: item.name });
+          link.click();
+          URL.revokeObjectURL(link.href);
+        },
+      }, "Download"),
+      h("button", {
+        type: "button",
+        class: "danger",
+        "aria-label": `Delete ${item.name}`,
+        onclick: async () => {
+          await api(`/v1/chat/attachments/${item.id}`, { method: "DELETE" });
+          paintFiles();
+        },
+      }, "Delete"),
+    )));
+  };
+
+  const paintRequests = async () => {
+    const items = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/requests`);
+    fill(requests, items.map((item) => {
+      const [text, kind] = REQUEST_STATES[item.state] || [item.state, ""];
+      return h("div", { class: "req" },
+        h("div", { class: "row spread" },
+          h("span", null, `${REQUEST_LABELS[item.label] || item.label} (${departmentName(item.department)})`),
+          h("span", { class: `pill ${kind}` }, text),
+        ),
+        item.result && h("div", { class: "pre" }, item.result),
+      );
+    }));
+    return items.some((item) => !FINISHED.has(item.state));
+  };
+
+  const watchRequests = async () => {
+    clearInterval(state.poll);
+    if (await paintRequests()) {
+      state.poll = setInterval(async () => {
+        if (!state.token || state.thread !== thread || !(await paintRequests())) clearInterval(state.poll);
+      }, 10000);
+    }
+  };
+
+  const upload = async () => {
+    const file = picker.files[0];
+    if (!file) return;
+    error.clear();
+    const form = new FormData();
+    form.append("thread_id", thread);
+    form.append("file", file);
+    try {
+      const result = await api("/v1/chat/attachments", { method: "POST", form });
+      if (result.outcome === "flagged_nsfw") {
+        setEmpty(false);
+        bubble("flagged", `"${file.name}" was blocked and reported to HR and the admin.`);
+      }
+      await paintFiles();
+    } catch (err) {
+      error.fail(err);
+    }
+    picker.value = "";
+  };
+
+  const grow = () => {
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+  };
+
+  const composer = h("form", {
+    class: "composer",
+    onsubmit: async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text || send.disabled) return;
+      error.clear();
+      input.value = "";
+      grow();
+      send.disabled = true;
+      setEmpty(false);
+      const mine = bubble("user", text);
+      const thinking = h("div", { class: "msg assistant thinking" }, "Thinking...");
+      messages.append(thinking);
+      toBottom();
+      try {
+        const result = await api("/v1/chat", { method: "POST", body: { message: text, thread_id: thread } });
+        thinking.remove();
+        if (result.outcome === "flagged_nsfw") {
+          mine.remove();
+          bubble("flagged", "This message was blocked and reported to HR and the admin. It wasn't saved in this chat.");
+        } else {
+          bubble("assistant", result.reply, result.route === "work" ? result.department : null);
+          await reloadThreads();
+          if (result.route === "work") await watchRequests();
+          toBottom();
+        }
+      } catch (err) {
+        thinking.remove();
+        mine.remove();
+        input.value = text;
+        grow();
+        error.fail(err);
+        if (!messages.children.length) setEmpty(true);
+      }
+      send.disabled = false;
+      input.focus();
+    },
+  },
+    files,
+    input,
+    h("div", { class: "composer-actions" },
+      h("button", { type: "button", class: "round", "aria-label": "Attach a file", title: "Attach a file", onclick: () => picker.click() }, icon("plus")),
+      picker,
+      send,
+    ),
+  );
+  input.addEventListener("input", grow);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      composer.requestSubmit();
+    }
+  });
+
+  const ideaTexts = [
+    ...state.roles.filter((role) => IDEAS[role]).map((role) => IDEAS[role]),
+    "Help me write a polite email",
+  ].slice(0, 4);
+
+  const content = h("div", { class: "chat is-empty" },
+    h("h1", { class: "sr-only" }, "Chat"),
+    h("div", { class: "greeting column" }, h("h1", null, `What can I help with, ${state.username}?`)),
+    scroll,
+    h("div", { class: "dock column" },
+      error,
+      composer,
+      h("div", { class: "ideas" }, ideaTexts.map((text) => h("button", {
+        type: "button",
+        onclick: () => {
+          input.value = text;
+          grow();
+          input.focus();
+        },
+      }, text))),
+      h("p", { class: "fineprint" }, "Private chats are encrypted with your key. Work is visible to the department "
+        + "that handles it. Explicit or illegal content is reported."),
+    ),
+  );
+
+  if (known()) {
+    const history = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/messages`);
+    history.forEach((m) => bubble(m.role, m.content, m.handled_by));
+    if (history.length) setEmpty(false);
+    await watchRequests();
+  }
+  await paintFiles();
+  setTimeout(() => { input.focus(); toBottom(); }, 0);
+  return content;
 }
 
 // ---- overview ----
@@ -366,7 +664,7 @@ async function overviewView() {
   const data = await refreshCounts();
   const total = data.activity.reduce((sum, a) => sum + a.count, 0);
   const tiles = [
-    tile(has("admin") ? "Requests, last 24 hours" : "Your requests, last 24 hours", total),
+    tile(has("admin") ? "Work requests, last 24 hours" : "Your work requests, last 24 hours", total),
     data.pending_approvals !== undefined && tile("Waiting for approval", data.pending_approvals, null, "approvals"),
     data.inbox_queued !== undefined && tile("Accounts inbox", data.inbox_queued, "queued", "inbox"),
     data.open_reports !== undefined && tile("Open reports", data.open_reports, null, "reports"),
@@ -378,11 +676,11 @@ async function overviewView() {
     .map((a) => [a.department === "none" ? "unrouted" : a.department, outcomePill(a.outcome), a.count]);
 
   return h("div", null,
-    heading("Overview", `Signed in as ${state.username}. Private chats are never counted here.`),
+    heading("Overview", "Work handled by departments. Private chats are never counted here."),
     h("div", { class: "tiles" }, tiles),
     h("div", { class: "card" },
-      h("h2", null, "Requests by department, last 24 hours"),
-      total ? activityChart(data.activity) : h("div", { class: "empty" }, "No requests in the last 24 hours."),
+      h("h2", null, "Work requests by department, last 24 hours"),
+      total ? activityChart(data.activity) : h("div", { class: "empty" }, "No work requests in the last 24 hours."),
     ),
     total > 0 && h("div", { class: "card" },
       h("h2", null, "Outcomes"),
@@ -398,250 +696,6 @@ async function overviewView() {
   );
 }
 
-// ---- private chat ----
-function newThreadId() {
-  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function chatDisabled() {
-  return h("div", null,
-    heading("Private chat"),
-    h("div", { class: "notice warn" }, "Set your own password to turn on private chat."),
-    h("button", { class: "primary", onclick: () => state.go("account") }, "Go to My account"),
-  );
-}
-
-async function chatView() {
-  let threads;
-  try {
-    threads = await api("/v1/chat/threads");
-  } catch (err) {
-    if (err.message.includes("change your password")) return chatDisabled();
-    throw err;
-  }
-
-  let current = threads[0] ? threads[0].thread_id : newThreadId();
-  const list = h("div", { class: "threads" });
-  const messages = h("div", { class: "messages", "aria-live": "polite" });
-  const files = h("div", { class: "files" });
-  const error = errorBox();
-  const input = h("textarea", { placeholder: "Write a message", "aria-label": "Message", required: true });
-  const mode = h("select", { "aria-label": "How the AI works" },
-    h("option", { value: "single" }, "Quick answer"),
-    h("option", { value: "team" }, "Plan, research, write"),
-  );
-  mode.classList.add("grow");
-  const send = h("button", { class: "primary", type: "submit" }, "Send");
-  const picker = h("input", { type: "file", class: "hidden-input", id: "file-picker", onchange: () => upload() });
-
-  const bubble = (role, text) => {
-    const node = h("div", { class: `msg ${role}` }, text);
-    messages.append(node);
-    messages.scrollTop = messages.scrollHeight;
-    return node;
-  };
-
-  const paintThreads = () => {
-    const known = threads.some((t) => t.thread_id === current);
-    fill(list,
-      h("button", { class: "primary", onclick: () => open(newThreadId()) }, "New chat"),
-      !known && h("button", { class: "item active" }, h("span", { class: "title" }, "New chat")),
-      ...threads.map((t) => h("button", {
-        class: `item ${t.thread_id === current ? "active" : ""}`,
-        onclick: () => open(t.thread_id),
-      },
-        h("span", { class: "title" }, t.title || "Untitled"),
-        h("span", { class: "small muted" }, new Date(t.updated_at).toLocaleDateString()),
-      )),
-    );
-  };
-
-  const paintFiles = async () => {
-    const items = await api(`/v1/chat/attachments?thread_id=${encodeURIComponent(current)}`);
-    files.replaceChildren(...items.map((item) => h("div", { class: "file" },
-      h("span", { title: item.name }, `${item.name} (${formatSize(item.size)})`),
-      h("button", {
-        type: "button",
-        onclick: async () => {
-          const blob = await api(`/v1/chat/attachments/${item.id}`, { raw: true });
-          const link = h("a", { href: URL.createObjectURL(blob), download: item.name });
-          link.click();
-          URL.revokeObjectURL(link.href);
-        },
-      }, "Download"),
-      h("button", {
-        type: "button",
-        class: "danger",
-        "aria-label": `Delete ${item.name}`,
-        onclick: async () => {
-          await api(`/v1/chat/attachments/${item.id}`, { method: "DELETE" });
-          paintFiles();
-        },
-      }, "Delete"),
-    )));
-  };
-
-  const open = async (threadId) => {
-    current = threadId;
-    error.clear();
-    paintThreads();
-    messages.replaceChildren();
-    if (threads.some((t) => t.thread_id === threadId)) {
-      const history = await api(`/v1/chat/threads/${encodeURIComponent(threadId)}/messages`);
-      history.forEach((m) => bubble(m.role, m.content));
-    }
-    await paintFiles();
-    input.focus();
-  };
-
-  const upload = async () => {
-    const file = picker.files[0];
-    if (!file) return;
-    error.clear();
-    const form = new FormData();
-    form.append("thread_id", current);
-    form.append("file", file);
-    try {
-      const result = await api("/v1/chat/attachments", { method: "POST", form });
-      if (result.outcome === "flagged_nsfw") {
-        bubble("flagged", `"${file.name}" was blocked and reported to HR and the admin.`);
-      }
-      await paintFiles();
-    } catch (err) {
-      error.fail(err);
-    }
-    picker.value = "";
-  };
-
-  const composer = h("form", {
-    class: "composer",
-    onsubmit: async (event) => {
-      event.preventDefault();
-      const text = input.value.trim();
-      if (!text) return;
-      error.clear();
-      input.value = "";
-      send.disabled = true;
-      bubble("user", text);
-      const thinking = bubble("assistant", "Thinking...");
-      try {
-        const result = await api("/v1/chat", {
-          method: "POST", body: { message: text, thread_id: current, mode: mode.value },
-        });
-        thinking.remove();
-        if (result.outcome === "flagged_nsfw") {
-          messages.lastChild.remove();
-          bubble("flagged", "This message was blocked and reported to HR and the admin. It was not saved in this chat.");
-        } else {
-          bubble("assistant", result.reply);
-          threads = await api("/v1/chat/threads");
-          paintThreads();
-        }
-      } catch (err) {
-        thinking.remove();
-        input.value = text;
-        messages.lastChild.remove();
-        error.fail(err);
-      }
-      send.disabled = false;
-      input.focus();
-    },
-  },
-    files,
-    error,
-    input,
-    h("div", { class: "row" },
-      send,
-      h("button", { type: "button", onclick: () => picker.click() }, "Attach file"),
-      picker,
-      h("div", { class: "grow" }, mode),
-    ),
-    h("p", { class: "small muted" }, "Files are deleted after 3 days. The AI can read text files and PDFs."),
-  );
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      composer.requestSubmit();
-    }
-  });
-
-  const content = h("div", { class: "chat" },
-    h("h1", { class: "sr-only" }, "Private chat"),
-    list,
-    h("div", { class: "conversation" },
-      h("div", { class: "notice info small" }, "Private and encrypted with your own key. "
-        + "Only explicit or illegal content is ever reported, to HR and the admin."),
-      messages,
-      composer,
-    ),
-  );
-  await open(current);
-  return content;
-}
-
-// ---- requests ----
-function requestsView() {
-  const error = errorBox();
-  const results = h("div");
-  const paint = () => {
-    results.replaceChildren(table(
-      ["Request", "Department", "Result", "Reply"],
-      state.requests.map((r) => [
-        h("div", { class: "pre" }, r.message), r.department || "-", outcomePill(r.outcome),
-        h("div", { class: "pre" }, r.reply || r.reason || ""),
-      ]),
-      "Requests you send in this session appear here.",
-    ));
-  };
-  paint();
-  const message = h("textarea", { required: true, rows: 3 });
-  const department = h("select", null,
-    h("option", { value: "" }, "Choose automatically"),
-    (has("admin") ? ["account", "hr", "logistics", "researcher", "superuser", "admin"] : state.roles)
-      .map((d) => h("option", { value: d }, d)),
-  );
-  const mode = h("select", null,
-    h("option", { value: "single" }, "Quick answer"),
-    h("option", { value: "team" }, "Plan, research, write"),
-  );
-  const submit = h("button", { class: "primary", type: "submit" }, "Send request");
-
-  return h("div", null,
-    heading("Requests", "Department work: tools, data, quotas and approvals apply. Requests are recorded in the audit log."),
-    h("form", {
-      class: "card",
-      onsubmit: async (event) => {
-        event.preventDefault();
-        error.clear();
-        submit.disabled = true;
-        const text = message.value;
-        try {
-          const result = await api("/v1/request", {
-            method: "POST",
-            // Each request gets its own conversation, so one waiting on approval blocks nothing.
-            body: { message: text, thread_id: newThreadId(), mode: mode.value, department: department.value || null },
-          });
-          state.requests.unshift({ message: text, ...result });
-          message.value = "";
-          paint();
-        } catch (err) {
-          error.fail(err);
-        }
-        submit.disabled = false;
-      },
-    },
-      error,
-      h("label", null, "What do you need?", message),
-      h("div", { class: "row" },
-        h("label", { class: "grow" }, "Department", department),
-        h("label", { class: "grow" }, "How the AI works", mode),
-      ),
-      submit,
-    ),
-    h("div", { class: "card" }, h("h2", null, "This session"), results),
-  );
-}
-
 // ---- approvals ----
 function resultNotice(result) {
   const text = result.outcome === "pending_approval"
@@ -652,7 +706,6 @@ function resultNotice(result) {
 
 async function approvalsView(refresh) {
   const rows = await api("/v1/approvals");
-  const feedback = h("div");
   const error = errorBox();
   const decide = (id, verb) => async () => {
     error.clear();
@@ -660,7 +713,7 @@ async function approvalsView(refresh) {
       const result = await api(`/v1/approvals/${id}/${verb}`, { method: "POST" });
       const content = await approvalsView(refresh);
       content.prepend(resultNotice(result));
-      document.querySelector(".main").replaceChildren(content);
+      document.querySelector(".page").replaceChildren(content);
       refreshCounts();
     } catch (err) {
       error.fail(err);
@@ -668,7 +721,6 @@ async function approvalsView(refresh) {
   };
   return h("div", null,
     heading("Approvals", "These actions are paused until you decide. Accounts is notified of each decision on a finance action."),
-    feedback,
     error,
     h("div", { class: "card" }, table(
       ["Action", "Details", "Requested by", "Original message", "Decision"],
@@ -698,7 +750,7 @@ async function inboxView(refresh) {
       const result = await api(`/v1/inbox/${id}/process`, { method: "POST" });
       const content = await inboxView(refresh);
       content.prepend(resultNotice(result));
-      document.querySelector(".main").replaceChildren(content);
+      document.querySelector(".page").replaceChildren(content);
       refreshCounts();
     } catch (err) {
       error.fail(err);
@@ -706,7 +758,7 @@ async function inboxView(refresh) {
     }
   };
   return h("div", null,
-    heading("Accounts inbox", "Orders, bookings and bills forwarded to accounts."),
+    heading("Accounts inbox", "Orders, bookings and bills sent to accounts from chats."),
     error,
     h("div", { class: "card" }, table(
       ["Type", "Requested by", "Message", ""],
@@ -739,67 +791,110 @@ async function reportsView() {
 }
 
 // ---- users ----
+function departmentBoxes(selected, onChange) {
+  const boxes = DEPARTMENTS.map((name) => {
+    const box = h("input", { type: "checkbox", value: name, checked: selected.includes(name), onchange: onChange });
+    return [box, h("label", { class: "check" }, box, h("span", null, departmentName(name)))];
+  });
+  return {
+    node: h("div", { class: "dept-boxes" }, boxes.map(([, label]) => label)),
+    value: () => boxes.filter(([box]) => box.checked).map(([box]) => box.value),
+  };
+}
+
+function userRow(user, error) {
+  const save = h("button", { disabled: true }, "Save");
+  const boxes = departmentBoxes(user.roles, () => { save.disabled = false; save.textContent = "Save"; });
+  save.addEventListener("click", async () => {
+    error.clear();
+    save.disabled = true;
+    try {
+      await api(`/v1/auth/users/${user.id}/departments`, { method: "PUT", body: { departments: boxes.value() } });
+      save.textContent = "Saved";
+    } catch (err) {
+      error.fail(err);
+      save.disabled = false;
+    }
+  });
+  return [
+    h("div", null, user.username, user.roles.includes("admin") && h("div", { class: "small muted" }, "Administrator")),
+    boxes.node,
+    h("span", { class: `pill ${user.chat_enabled ? "good" : "warn"}` }, user.chat_enabled ? "Own password set" : "First password"),
+    save,
+  ];
+}
+
 async function usersView(refresh) {
   const rows = await api("/v1/auth/users");
   const error = errorBox();
+  const createError = errorBox();
   const username = h("input", { required: true, autocomplete: "off" });
   const password = h("input", { type: "password", required: true, minLength: 12, autocomplete: "new-password" });
-  const boxes = ["account", "hr", "logistics", "researcher", "superuser"].map((role) => {
-    const box = h("input", { type: "checkbox", value: role });
-    return [box, h("label", { class: "check" }, box, h("span", null, role))];
-  });
+  const boxes = departmentBoxes([]);
   return h("div", null,
-    heading("Users", "You choose a first password. Each user replaces it to turn on private chat, and you cannot read their chats."),
+    heading("Users", "A person can belong to several departments. Changes apply the next time they sign in."),
+    error,
     h("div", { class: "card" }, table(
-      ["Username", "Departments", "Private chat"],
-      rows.map((u) => [
-        u.username,
-        u.roles.join(", ") || "None",
-        h("span", { class: `pill ${u.chat_enabled ? "good" : "warn"}` }, u.chat_enabled ? "On" : "Waiting for own password"),
-      ]),
+      ["Username", "Departments", "Password", ""],
+      rows.map((u) => userRow(u, error)),
       "No users yet.",
     )),
     h("form", {
       class: "card",
       onsubmit: async (event) => {
         event.preventDefault();
-        error.clear();
+        createError.clear();
         try {
           await api("/v1/auth/users", {
             method: "POST",
-            body: {
-              username: username.value,
-              password: password.value,
-              roles: boxes.filter(([box]) => box.checked).map(([box]) => box.value),
-            },
+            body: { username: username.value, password: password.value, roles: boxes.value() },
           });
           refresh();
         } catch (err) {
-          error.fail(err);
+          createError.fail(err);
         }
       },
     },
       h("h2", null, "Add a user"),
-      error,
+      h("p", { class: "muted" }, "You choose a first password. They replace it to start chatting, and you can't read their private chats."),
+      createError,
       h("label", null, "Username", username),
       h("label", null, "First password (at least 12 characters)", password),
-      h("div", { class: "row" }, boxes.map(([, label]) => label)),
+      h("p", { class: "small muted" }, "Departments"),
+      h("p", null, boxes.node),
       h("button", { class: "primary", type: "submit" }, "Add user"),
     ),
   );
 }
 
 // ---- my account ----
-function accountView() {
+async function accountView() {
+  const me = await api("/v1/auth/me");
   const error = errorBox();
   const note = h("div");
   const oldPassword = h("input", { type: "password", required: true, autocomplete: "current-password" });
   const next = h("input", { type: "password", required: true, minLength: 12, autocomplete: "new-password" });
   const codePassword = h("input", { type: "password", required: true, autocomplete: "current-password" });
   const codeError = errorBox();
+  const tokenDepartments = state.roles.filter((role) => role !== "admin").sort().join();
+  const changed = tokenDepartments !== me.departments.join();
 
   return h("div", null,
-    heading("My account", `${state.username} · ${state.roles.join(", ") || "no department"}`),
+    heading("My account"),
+    h("div", { class: "card" },
+      h("h2", null, "Profile"),
+      changed && h("div", { class: "notice info" }, "Your departments changed. Sign in again to start using them."),
+      h("dl", { class: "facts" },
+        h("dt", null, "Username"), h("dd", null, me.username),
+        h("dt", null, "Role"), h("dd", null, me.is_admin ? "Administrator" : "Member"),
+        h("dt", null, "Departments"),
+        h("dd", { class: "row" }, me.departments.length
+          ? me.departments.map((d) => h("span", { class: "pill" }, departmentName(d)))
+          : "None. Ask your administrator if you need one."),
+        h("dt", null, "Private chat"), h("dd", null, me.chat_enabled ? "On, encrypted with your key" : "Off until you set your own password"),
+        h("dt", null, "Member since"), h("dd", null, new Date(me.created_at).toLocaleDateString()),
+      ),
+    ),
     h("form", {
       class: "card",
       onsubmit: async (event) => {

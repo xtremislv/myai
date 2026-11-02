@@ -40,6 +40,10 @@ class RMRequest:
     thread_id: str
     mode: str = "single"
     department: str | None = None  # explicit hint
+    chat_thread: str | None = None  # the chat to show this request's progress in
+    # The chat box has already run the guards (guards.triage); don't repeat them.
+    prechecked: bool = False
+    forward_kind: str | None = None
 
 
 @dataclass
@@ -99,18 +103,19 @@ def handle_request(
         span.set_attribute("rm.subject", subject.id)
 
         # 0a. NSFW guard — block and escalate to HR + Admin.
-        nsfw, why = guards.is_nsfw(req.message)
+        nsfw, why = (False, "") if req.prechecked else guards.is_nsfw(req.message)
         if nsfw:
             report = guards.report_nsfw(session, subject.id, req.message)
             _finish(session, subject, None, "flagged_nsfw", why, start)
             return RMResult("flagged_nsfw", report_id=report.id, reason=f"NSFW flagged ({why}); reported to hr, admin")
 
         # 0b. Intent routing — orders/products/services/bills go to accounts.
-        kind = guards.detect_forward_intent(req.message)
+        kind = req.forward_kind if req.prechecked else guards.detect_forward_intent(req.message)
         if kind:
             task = guards.forward_to_account(
                 session, kind=kind, requester_id=subject.id,
                 message=req.message, thread_id=req.thread_id, mode=req.mode,
+                chat_thread=req.chat_thread,
             )
             _finish(session, subject, "account", "forwarded", f"{kind} -> account inbox", start)
             return RMResult("forwarded", department="account", task_id=task.id, reason=f"{kind} forwarded to accounts")
@@ -155,7 +160,10 @@ def handle_request(
             return RMResult("error", department, reason=str(e))
 
         if isinstance(out, PendingAction):
-            approval = _park(session, subject.id, department, req.message, req.thread_id, req.mode, out)
+            approval = _park(
+                session, subject.id, department, req.message, req.thread_id, req.mode, out,
+                chat_thread=req.chat_thread,
+            )
             why = f"{out.tool} requires approval"
             _finish(session, subject, department, "pending_approval", why, start)
             return RMResult("pending_approval", department, approval_id=approval.id, reason=why)
@@ -173,6 +181,7 @@ def _park(
     mode: str,
     pending: PendingAction,
     task_id: str | None = None,
+    chat_thread: str | None = None,
 ) -> Approval:
     rm_critical_gated_total.labels(department=department).inc()
     rm_approvals_total.labels(department=department, state="pending").inc()
@@ -187,6 +196,7 @@ def _park(
         tool_args=pending.args,
         checkpoint_thread=pending.checkpoint_thread,
         task_id=task_id,
+        chat_thread=chat_thread,
     )
 
 
@@ -232,17 +242,18 @@ def resolve_approval(session: Session, approval: Approval, *, resumer=resume_gra
     if isinstance(out, PendingAction):
         next_approval = _park(
             session, approval.subject_id, dept, approval.message, approval.thread_id,
-            approval.mode, out, task_id=approval.task_id,
+            approval.mode, out, task_id=approval.task_id, chat_thread=approval.chat_thread,
         )
         why = f"{out.tool} requires approval"
         _finish(session, subject, dept, "pending_approval", why, start)
         return RMResult("pending_approval", dept, approval_id=next_approval.id,
                         task_id=approval.task_id, reason=why)
 
+    approval.result = out
     if task is not None:
         task.state = "done" if approved else "denied"
         task.result = out
-        session.commit()
+    session.commit()
     outcome = "ok" if approved else "denied"
     _finish(session, subject, dept, outcome, approval.reason, start)
     return RMResult(outcome, dept, reply=out, approval_id=approval.id, task_id=approval.task_id,

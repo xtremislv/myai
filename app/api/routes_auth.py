@@ -1,6 +1,7 @@
 """Login + user registration (admin-gated)."""
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
 from cryptography.exceptions import InvalidTag
@@ -12,6 +13,7 @@ from app.acl.models import Subject
 from app.api.deps import current_subject, require_admin
 from app.auth.security import hash_password, issue_token, verify_password
 from app.db.session import User, get_session
+from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.vault import user_keys
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -55,6 +57,23 @@ class UserOut(BaseModel):
     username: str
     roles: list[str]
     chat_enabled: bool
+
+
+class ProfileOut(BaseModel):
+    id: str
+    username: str
+    is_admin: bool
+    departments: list[str]
+    chat_enabled: bool
+    created_at: dt.datetime
+
+
+class DepartmentsIn(BaseModel):
+    departments: list[str]
+
+
+ADMIN_ROLE = "admin"
+ASSIGNABLE = {d.name for d in DEFAULT_DEPARTMENTS} - {ADMIN_ROLE}
 
 
 class CreateUserIn(BaseModel):
@@ -144,6 +163,48 @@ def new_recovery_code(
     code = user_keys.add_recovery_code(user, chat_key)
     session.commit()
     return RecoveryCodeOut(recovery_code=code)
+
+
+@router.get("/me", response_model=ProfileOut)
+def my_profile(
+    subject: Subject = Depends(current_subject),
+    session: Session = Depends(get_session),
+) -> ProfileOut:
+    user = session.get(User, subject.id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    return ProfileOut(
+        id=user.id,
+        username=user.username,
+        is_admin=ADMIN_ROLE in user.roles,
+        departments=sorted(set(user.roles) - {ADMIN_ROLE}),
+        chat_enabled=user.wrapped_chat_key is not None,
+        created_at=user.created_at,
+    )
+
+
+@router.put("/users/{user_id}/departments", response_model=UserOut)
+def set_departments(
+    user_id: str,
+    body: DepartmentsIn,
+    session: Session = Depends(get_session),
+    _admin=Depends(require_admin),
+) -> UserOut:
+    """Replace a user's departments. A profile can hold any number of them. This does not
+    change who is admin. It takes effect at the user's next sign-in."""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    unknown = set(body.departments) - ASSIGNABLE
+    if unknown:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown departments: {sorted(unknown)}")
+    keep_admin = [ADMIN_ROLE] if ADMIN_ROLE in user.roles else []
+    user.roles = keep_admin + sorted(set(body.departments))
+    session.commit()
+    return UserOut(
+        id=user.id, username=user.username, roles=user.roles,
+        chat_enabled=user.wrapped_chat_key is not None,
+    )
 
 
 @router.get("/users", response_model=list[UserOut])

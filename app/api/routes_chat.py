@@ -1,14 +1,20 @@
-"""Private chat: a conversation between one user and the AI.
+"""The chat box: one conversation that triages each message (guards.triage).
 
-No endpoint exposes these conversations to anyone but their owner, and they have no
-tools, audit rows or content logging. Text and attachments are encrypted at rest with
-the user's own key (app/vault/user_keys.py). The only thing that ever leaves this
-channel is content flagged as explicit or illegal, reported to hr and admin.
+Private messages: no endpoint exposes them to anyone but their owner, and they have no
+tools, audit rows or content logging. Text and attachments are encrypted at rest with the
+user's own key (app/vault/user_keys.py). The only thing that ever leaves this channel is
+content flagged as explicit or illegal, reported to hr and admin.
+
+Work messages go through the Request Manager, with its tools, quotas, audit and approvals.
+That run is stored apart from the encrypted chat, because an approver has to resume it
+without the user's key. The exchange is then copied into the encrypted chat, so the
+conversation reads as one, marked with the department that handled it.
 """
 from __future__ import annotations
 
 import datetime as dt
 import re
+import uuid
 from typing import Literal
 from urllib.parse import quote
 
@@ -19,16 +25,27 @@ from sqlalchemy.orm import Session
 from app.acl.models import Subject
 from app.api.deps import chat_key, current_subject
 from app.config import get_settings
-from app.db.session import ChatThread, get_session, release_connection
+from app.db.session import (
+    Approval,
+    ChatThread,
+    DepartmentTask,
+    get_session,
+    release_connection,
+)
+from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.orchestrator import execution
+from app.orchestrator.execution import scoped_thread
+from app.request_manager import approvals as approvals_store
 from app.request_manager import guards
+from app.request_manager.router import RMRequest, RMResult, handle_request
 from app.storage import attachments
 from app.vault import user_keys
 
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
 
 TITLE_CHARS = 60
-THREAD_ID_MAX = 128
+THREAD_ID_MAX = 100  # stored with a suffix when a paused run needs a fresh one
+RECENT_MESSAGES = 2
 REPORT_EXCERPT_CHARS = 2000
 NSFW_SAMPLE_CHARS = 4000
 
@@ -36,16 +53,20 @@ NSFW_SAMPLE_CHARS = 4000
 class ChatIn(BaseModel):
     message: str
     thread_id: str = Field(min_length=1, max_length=THREAD_ID_MAX)  # private to the caller
-    # "single" = one agent loop; "team" = planner -> researcher -> writer.
-    mode: Literal["single", "team"] = "single"
+    # "auto" lets triage decide. "single" = one agent loop; "team" = planner -> researcher -> writer.
+    mode: Literal["auto", "single", "team"] = "auto"
 
 
 class ChatOut(BaseModel):
     thread_id: str
     reply: str
     mode: str
-    outcome: Literal["ok", "flagged_nsfw"] = "ok"
+    outcome: str = "ok"  # ok | flagged_nsfw | forwarded | pending_approval | denied_auth | ...
     reason: str = ""
+    route: Literal["private", "work"] = "private"
+    department: str | None = None
+    approval_id: str | None = None
+    task_id: str | None = None
 
 
 class ThreadOut(BaseModel):
@@ -57,6 +78,18 @@ class ThreadOut(BaseModel):
 class MessageOut(BaseModel):
     role: str
     content: str
+    handled_by: str | None = None  # the department, for work; private messages have none
+
+
+class ChatRequestOut(BaseModel):
+    """Progress of work asked for in a chat."""
+
+    id: str
+    kind: Literal["approval", "task"]
+    department: str
+    label: str
+    state: str
+    result: str | None = None
 
 
 class AttachmentOut(BaseModel):
@@ -97,20 +130,82 @@ def chat(
     key: bytes = Depends(chat_key),
     session: Session = Depends(get_session),
 ) -> ChatOut:
-    flagged, why = guards.is_nsfw(body.message)
-    if flagged:
+    recent = execution.private_history(subject, body.thread_id, key)[-RECENT_MESSAGES:]
+    sorted_message = guards.triage(body.message, _departments_of(subject), recent)
+    mode = sorted_message.mode if body.mode == "auto" else body.mode
+
+    if sorted_message.nsfw:
         guards.report_nsfw(session, subject.id, body.message)
         return ChatOut(
-            thread_id=body.thread_id, reply="", mode=body.mode, outcome="flagged_nsfw",
-            reason=f"{why}; reported to hr, admin",
+            thread_id=body.thread_id, reply="", mode=mode, outcome="flagged_nsfw",
+            reason=f"{sorted_message.why}; reported to hr, admin",
         )
+
+    if sorted_message.route == "work":
+        result = handle_request(
+            session,
+            subject,
+            RMRequest(
+                message=body.message,
+                thread_id=_work_thread(session, subject.id, body.thread_id),
+                mode=mode,
+                department=sorted_message.department,
+                chat_thread=body.thread_id,
+                prechecked=True,
+                forward_kind=sorted_message.action,
+            ),
+        )
+        reply = _work_reply(result)
+        execution.record_private(subject, body.thread_id, key, body.message, reply, result.department)
+        _remember_thread(session, key, subject.id, body.thread_id, body.message)
+        return ChatOut(
+            thread_id=body.thread_id, reply=reply, mode=mode, outcome=result.outcome, route="work",
+            department=result.department, approval_id=result.approval_id, task_id=result.task_id,
+        )
+
     context = attachments.context_for_thread(session, key, subject.id, body.thread_id)
     release_connection(session)
-    reply = execution.run(
-        subject, body.message, body.thread_id, body.mode, None, chat_key=key, attachments=context
-    )
+    reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key, attachments=context)
     _remember_thread(session, key, subject.id, body.thread_id, body.message)
-    return ChatOut(thread_id=body.thread_id, reply=reply, mode=body.mode)
+    return ChatOut(thread_id=body.thread_id, reply=reply, mode=mode)
+
+
+def _departments_of(subject: Subject) -> dict[str, str]:
+    """The departments this person can work in, for triage. The admin can act for any."""
+    roles = set(subject.roles)
+    return {
+        d.name: d.description
+        for d in DEFAULT_DEPARTMENTS
+        if "admin" in roles or d.name in roles
+    }
+
+
+def _work_thread(session: Session, subject_id: str, thread_id: str) -> str:
+    """A run paused on an approval cannot take new work, but the chat should carry on, so
+    new work starts a fresh run."""
+    if approvals_store.pending_for_thread(session, scoped_thread(subject_id, thread_id)) is None:
+        return thread_id
+    return f"{thread_id}~{uuid.uuid4().hex[:8]}"
+
+
+def _work_reply(result: RMResult) -> str:
+    department = (result.department or "that department").title()
+    match result.outcome:
+        case "ok":
+            return result.reply or "Done."
+        case "forwarded":
+            return "I sent this to the accounts team. You can follow it here."
+        case "pending_approval":
+            return "This needs approval before it can go ahead. You can follow it here."
+        case "denied_quota":
+            return f"{department} has too many requests right now. Try again in a minute."
+        case "denied_auth":
+            return (
+                "This looks like work for a department your account isn't part of. "
+                "Ask your administrator if you need access."
+            )
+        case _:
+            return "That didn't work because of a problem on the server. Try again in a moment."
 
 
 @router.get("/threads", response_model=list[ThreadOut])
@@ -142,6 +237,40 @@ def thread_messages(
     key: bytes = Depends(chat_key),
 ) -> list[MessageOut]:
     return [MessageOut(**m) for m in execution.private_history(subject, thread_id, key)]
+
+
+@router.get("/threads/{thread_id}/requests", response_model=list[ChatRequestOut])
+def thread_requests(
+    thread_id: str,
+    subject: Subject = Depends(current_subject),
+    session: Session = Depends(get_session),
+) -> list[ChatRequestOut]:
+    approvals = (
+        session.query(Approval)
+        .filter(Approval.subject_id == subject.id, Approval.chat_thread == thread_id, Approval.task_id.is_(None))
+        .order_by(Approval.created_at)
+        .all()
+    )
+    tasks = (
+        session.query(DepartmentTask)
+        .filter(DepartmentTask.requester_id == subject.id, DepartmentTask.chat_thread == thread_id)
+        .order_by(DepartmentTask.created_at)
+        .all()
+    )
+    return [
+        *[
+            ChatRequestOut(
+                id=a.id, kind="approval", department=a.department, label=a.tool, state=a.state, result=a.result
+            )
+            for a in approvals
+        ],
+        *[
+            ChatRequestOut(
+                id=t.id, kind="task", department=t.department, label=t.kind, state=t.state, result=t.result
+            )
+            for t in tasks
+        ],
+    ]
 
 
 @router.post("/attachments", response_model=UploadOut)

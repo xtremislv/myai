@@ -36,9 +36,11 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - The web UI is plain files in `app/web/`, served at `/ui/` under a strict CSP: no inline scripts or styles,
   no third-party assets. The token stays in JS memory because it can open private chats.
 - `tests/test_postgres.py` runs only with `POSTGRES_INTEGRATION=1` and a throwaway `POSTGRES_DSN`.
-- `/v1/chat` is the user's private channel: no tools, no logging or audit of content. Only a message flagged
-  as explicit or illegal leaves it, reported to hr + admin. There is one admin, whose finance activity on
-  `/v1/request` is reported to accounts (`guards.notify_accounts`).
+- `/v1/chat` is the one chat box. `guards.triage` sorts each message, defaulting to private. Private messages
+  have no tools, no logging or audit of content; only content flagged as explicit or illegal leaves them,
+  reported to hr + admin. Work runs through the Request Manager, apart from the encrypted chat because an
+  approver must resume it without the user's key. There is one admin, whose finance activity as work is
+  reported to accounts (`guards.notify_accounts`). A user's `roles` can hold several departments.
 
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing

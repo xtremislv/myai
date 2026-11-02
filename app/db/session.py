@@ -116,6 +116,8 @@ class Approval(Base):
     tool_args: Mapped[dict] = mapped_column(JSON, default=dict)
     checkpoint_thread: Mapped[str] = mapped_column(String(256), index=True)  # where the run is paused
     task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # inbox task, if any
+    chat_thread: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)  # shown there
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)  # the agent's reply once decided
     state: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|approved|denied|failed
     reason: Mapped[str] = mapped_column(String(512), default="")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -149,6 +151,7 @@ class DepartmentTask(Base):
     mode: Mapped[str] = mapped_column(String(16), default="single")
     state: Mapped[str] = mapped_column(String(16), default="queued", index=True)  # queued|processing|awaiting|done|denied|failed
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chat_thread: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)  # shown there
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

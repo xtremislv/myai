@@ -148,7 +148,7 @@ def test_chat_has_no_tools_even_for_admin(client, prompts, monkeypatch):
     prompts.replies = [json.dumps({"tool": "get_secret", "args": {"name": "x"}}), "ok"]
     monkeypatch.setitem(tools.TOOLS, "get_secret", lambda state, name: pytest.fail("tool ran"))
     assert _chat(client, "show the secret", headers=ADMIN).json()["reply"] == "ok"
-    assert "Available tools: []" in prompts[0][0]["content"]
+    assert "Available tools" not in prompts[0][0]["content"]
 
 
 # ---- flagged messages ----

@@ -196,3 +196,27 @@ def test_no_transaction_is_held_open_while_the_model_runs(monkeypatch, path, rol
     assert not worker.is_alive(), "request hung"
     assert result["status"] == 200
     assert seen and all(count == 0 for count in seen), seen
+
+
+def test_work_copied_into_a_private_chat_is_encrypted_and_reads_back(monkeypatch):
+    marker = f"COPIED-{uuid.uuid4().hex}"
+    subject = Subject(f"user-{uuid.uuid4().hex}", ("logistics",))
+
+    assert execution.private_history(subject, "t", KEY) == []
+    execution.record_private(subject, "t", KEY, f"ask {marker}", f"answer {marker}", "logistics")
+
+    assert marker.encode() not in _dump_all_checkpoint_data()
+    history = execution.private_history(subject, "t", KEY)
+    assert [m["handled_by"] for m in history] == [None, "logistics"]
+    assert history[0]["content"] == f"ask {marker}"
+
+    # An ordinary private turn carries on from the copied exchange.
+    prompts = []
+
+    def _chat(messages, **kwargs):
+        prompts.append(messages)
+        return "ok"
+
+    monkeypatch.setattr(llm, "chat", _chat)
+    execution.run(subject, "explain that", "t", "single", None, chat_key=KEY)
+    assert any(f"answer {marker}" == m["content"] for m in prompts[-1])

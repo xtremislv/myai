@@ -1,7 +1,9 @@
 # User Guide — sending requests to the AI Platform
 
-The web dashboard at `$BASE/ui/` covers everything in this guide without needing `curl`: log in, private
-chat with attachments, department requests, approvals, the inbox and reports. Below is the API it uses.
+The web app at `$BASE/ui/` opens on one chat box. Ask it anything. It works out for itself whether a message
+is a private conversation or work for one of your departments. A reply that was handled as work names the
+department; anything else stayed private. Approvals, the inbox, reports, the overview and your account are in
+the sidebar. Below is the API it uses.
 
 How to authenticate and send requests to the platform's API. For hosting/setup see
 **CLOUD_SETUP_GUIDE.md**; for what's built vs. planned see **PROGRESS_AND_ROADMAP.md**.
@@ -100,7 +102,17 @@ Response: `{"outcome":"ok","department":"logistics","reply":"…"}`.
 Outcomes: `ok`, `error`, `denied_auth` (403), `denied_quota` (429), `pending_approval` (`approval_id`),
 `forwarded` (order/bill/service → `task_id` in the accounts inbox), `flagged_nsfw` (`report_id`).
 
-### Private chat (`POST /v1/chat`)
+### The chat box (`POST /v1/chat`)
+
+Each message is sorted by the AI. If it is unsure, the message stays private.
+
+- **Private** (questions, writing help, personal matters): everything in this section applies.
+- **Work** (using or changing company data or systems): it runs as a `/v1/request` in the department that
+  fits, with that department's tools, quotas, audit log and approvals. The department can see the work. The
+  response has `"route":"work"` and the `department`. Progress is at `GET /v1/chat/threads/<id>/requests`.
+  Attachments are only read in private messages.
+
+You can belong to several departments, and the AI picks the one that fits each request.
 
 This is a conversation between you and the AI. No user, department or admin has an API to read it,
 and it stays separate from your `/v1/request` conversations, even with the same `thread_id`. It has no

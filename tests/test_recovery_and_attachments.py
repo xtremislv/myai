@@ -415,7 +415,7 @@ def test_history_hides_internal_team_messages(api):
     headers = _bearer(_user(api))
     api.client.post("/v1/chat", headers=headers, json={"message": "go", "thread_id": "t", "mode": "team"})
     messages = api.client.get("/v1/chat/threads/t/messages", headers=headers).json()
-    assert messages[0] == {"role": "user", "content": "go"}
+    assert (messages[0]["role"], messages[0]["content"]) == ("user", "go")
     assert not any(m["content"].startswith("[plan]") for m in messages)
 
 

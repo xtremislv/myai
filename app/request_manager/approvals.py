@@ -26,6 +26,7 @@ def create(
     tool_args: dict,
     checkpoint_thread: str,
     task_id: str | None = None,
+    chat_thread: str | None = None,
 ) -> Approval:
     row = Approval(
         id=uuid.uuid4().hex,
@@ -38,6 +39,7 @@ def create(
         tool_args=tool_args,
         checkpoint_thread=checkpoint_thread,
         task_id=task_id,
+        chat_thread=chat_thread,
         state="pending",
     )
     session.add(row)

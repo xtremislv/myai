@@ -25,9 +25,14 @@ def _department(state: dict[str, Any]) -> str | None:
 
 def _system_prompt(state: dict[str, Any]) -> str:
     dept = _department(state)
+    if dept is None:
+        return (
+            "You are a helpful AI assistant in a private conversation with one person. "
+            "Answer clearly and directly. You have no access to company data or systems here."
+        )
     allowed = list(tools_for(dept))
     return (
-        f"You are an orchestrated agent for the '{dept or 'general'}' department on a private AI "
+        f"You are an orchestrated agent for the '{dept}' department on a private AI "
         "platform. You may call ONLY your department's tools to access authorized data. "
         'To call a tool, reply with ONLY a JSON object: {"tool": "<name>", "args": {...}}. '
         f"Available tools: {allowed}. "

@@ -22,7 +22,7 @@ def chat(messages: list[dict], *, model: str | None = None, **kwargs) -> str:
     model = model or _settings.llm_model
     params = {
         "model": model,
-        "messages": messages,
+        "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
         "temperature": kwargs.get("temperature", _settings.llm_temperature),
         "max_tokens": kwargs.get("max_tokens", _settings.llm_max_tokens),
     }
