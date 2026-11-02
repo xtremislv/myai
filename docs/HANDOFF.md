@@ -22,6 +22,29 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - A person can hold several departments. Roles are read from the database on every request.
 - Grafana runs on the server only.
 
+## This server (found 2026-11-02)
+- **It is a container, not a VM** (vast.ai behind aiccloud.in): no `docker` command and no `CAP_SYS_ADMIN`, so
+  `docker compose` can't run here. Run services directly: vLLM via `scripts/run_vllm.sh`
+  (see "Without Docker" in `docs/SERVER_SETUP.md`). Postgres, Redis and MinIO still need native installs.
+- vLLM 0.32.0 is installed in `/root/vllm-env` (Python 3.12). It sees the GPU (compute capability 7.5). On this card it
+  needs `--dtype half` (bf16 is refused below 8.0) and uses the Triton attention backend. AWQ, GPTQ and
+  compressed-tensors INT4 all accept compute capability 7.5, and AWQ and GPTQ have MoE kernels.
+- **huggingface.co is unreachable from here:** DNS returns fake addresses and connections time out.
+  `/root/models/gemma-4-26b` is empty. The owner must decide how to get weights onto the box.
+- Gemma is trained in bf16. In fp16 it has a history of overflowing to inf or NaN. Check the first outputs for garbage.
+- The root disk is 40 GB. The guide's 100 GB minimum isn't met, so keep the weights at INT4 and clear caches.
+- The app's test venv is `.venv` (Python 3.12, installed with `uv`). Plain pip got stuck resolving dependencies.
+- Running natively (2026-11-02): `.env` was made with `--native`. Postgres 16 (PGDG apt) and Redis 6.0 run on
+  localhost, migrations are at head, and `tests/test_postgres.py` passes against a real Postgres. The gateway and
+  retention loop run via `scripts/start_native.sh`. Still missing: MinIO (build from source, see SERVER_SETUP),
+  the admin user, and the monitoring stack. Weights: `cyankiwi/gemma-4-26B-A4B-it-qat-AWQ-INT4` (compressed-tensors
+  W4A16, from Google's QAT checkpoint) in `/root/models/gemma-4-26b`.
+- Access is private, over Tailscale: the server is `myai-gpu` on the owner's tailnet (userspace networking) and
+  `tailscale serve` proxies `https://myai-gpu.<tailnet>.ts.net/` to the gateway. Nothing is exposed publicly.
+- The web UI was restyled (brand mark, sign-in card, welcome screen, sidebar sections). Same CSP, same class names.
+- `huggingface.co` works only because of `/etc/hosts` entries the owner added (real addresses from DNS-over-HTTPS).
+  CDN addresses rotate, so redo them if downloads fail.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.
@@ -33,14 +56,14 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 4. **Attachments and retention against real MinIO.** Only fake storage has been used.
 5. **`scripts/backup.sh` and `scripts/restore.sh` with real Docker.** They were tested with fake `docker` and `rclone`
    commands. Do a real restore test.
-6. **Does vLLM log prompts?** If so, turn it off with whatever flag the pinned version offers: it would bypass the
-   encryption. Check `docker compose logs vllm` after a chat.
+6. **Does vLLM log prompts?** In 0.32.0 `--enable-log-requests` defaults to off, and `scripts/run_vllm.sh` refuses
+   it. Still confirm in the vLLM log after a chat.
 7. **`role: tool` messages.** The single-agent graph sends them with no `tool_call_id`, and some chat templates reject
    the order of roles. Test a work request early.
 
 ## Then do these
-1. Confirm the real model id and choose quantization for the card. `gemma-3-26b-a4b-it` is a placeholder. The rented
-   card is a Quadro RTX 8000 (48 GB, Turing, driver 580, CUDA 13.0): no FP8, so use AWQ or GPTQ INT4 weights.
+1. Get the weights. The model id is now `google/gemma-4-26B-A4B-it`. The card is a Quadro RTX 8000 (48 GB, Turing,
+   driver 580, CUDA 13.0): no FP8 and no bf16, so use AWQ or GPTQ INT4 weights with `--dtype half`.
 2. Benchmark, and tune `--max-model-len`, `--max-num-seqs`, and `max_concurrency` in `app/departments/packs.py`.
 3. **Test triage accuracy with the real model** (`TRIAGE_PROMPT` in `guards.py`). A personal message wrongly sorted as
    work is stored outside the user's encryption, so measure that error especially. The NSFW and forwarding prompts
@@ -59,7 +82,7 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - `docs/PROGRESS_AND_ROADMAP.md` is historical. This file is the current state.
 
 ## Working here
-- Read `CLAUDE.md` for conventions. Tests: `python -m pytest tests/ -q`. Lint: `ruff check .`.
+- Read `CLAUDE.md` for conventions. Tests: `.venv/bin/python -m pytest tests/ -q`. Lint: `ruff check .`.
 - `tests/test_postgres.py` needs `POSTGRES_INTEGRATION=1` and a **throwaway** `POSTGRES_DSN`.
 - After changing a model, run `alembic revision --autogenerate`. A test fails if models and migrations differ.
 - Never put message content in logs, spans or exception text.

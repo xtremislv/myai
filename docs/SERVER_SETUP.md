@@ -24,6 +24,10 @@ Billing is per minute, and terminating can wipe the disk. Set up backups (step 9
 ssh -i ~/.ssh/id_ed25519 <user>@<server-ip> -p <ssh-port>
 ```
 
+**Is your server itself a container?** Many GPU rentals (aiccloud.in instances run on vast.ai) give
+you a Docker container, not a machine. Check with `ls /.dockerenv`. If that file exists, Docker can't
+run inside it: skip steps 2 and 6 and follow **"Without Docker"** at the end of this guide instead.
+
 ## 2. Install Docker and GPU support
 ```bash
 nvidia-smi                                    # should list your GPU
@@ -145,3 +149,90 @@ get their own recovery code when they first sign in.
 | Update the code | `git pull && docker compose up -d --build` |
 | Change model | Edit `LLM_MODEL` in `.env`, then `docker compose up -d vllm gateway` |
 | Stop paying for the GPU | Back up, then stop or terminate the instance |
+
+## Without Docker (container-based GPU hosts)
+For a server that is itself a container (`/.dockerenv` exists, no `docker` command). Tested on a
+Quadro RTX 8000 (Turing, compute capability 7.5) with vLLM 0.32.0.
+
+**1. Install vLLM in its own environment.** It needs Python 3.11 or newer. It takes about 8 GB, plus
+about 8 GB of download cache that `uv cache clean` removes afterwards.
+```bash
+pip install uv
+uv venv -p 3.12 /root/vllm-env
+VIRTUAL_ENV=/root/vllm-env uv pip install 'vllm==0.32.0'
+uv cache clean
+```
+
+**2. Get INT4 weights.** The full bf16 Gemma 4 26B-A4B weights are about 52 GB, too big for a 48 GB
+card. Use an AWQ or GPTQ INT4 copy (about 15 GB) and put it in a local folder such as
+`/root/models/gemma-4-26b`. vLLM reads the quantization from the checkpoint's `config.json`.
+
+**3. Create `.env` with `--native`**, so every address is `127.0.0.1` rather than a compose service name:
+```bash
+python3 scripts/generate_env.py --native \
+  --model google/gemma-4-26B-A4B-it --model-path /root/models/gemma-4-26b \
+  --vllm-args "--dtype half" --domain <chat.yourdomain.com> --grafana-domain <ops.yourdomain.com>
+```
+On Turing cards **`--dtype half` is required**: vLLM refuses bfloat16 below compute capability 8.0.
+Attention runs on vLLM's Triton backend, since FlashAttention needs compute capability 8.0 or newer.
+
+**4. Start the model server:**
+```bash
+nohup scripts/run_vllm.sh > /root/vllm.log 2>&1 &
+curl -s localhost:8001/v1/models
+```
+`run_vllm.sh` binds to `127.0.0.1` only and refuses `--enable-log-requests` and `--enable-log-outputs`,
+since those would write private chat text to the log.
+
+**5. Postgres 16 and Redis** (apt). Ubuntu's Redis 6.0 is enough: the app only uses `INCR`/`EXPIRE`.
+```bash
+install -d /usr/share/postgresql-common/pgdg
+curl -s -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt jammy-pgdg main" \
+  > /etc/apt/sources.list.d/pgdg.list
+apt-get update && apt-get install -y postgresql-16 redis-server
+echo "listen_addresses = 'localhost'" >> /etc/postgresql/16/main/postgresql.conf
+pg_ctlcluster 16 main start
+PGPW=$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)
+su postgres -c "psql -c \"CREATE ROLE ai LOGIN PASSWORD '$PGPW'\"" && su postgres -c "createdb -O ai ai_platform"
+sed -i 's/^bind .*/bind 127.0.0.1 ::1/; s/^daemonize .*/daemonize yes/; s/^supervised .*/supervised no/' /etc/redis/redis.conf
+```
+
+**6. MinIO.** MinIO no longer publishes free binaries (dl.min.io returns 410), so build the release that
+compose pins, from source:
+```bash
+mkdir -p /root/build && cd /root/build
+curl -sSL https://go.dev/dl/go1.26.10.linux-amd64.tar.gz | tar -xz
+git clone --depth 1 --branch RELEASE.2025-09-06T17-38-46Z https://github.com/minio/minio.git minio-src
+cd minio-src && CGO_ENABLED=0 GOTOOLCHAIN=local /root/build/go/bin/go build -trimpath -o /usr/local/bin/minio .
+minio --version && rm -rf /root/build /root/go          # the build cache is ~2 GB
+```
+
+**7. App environment and database:**
+```bash
+pip install uv && uv venv -p 3.12 .venv && VIRTUAL_ENV=.venv uv pip install -e .
+.venv/bin/python -m alembic upgrade head
+```
+
+**8. Start everything.** There is no systemd in a container, so rerun this after every restart:
+```bash
+scripts/start_native.sh            # SKIP_VLLM=1 to leave the model server off
+scripts/start_native.sh status
+```
+Logs are in `/var/log/ai-platform/`. Then create the admin (step 7 above, without `docker compose exec`):
+`.venv/bin/python -m scripts.init_db --admin-pass '<strong-password>'`.
+
+**9. Private access over Tailscale** (no open ports; each person installs Tailscale and joins your tailnet):
+```bash
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list
+apt-get update && apt-get install -y tailscale
+scripts/start_native.sh                 # starts tailscaled in userspace mode
+tailscale up --hostname=myai-gpu        # open the printed link to approve the server
+tailscale serve --bg 8000               # HTTPS at https://myai-gpu.<tailnet>.ts.net/ui/
+```
+The first `serve` asks you to enable Serve and HTTPS certificates for the tailnet in the admin console.
+Use Tailscale ACLs to decide who may reach the server.
+
+Not covered yet: the OpenTelemetry collector, Prometheus, Loki and Grafana. Until they run, the gateway
+logs harmless "Failed to export ... 127.0.0.1:4317" warnings.

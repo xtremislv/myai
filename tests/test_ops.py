@@ -435,3 +435,44 @@ def test_systemd_units_exist_and_reference_the_scripts():
     assert "docker compose" in (units / "ai-platform.service").read_text()
     assert "scripts/backup.sh" in (units / "ai-platform-backup.service").read_text()
     assert "OnCalendar" in (units / "ai-platform-backup.timer").read_text()
+
+
+# ---- native (no Docker) model server ----
+def test_native_settings_point_every_service_at_localhost(tmp_path):
+    path = tmp_path / ".env"
+    generate_env.main(["--model", "org/model", "--domain", "a", "--grafana-domain", "b", "--native",
+                       "--model-path", "/models/x", "--path", str(path)])
+    values = _parse(path)
+    assert values["LLM_BASE_URL"] == "http://127.0.0.1:8001/v1"
+    assert "@127.0.0.1:5432/" in values["POSTGRES_DSN"]
+    assert values["REDIS_URL"].startswith("redis://127.0.0.1:")
+    assert values["MINIO_ENDPOINT"].startswith("127.0.0.1:")
+    assert values["VLLM_MODEL_PATH"] == "/models/x"
+
+
+def _run_vllm(tmp_path, extra_args):
+    fake = tmp_path / "vllm"
+    fake.write_text('#!/bin/sh\nfor a in "$@"; do echo "$a"; done\n')
+    fake.chmod(0o755)
+    env_file = tmp_path / "vllm.env"
+    env_file.write_text(f"LLM_MODEL=org/model\nVLLM_EXTRA_ARGS={extra_args}\n")
+    return subprocess.run(
+        [BASH, (ROOT / "scripts/run_vllm.sh").as_posix()],
+        env={"PATH": "/usr/bin:/bin", "ENV_FILE": env_file.as_posix(), "VLLM_BIN": fake.as_posix()},
+        capture_output=True, text=True,
+    )
+
+
+def test_run_vllm_splits_extra_flags_and_stays_on_localhost(tmp_path):
+    result = _run_vllm(tmp_path, "--dtype half --max-num-seqs 8")
+    args = result.stdout.splitlines()
+    assert result.returncode == 0, result.stderr
+    assert args[:2] == ["serve", "org/model"]
+    assert args[args.index("--host") + 1] == "127.0.0.1"
+    assert args[args.index("--served-model-name") + 1] == "org/model"
+    assert args[-4:] == ["--dtype", "half", "--max-num-seqs", "8"]
+
+
+def test_run_vllm_refuses_to_log_prompts(tmp_path):
+    result = _run_vllm(tmp_path, "--dtype half --enable-log-requests")
+    assert result.returncode != 0 and result.stdout == ""

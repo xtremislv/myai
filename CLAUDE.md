@@ -21,7 +21,7 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Departments: `account, hr, logistics, researcher, superuser, admin`. Governed entrypoint: `POST /v1/request`.
 - Every tool is ACL-gated and listed in `DEPARTMENT_TOOLS` (`app/orchestrator/tools.py`).
 - Keep logic testable without infra (inject `runner`/`quota`; back stores with a Session). Tests:
-  `./.venv/Scripts/python.exe -m pytest tests/ -q` (no GPU/Redis/Postgres needed); lint: `ruff check .`.
+  `.venv/bin/python -m pytest tests/ -q` (Windows: `./.venv/Scripts/python.exe`) (no GPU/Redis/Postgres needed); lint: `ruff check .`.
 - Metrics go in `app/observability.py`. Models live in `app/db/session.py`; after changing one, run
   `alembic revision --autogenerate -m "..."` (a test fails if models and migrations differ).
 - Critical tools are listed as `tool:<name>` in `critical_resources` in `packs.py`. They pause in the graph

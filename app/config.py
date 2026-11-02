@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     llm_api_key: str = "not-needed-for-local"
     # Default: a 26B / A4B MoE model (~4B active params per token).
     # Switch to NVIDIA Nemotron by overriding LLM_MODEL in .env (see .env.example).
-    llm_model: str = "gemma-3-26b-a4b-it"
+    llm_model: str = "google/gemma-4-26B-A4B-it"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 1024
 
