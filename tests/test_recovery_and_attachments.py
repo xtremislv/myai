@@ -286,7 +286,8 @@ def test_team_mode_also_receives_attachment_text(api):
     headers = _bearer(_user(api))
     _upload(api, headers, data=b"THE ATTACHED FIGURES")
     api.client.post("/v1/chat", headers=headers, json={"message": "go", "thread_id": "t", "mode": "team"})
-    assert len(api.prompts) >= 3
+    # planner and writer; with no tools in a private chat the researcher makes no call
+    assert len(api.prompts) >= 2
     assert all("THE ATTACHED FIGURES" in p[0]["content"] for p in api.prompts)
 
 

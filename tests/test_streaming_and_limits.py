@@ -22,7 +22,6 @@ from app.main import app
 from app.orchestrator import execution, tools
 from app.orchestrator.graph import build_graph
 from app.orchestrator.multi_graph import build_team_graph
-from app.orchestrator.nodes import _system_prompt
 from app.request_manager import concurrency, guards, quota, router
 from app.request_manager.concurrency import ConcurrencyLimiter, InMemorySlots, RedisSlots
 from app.request_manager.router import RMRequest, handle_request
@@ -142,8 +141,9 @@ def test_team_mode_streams_only_the_final_answer(api, monkeypatch):
 def test_work_arrives_whole_with_its_department(api, monkeypatch):
     _sorted_as(monkeypatch, route="work", department="logistics")
     events = _events(_stream(api))
-    assert [e["type"] for e in events] == ["done"]
-    assert (events[0]["route"], events[0]["department"]) == ("work", "logistics")
+    assert [e["type"] for e in events] == ["step", "done"]
+    assert events[0]["text"] == "Passing this to Logistics"
+    assert (events[-1]["route"], events[-1]["department"]) == ("work", "logistics")
     assert not any(call.get("stream") for call in api.model.calls), "tool calls must never reach the user"
 
 
@@ -370,12 +370,50 @@ def test_signatures_never_expose_the_internal_state_argument():
         assert not any("state" in s for s in tools.tool_signatures(department))
 
 
-def test_agent_prompt_tells_the_model_the_arguments():
-    prompt = _system_prompt({"scratchpad": {"department": "account"}})
-    assert "initiate_payment(payee, amount, currency?, reference?)" in prompt
+def test_tools_reach_the_model_as_native_schemas_with_their_arguments():
+    """Arguments travel as JSON Schema in the request's tools, not in prompt text."""
+    from app.orchestrator.tools import tool_schemas
+
+    pay = {t["function"]["name"]: t["function"] for t in tool_schemas("account")}["initiate_payment"]
+    params = pay["parameters"]
+    assert params["required"] == ["payee", "amount"]
+    assert params["properties"]["amount"]["type"] == "number"
+    assert set(params["properties"]) == {"payee", "amount", "currency", "reference"}
+    assert pay["description"]
 
 
-def test_team_researcher_prompt_tells_the_model_the_arguments():
-    from app.orchestrator.agents import _researcher_prompt
+def test_department_tool_schemas_match_the_allow_list():
+    from app.orchestrator.tools import tool_schemas, tools_for
 
-    assert "read_document(key)" in _researcher_prompt({"scratchpad": {"department": "researcher"}})
+    names = [t["function"]["name"] for t in tool_schemas("researcher")]
+    assert names == list(tools_for("researcher")) and "read_document" in names
+    assert tool_schemas(None) == []  # private chat offers no tools
+
+
+def test_steps_reach_the_reader_while_the_work_is_still_running(api, monkeypatch):
+    """Each step is sent as it happens, not gathered up until the work is done."""
+    import threading
+
+    from app.api import routes_chat
+    from app.orchestrator.progress import step
+
+    release = threading.Event()
+    seen_before_release = []
+
+    def slow_work(session, subject, req, **kwargs):
+        step("Checking inventory for laptop")
+        assert release.wait(5), "the reader never saw the first step"
+        return router.RMResult("ok", department="logistics", reply="42 laptops")
+
+    monkeypatch.setattr(routes_chat, "handle_request", slow_work)
+    _sorted_as(monkeypatch, route="work", department="logistics")
+    with api.client.stream("POST", "/v1/chat/stream", headers=ALICE, json={"message": "stock?", "thread_id": "t"}) as r:
+        lines = r.iter_lines()
+        for line in lines:
+            if line.startswith("data: ") and "Checking inventory" in line:
+                seen_before_release.append(line)
+                release.set()
+                break
+        rest = [json.loads(x[6:]) for x in lines if x.startswith("data: ")]
+    assert seen_before_release
+    assert rest[-1]["type"] == "done" and rest[-1]["reply"] == "42 laptops"

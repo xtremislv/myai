@@ -11,6 +11,7 @@ credentials exist. Stubs are clearly marked "[stub]".
 from __future__ import annotations
 
 import inspect
+import typing
 from typing import Any, Callable
 
 from app.acl.engine import ACLEngine
@@ -191,6 +192,91 @@ DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
     "superuser": ("inventory_lookup", "inventory_adjust"),
     "admin": ("*",),
 }
+
+
+# What each tool is for, shown to the model with its schema. Keep them short and concrete:
+# the model picks tools by these words.
+TOOL_DESCRIPTIONS: dict[str, str] = {
+    "read_document": "Read one company document by its full key, e.g. research/q3-notes.txt.",
+    "list_documents": "List company document keys that start with a prefix, e.g. research/ or reports/.",
+    "get_secret": "Read a stored credential from the vault by name.",
+    "balance_lookup": "Look up the company ledger balance for an account id, e.g. ACC-12.",
+    "manage_order": "Create (order_id 'new') or update a company order, with details.",
+    "manage_bill": "Create (bill_id 'new') or update a company bill or invoice, with details.",
+    "initiate_payment": "Pay a payee from company funds. Always needs an approver.",
+    "book_service": "Book or subscribe the company to a service.",
+    "read_mail": "Read a company mailbox: category finance, career, contact or personal.",
+    "inventory_lookup": "Check stock on hand for a SKU, or for everything if sku is empty.",
+    "inventory_adjust": "Change stock for a SKU by delta units (negative removes stock).",
+    "track_shipment": "Get the status and expected arrival of a shipment by id, e.g. SHP-8842.",
+    "send_notification": "Send a short notification to a person or team.",
+    "set_reminder": "Set a reminder: when (e.g. 'Monday 09:00') and what text.",
+    "web_search": "Search the web for public information.",
+    "summarize": "Summarize a long text.",
+    "review_report": "Open a content report by id.",
+}
+
+_JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
+_BY_NAME = {"str": str, "int": int, "float": float, "bool": bool}
+
+
+def _hints(fn: Callable[..., Any]) -> dict[str, Any]:
+    """Argument types. Falls back to reading the annotation text when a hint can't be
+    evaluated (e.g. a tool defined where Any isn't imported): only simple types matter here."""
+    try:
+        return typing.get_type_hints(fn)
+    except (NameError, TypeError):
+        raw = getattr(fn, "__annotations__", {})
+        return {k: _BY_NAME.get(v, v) if isinstance(v, str) else v for k, v in raw.items()}
+
+
+def _parameters(fn: Callable[..., Any]) -> dict[str, Any]:
+    """JSON Schema for a tool's arguments, from its signature (the first, state, is left out)."""
+    hints = _hints(fn)
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for param in list(inspect.signature(fn).parameters.values())[1:]:
+        schema: dict[str, Any] = {"type": _JSON_TYPES.get(hints.get(param.name), "string")}
+        if param.default is inspect.Parameter.empty:
+            required.append(param.name)
+        else:
+            schema["default"] = param.default
+        properties[param.name] = schema
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+
+
+def tool_schemas(department: str | None) -> list[dict[str, Any]]:
+    """The department's tools in the OpenAI function-calling format, for native tool calls."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": TOOL_DESCRIPTIONS.get(name, name.replace("_", " ")),
+                "parameters": _parameters(fn),
+            },
+        }
+        for name, fn in tools_for(department).items()
+    ]
+
+
+def coerce_args(fn: Callable[..., Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Convert argument values to the types the tool declares ("3" -> 3 for an int).
+    Raises ValueError with a message the model can act on."""
+    hints = _hints(fn)
+    out = dict(args)
+    for name, value in args.items():
+        want = hints.get(name)
+        if want in (int, float) and isinstance(value, str):
+            try:
+                out[name] = want(value.strip())
+            except ValueError:
+                raise ValueError(f"'{name}' must be a number, got {value!r}") from None
+        elif want is int and isinstance(value, float) and value.is_integer():
+            out[name] = int(value)
+        elif want is str and not isinstance(value, str) and value is not None:
+            out[name] = str(value)
+    return out
 
 
 def tool_signatures(department: str | None) -> list[str]:

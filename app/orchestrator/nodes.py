@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import re
+import uuid
 from typing import Any
 
 from langgraph.types import interrupt
@@ -14,8 +15,10 @@ from app.db.session import SessionLocal
 from app.departments.packs import critical_tools, is_finance_call
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
+from app.orchestrator.clock import with_now
 from app.orchestrator.context import with_attachments
-from app.orchestrator.tools import tool_signatures, tools_for
+from app.orchestrator.progress import step, tool_step
+from app.orchestrator.tools import coerce_args, tool_schemas, tools_for
 from app.request_manager import guards
 
 logger = logging.getLogger(__name__)
@@ -28,17 +31,34 @@ def _department(state: dict[str, Any]) -> str | None:
 def _system_prompt(state: dict[str, Any]) -> str:
     dept = _department(state)
     if dept is None:
-        return (
+        return with_now(
             "You are a helpful AI assistant in a private conversation with one person. "
-            "Answer clearly and directly. You have no access to company data or systems here."
+            "Answer clearly and directly. You have no access to company data or systems here, and "
+            "no live information such as flight availability, prices, news or weather: never present "
+            "a guess as a real schedule, price or fact. Say you can't check it live, and suggest "
+            "where to look."
         )
-    return (
-        f"You are an orchestrated agent for the '{dept}' department on a private AI "
-        "platform. You may call ONLY your department's tools to access authorized data. "
-        'To call a tool, reply with ONLY a JSON object: {"tool": "<name>", "args": {...}}. '
-        f"Available tools, with their arguments (? means optional): {tool_signatures(dept)}. "
-        "When you have the final answer, reply with plain text (no JSON)."
+    return with_now(
+        f"You are the AI agent for the '{dept}' department of a company. Use your tools to look "
+        "things up and to make changes; never invent data a tool could provide. Call several tools "
+        "at once when they don't depend on each other. If a tool returns an ERROR, fix the arguments "
+        "and try again, or explain what went wrong. A result marked [stub] comes from a system that "
+        "isn't connected yet: say so rather than presenting it as real data. When you have what you "
+        "need, answer the person directly and briefly in plain text. If none of your tools can do "
+        "what is asked (for example, there is no flight-search tool), say so plainly instead of "
+        "guessing, and offer what you can do. Never make up schedules, prices, stock or records."
     )
+
+
+# A turn of tool calls and their results counts as one round.
+MAX_TOOL_ROUNDS = 8
+BUDGET_NOTE = (
+    "You have used all your tool calls for this request. Answer now with what you found, "
+    "and say plainly what you could not finish."
+)
+EMPTY_NUDGE = "Your last reply was empty. Call a tool, or answer the request in plain text."
+DEFERRED = "NOT RUN: this call needs approval, so it runs on its own. Call it again in your next step."
+REPEATED = "NOT RUN: you just made this exact call. Use its result above instead of calling it again."
 
 
 def _notify_admin_finance(state: dict[str, Any], name: str, args: dict[str, Any]) -> None:
@@ -70,9 +90,10 @@ def run_tool(state: dict[str, Any], name: str | None, args: Any) -> Any:
     signature = inspect.signature(fn)
     try:
         if not isinstance(args, dict):
-            raise TypeError("args must be an object")
+            raise TypeError("args must be a JSON object")
+        args = coerce_args(fn, args)
         signature.bind(state, **args)
-    except TypeError as e:
+    except (TypeError, ValueError) as e:
         expected = list(signature.parameters)[1:]
         return f"ERROR: invalid arguments for '{name}': {e}. Expected: {expected}"
 
@@ -101,30 +122,157 @@ def router(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def agent(state: dict[str, Any]) -> dict[str, Any]:
-    """Call the LLM. If it emits a tool-call JSON, route to tools; else finish."""
+    """Call the model. With tools, it may ask for several calls (-> tools node) or answer."""
     graph_node_total.labels(node="agent").inc()
+    tools = tool_schemas(_department(state))
     with tracer.start_as_current_span("graph.agent"):
         convo = [{"role": "system", "content": _system_prompt(state)}, *state.get("messages", [])]
-        reply = llm.chat(with_attachments(convo), stream=True)
+        if not tools:  # private chat: no tools, and the words stream to the person
+            reply = llm.chat(with_attachments(convo), stream=True)
+            calls = calls_in(reply)
+            if calls and state.get("tool_rounds", 0) < 1:
+                # A call written out by a model with no tools: answer it "not available"
+                # (run_tool's department check) and let the model answer properly.
+                return {"messages": [assistant_calls(reply, calls)], "next": "tools"}
+            return {"messages": [{"role": "assistant", "content": reply}], "next": "__end__"}
 
-    tool_call = _parse_tool_call(reply)
-    if tool_call:
-        return {"messages": [{"role": "assistant", "content": reply}], "next": "tools"}
+        if state.get("tool_rounds", 0) >= MAX_TOOL_ROUNDS:
+            step("Wrapping up with what I found")
+            reply = llm.chat(with_attachments([*convo, {"role": "user", "content": BUDGET_NOTE}]),
+                             tools=tools, tool_choice="none")
+            return {"messages": [{"role": "assistant", "content": reply}], "next": "__end__"}
+
+        reply = llm.chat(with_attachments(convo), tools=tools)
+        calls = calls_in(reply)
+        if not calls and not reply.strip():
+            reply = llm.chat(with_attachments([*convo, {"role": "user", "content": EMPTY_NUDGE}]), tools=tools)
+            calls = calls_in(reply)
+
+    if calls:
+        return {"messages": [assistant_calls(reply, calls)], "next": "tools"}
     return {"messages": [{"role": "assistant", "content": reply}], "next": "__end__"}
 
 
 def tools_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Execute the tool requested in the last assistant message."""
+    """Run the calls the agent just asked for."""
     graph_node_total.labels(node="tools").inc()
-    last = state["messages"][-1]["content"]
-    call = _parse_tool_call(last) or {}
-    name, args = call.get("tool"), call.get("args", {})
-    with tracer.start_as_current_span("graph.tool") as span:
-        span.set_attribute("tool.name", name or "unknown")
-        result = run_tool(state, name, args)
+    messages, _ = execute_calls(state, pending_calls(state))
+    return {"messages": messages, "tool_rounds": state.get("tool_rounds", 0) + 1, "next": "agent"}
+
+
+# ---- tool calls: shared by the single agent and the team's researcher ----
+def calls_in(reply: str) -> list[dict[str, Any]]:
+    """The calls a reply asks for: native ones, else one written as text (JSON or Gemma's
+    call:name(...) form) by a model that ignored the native format."""
+    native = getattr(reply, "tool_calls", None)
+    if native:
+        return native
+    parsed = _parse_tool_call(reply)
+    if parsed is None:
+        return []
+    return [{"id": f"call_{uuid.uuid4().hex[:12]}", "name": parsed["tool"], "args": parsed.get("args", {})}]
+
+
+def assistant_calls(reply: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """The assistant turn that asked for these calls, in the API's shape, so each result can be
+    paired with its call by id. Text that was itself a written-out call is dropped."""
+    text = "" if _parse_tool_call(reply) is not None else str(reply)
     return {
-        "messages": [{"role": "tool", "content": json.dumps(result, default=str)}],
-        "next": "agent",
+        "role": "assistant",
+        "content": text,
+        "tool_calls": [
+            {
+                "id": c["id"],
+                "type": "function",
+                "function": {
+                    "name": c["name"],
+                    "arguments": c["args"] if isinstance(c["args"], str) else json.dumps(c["args"], default=str),
+                },
+            }
+            for c in calls
+        ],
+    }
+
+
+def pending_calls(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The calls in the most recent assistant turn."""
+    for message in reversed(state.get("messages", [])):
+        if message.get("role") == "assistant":
+            return [_call_of(tc) for tc in message.get("tool_calls") or []]
+    return []
+
+
+def _call_of(tool_call: dict[str, Any]) -> dict[str, Any]:
+    raw = tool_call["function"].get("arguments") or "{}"
+    try:
+        args: Any = json.loads(raw)
+    except json.JSONDecodeError:
+        args = raw
+    return {"id": tool_call["id"], "name": tool_call["function"]["name"], "args": args}
+
+
+def _signature(call: dict[str, Any]) -> str:
+    return json.dumps([call["name"], call["args"]], sort_keys=True, default=str)
+
+
+def _previous_round(state: dict[str, Any]) -> set[str]:
+    """Signatures of the calls that actually ran in the round before the current one. A call
+    answered DEFERRED didn't run, and the model was told to make it again, so it's not a repeat."""
+    messages = state.get("messages", [])
+    turns = [i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("tool_calls")]
+    if len(turns) < 2:
+        return set()
+    start, end = turns[-2], turns[-1]
+    not_run = {
+        m.get("tool_call_id") for m in messages[start:end]
+        if m.get("role") == "tool" and m.get("content") in (json.dumps(DEFERRED), json.dumps(REPEATED))
+    }
+    return {
+        _signature(_call_of(tc)) for tc in messages[start]["tool_calls"] if tc["id"] not in not_run
+    }
+
+
+def execute_calls(state: dict[str, Any], calls: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Run a batch of calls. Returns one tool message per call (every call gets an answer, so the
+    chat template can pair them) and a short note per call that ran.
+
+    An approval-gated call always runs on its own: approving resumes this node from the top,
+    so any call that ran before the pause would run twice. If a batch mixes them, the calls
+    before the first gated one run now and the rest are answered DEFERRED; a gated call that
+    comes first runs alone.
+    """
+    gated = critical_tools()
+    first_gated = next((i for i, c in enumerate(calls) if c["name"] in gated), None)
+    if first_gated is None:
+        now, later = calls, []
+    elif first_gated == 0:
+        now, later = calls[:1], calls[1:]
+    else:
+        now, later = calls[:first_gated], calls[first_gated:]
+
+    repeated = _previous_round(state)
+    seen: set[str] = set()
+    messages, notes = [], []
+    for call in now:
+        name, args, sig = call["name"], call["args"], _signature(call)
+        if sig in repeated or sig in seen:
+            result: Any = REPEATED
+        else:
+            seen.add(sig)
+            step(tool_step(name, args))
+            with tracer.start_as_current_span("graph.tool") as span:
+                span.set_attribute("tool.name", name or "unknown")
+                result = run_tool(state, name, args)
+            notes.append(f"{name}({json.dumps(args, default=str)}) -> {json.dumps(result, default=str)}")
+        messages.append(_tool_message(call, result))
+    messages.extend(_tool_message(call, DEFERRED) for call in later)
+    return messages, notes
+
+
+def _tool_message(call: dict[str, Any], result: Any) -> dict[str, Any]:
+    return {
+        "role": "tool", "tool_call_id": call["id"], "name": call["name"],
+        "content": json.dumps(result, default=str),
     }
 
 

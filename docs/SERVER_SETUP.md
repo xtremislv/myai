@@ -174,9 +174,11 @@ card. Use an AWQ or GPTQ INT4 copy (about 15 GB) and put it in a local folder su
 ```bash
 python3 scripts/generate_env.py --native \
   --model google/gemma-4-26B-A4B-it --model-path /root/models/gemma-4-26b \
-  --vllm-args "--dtype half" --domain <chat.yourdomain.com> --grafana-domain <ops.yourdomain.com>
+  --vllm-args "--dtype half --enable-auto-tool-choice --tool-call-parser gemma4" \
+  --domain <chat.yourdomain.com> --grafana-domain <ops.yourdomain.com>
 ```
-On Turing cards **`--dtype half` is required**: vLLM refuses bfloat16 below compute capability 8.0.
+The agents use native function calling, so vLLM needs `--enable-auto-tool-choice --tool-call-parser gemma4`
+(another model needs its own parser name). On Turing cards **`--dtype half` is required**: vLLM refuses bfloat16 below compute capability 8.0.
 Attention runs on vLLM's Triton backend, since FlashAttention needs compute capability 8.0 or newer.
 
 **4. Start the model server:**

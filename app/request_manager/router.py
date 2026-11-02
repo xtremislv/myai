@@ -11,7 +11,7 @@ handle_request() runs the control-plane pipeline:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
@@ -45,6 +45,9 @@ class RMRequest:
     # The chat box has already run the guards (guards.triage); don't repeat them.
     prechecked: bool = False
     forward_kind: str | None = None
+    # Earlier exchanges in this chat that were already handled as work, so a follow-up
+    # ("first find the flights") knows what came before. Never private turns.
+    context: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -61,7 +64,7 @@ class RMResult:
 
 def run_graph(subject: Subject, req: RMRequest, department: str) -> str | PendingAction:
     """Default runner: execute the orchestrator (single or team graph)."""
-    return execution.run(subject, req.message, req.thread_id, req.mode, department)
+    return execution.run(subject, req.message, req.thread_id, req.mode, department, context=req.context)
 
 
 def resume_graph(approval: Approval, approved: bool, reason: str) -> str | PendingAction:

@@ -413,6 +413,34 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .msg.thinking { color: var(--ink-2); animation: pulse 1.4s ease-in-out infinite; }
 .msg.flagged { padding: 11px 15px; border-radius: 12px; background: var(--tint-critical); color: var(--critical); }
 
+/* Live agent steps while work runs. */
+.steps { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; gap: 6px; white-space: normal; }
+.steps li { position: relative; padding-left: 26px; font-size: 14px; color: var(--ink-2); }
+.steps li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+}
+.steps li.done::before { border-color: var(--pine); background: var(--pine); }
+.steps li.done::after {
+  content: "";
+  position: absolute;
+  left: 8.5px;
+  top: 7.5px;
+  width: 3px;
+  height: 6px;
+  border: solid var(--pine-ink);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.steps li.now { color: var(--ink); font-weight: 550; }
+.steps li.now::before { border-color: var(--pine); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+
 /* A reply that left the private chat says who handled it. */
 .handled {
   display: block;
@@ -593,6 +621,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* ---- motion ---- */
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 @media (max-width: 820px) {

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     llm_model: str = "google/gemma-4-26B-A4B-it"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 1024
+    # Agents are told the current date and time in this zone ("tomorrow" must mean something).
+    timezone: str = "Asia/Kolkata"
 
     # --- Postgres ---
     postgres_dsn: str = "postgresql://ai:ai@postgres:5432/ai_platform"

@@ -47,6 +47,10 @@ def private_thread(subject_id: str, thread_id: str) -> str:
     return f"private:{subject_id}:{thread_id}"
 
 
+# LangGraph steps one run may take: 8 tool rounds is ~17 steps, a full team run ~20.
+RECURSION_LIMIT = 50
+
+
 def _graph_cm(mode: str, serde=None):
     # Lazy import: compiling needs a live Postgres connection.
     from app.orchestrator.graph import compiled_graph
@@ -85,12 +89,15 @@ def run(
     *,
     chat_key: bytes | None = None,
     attachments: str | None = None,
+    context: list[dict[str, Any]] | None = None,
 ) -> str | PendingAction:
     """With a chat_key this is a private conversation: its own checkpoint namespace,
     encrypted with that user's key."""
     key = private_thread(subject.id, thread_id) if chat_key else scoped_thread(subject.id, thread_id)
     serde = user_keys.checkpoint_serde(chat_key) if chat_key else None
-    config = {"configurable": {"thread_id": key}}
+    # Above the agents' own budgets (8 tool rounds; 6 research steps + a review), so those
+    # end a run gracefully and this only stops something truly stuck.
+    config = {"configurable": {"thread_id": key}, "recursion_limit": RECURSION_LIMIT}
     initial = {
         "messages": [{"role": "user", "content": message}],
         "subject_id": subject.id,
@@ -100,10 +107,22 @@ def run(
     token = attachment_text.set(attachments)
     try:
         with _graph_cm(mode, serde) as graph:
+            if context and not chat_key:
+                initial["messages"] = _missing(graph, config, context) + initial["messages"]
             final = graph.invoke(initial, config=config)
             return _outcome(graph, config, final)
     finally:
         attachment_text.reset(token)
+
+
+def _missing(graph, config, context: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The earlier work exchanges this run doesn't already have."""
+    have = {(m.get("role"), m.get("content")) for m in graph.get_state(config).values.get("messages", [])}
+    return [
+        {"role": m["role"], "content": m["content"]}
+        for m in context
+        if m.get("role") in ("user", "assistant") and (m["role"], m["content"]) not in have
+    ]
 
 
 def stream_private(
@@ -172,7 +191,7 @@ def resume(
     args: dict[str, Any],
 ) -> str | PendingAction:
     """Continue a paused run. The subject and roles come from the checkpoint."""
-    config = {"configurable": {"thread_id": checkpoint_thread}}
+    config = {"configurable": {"thread_id": checkpoint_thread}, "recursion_limit": RECURSION_LIMIT}
     with _graph_cm(mode) as graph:
         pending = _pending_interrupt(graph, config)
         # An approval covers one exact call. Never resume onto anything else.

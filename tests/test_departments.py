@@ -111,3 +111,28 @@ def test_unknown_role_denied(eng):
     assert not allow(eng, nobody, Action.READ, "accounts", "ledger")
     # but still gets the global inventory read
     assert allow(eng, nobody, Action.READ, "inventory", "sku1")
+
+
+# ---- documents follow the data schema ----
+def test_document_keys_map_to_the_department_data_types():
+    from app.storage.objects import resource_for
+
+    def r(key, **kw):
+        res = resource_for(key, **kw)
+        return f"{res.type}:{res.id}"
+
+    assert r("research/q3.txt") == "research:q3.txt"
+    assert r("research/", listing=True) == "research:*"
+    assert r("personal_info/alice/cv.pdf") == "personal_info:alice/cv.pdf"
+    assert r("loose.txt") == "object:loose.txt"
+    assert r("", listing=True) == "object:*"
+
+
+def test_researcher_can_read_research_documents_but_not_accounts(eng):
+    from app.storage.objects import resource_for
+
+    me = Subject("rae", ("researcher",))
+    assert eng.check(me, Action.READ, resource_for("research/q3.txt")).allowed
+    assert eng.check(me, Action.LIST, resource_for("reports/", listing=True)).allowed
+    assert not eng.check(me, Action.READ, resource_for("accounts/ledger.csv")).allowed
+    assert not eng.check(me, Action.LIST, resource_for("", listing=True)).allowed

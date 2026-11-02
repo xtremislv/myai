@@ -23,3 +23,7 @@ class AgentState(TypedDict, total=False):
     plan: list[str]                 # planner output, one entry: the step-by-step plan
     research_notes: Annotated[list[str], operator.add]  # researcher findings
     research_steps: int             # iteration counter (bounds the research loop)
+    # --- agent loop bookkeeping (counts only: no conversation text in str/int fields) ---
+    tool_rounds: int                # single agent: rounds of tool calls so far (bounded)
+    reflections: int                # team: times the reviewer sent research back
+    review_notes: Annotated[list[str], operator.add]  # team: what the reviewer found missing

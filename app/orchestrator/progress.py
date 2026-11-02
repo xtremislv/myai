@@ -1,0 +1,61 @@
+"""What an agent is doing right now, for the person waiting on it ("Checking inventory").
+
+Nodes call step(); a streamed chat sets `progress_sink` so the steps reach the browser as they
+happen. Unset (tests, approvals resumed later, the plain JSON endpoint) it does nothing.
+Steps are shown only to the requester and are never logged.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable
+from contextvars import ContextVar
+from typing import Any
+
+progress_sink: ContextVar[Callable[[str], None] | None] = ContextVar("progress_sink", default=None)
+
+# Friendly names for tool steps. Unknown tools fall back to their name.
+TOOL_STEPS = {
+    "read_document": "Reading {key}",
+    "list_documents": "Listing documents in {prefix}",
+    "get_secret": "Reading a stored credential",
+    "balance_lookup": "Looking up the balance for {account}",
+    "manage_order": "Updating order {order_id}",
+    "manage_bill": "Recording bill {bill_id}",
+    "initiate_payment": "Preparing a payment to {payee}",
+    "book_service": "Booking {service}",
+    "read_mail": "Reading {category} mail",
+    "inventory_lookup": "Checking inventory for {sku}",
+    "inventory_adjust": "Adjusting stock for {sku}",
+    "track_shipment": "Tracking shipment {shipment_id}",
+    "send_notification": "Sending a notification to {to}",
+    "set_reminder": "Setting a reminder for {when}",
+    "web_search": "Searching the web for {query}",
+    "summarize": "Summarizing",
+    "review_report": "Opening report {report_id}",
+}
+
+
+class _Blank(dict):
+    """format_map values where a missing argument is just left out."""
+
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def step(text: str) -> None:
+    sink = progress_sink.get()
+    if sink is not None:
+        try:
+            sink(text)
+        except Exception:  # noqa: BLE001 - progress must never break a run
+            pass
+
+
+def tool_step(name: str, args: Any) -> str:
+    """A short description of a tool call, e.g. "Checking inventory for laptop"."""
+    template = TOOL_STEPS.get(name, name.replace("_", " ").capitalize())
+    values = {k: str(v)[:60] for k, v in args.items()} if isinstance(args, dict) else {}
+    try:
+        text = template.format_map(_Blank(values))
+    except (ValueError, IndexError):
+        text = template
+    return " ".join(text.split()).removesuffix(" for").removesuffix(" in")

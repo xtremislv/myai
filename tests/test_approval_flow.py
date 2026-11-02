@@ -119,7 +119,9 @@ def test_critical_tool_waits_for_approval_then_runs_once(session, graphs, execut
     if mode == "single":
         replies = [BILL_CALL, "Bill B1 recorded."]
     else:
-        replies = ["1. record the bill", BILL_CALL, json.dumps({"done": True}), "Bill B1 recorded."]
+        # planner, researcher's call, researcher done, reviewer's verdict, writer
+        replies = ["1. record the bill", BILL_CALL, "I have what the plan needs.", json.dumps({"enough": True}),
+                   "Bill B1 recorded."]
     _script(monkeypatch, *replies)
 
     res = _request(session, ALICE, "record the ACME ledger entry", mode=mode)

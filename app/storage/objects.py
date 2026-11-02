@@ -1,6 +1,6 @@
 """MinIO (S3-compatible) object storage, fronted by the ACL engine.
 
-Every operation requires an ACL decision for resource 'object:<key>'. The
+Every operation requires an ACL decision for the key's resource (see resource_for). The
 ObjectStore is the Policy Enforcement Point (PEP) for stored files.
 """
 from __future__ import annotations
@@ -51,6 +51,17 @@ def remove_expired_object(key: str) -> None:
     _client().remove_object(_settings.minio_bucket, key)
 
 
+def resource_for(key: str, *, listing: bool = False) -> Resource:
+    """The ACL resource for a document key. Department grants are written against data types
+    ("research:*", "reports:*", "personal_info:<owner>/*"), so the first folder of the key is
+    the type: research/q3.txt -> research:q3.txt, and listing research/ -> research:*. A key
+    with no folder stays object:<key>, which only a full grant (the admin) reaches."""
+    folder, sep, rest = key.partition("/")
+    if not sep or not folder:
+        return Resource("object", f"{key}*" if listing else key)
+    return Resource(folder, f"{rest}*" if listing else rest)
+
+
 class ObjectStore:
     def __init__(self, acl: ACLEngine) -> None:
         self._c = _client()
@@ -58,11 +69,11 @@ class ObjectStore:
         self._bucket = _settings.minio_bucket
 
     def put(self, subject: Subject, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
-        self._acl.enforce(subject, Action.WRITE, Resource("object", key))
+        self._acl.enforce(subject, Action.WRITE, resource_for(key))
         self._c.put_object(self._bucket, key, io.BytesIO(data), length=len(data), content_type=content_type)
 
     def get(self, subject: Subject, key: str) -> bytes:
-        self._acl.enforce(subject, Action.READ, Resource("object", key))
+        self._acl.enforce(subject, Action.READ, resource_for(key))
         resp = self._c.get_object(self._bucket, key)
         try:
             return resp.read()
@@ -71,9 +82,9 @@ class ObjectStore:
             resp.release_conn()
 
     def delete(self, subject: Subject, key: str) -> None:
-        self._acl.enforce(subject, Action.DELETE, Resource("object", key))
+        self._acl.enforce(subject, Action.DELETE, resource_for(key))
         self._c.remove_object(self._bucket, key)
 
     def list(self, subject: Subject, prefix: str = "") -> list[str]:
-        self._acl.enforce(subject, Action.LIST, Resource("object", f"{prefix}*"))
+        self._acl.enforce(subject, Action.LIST, resource_for(prefix, listing=True))
         return [o.object_name for o in self._c.list_objects(self._bucket, prefix=prefix, recursive=True)]

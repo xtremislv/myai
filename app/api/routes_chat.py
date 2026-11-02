@@ -12,10 +12,13 @@ conversation reads as one, marked with the department that handled it.
 """
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import json
 import logging
+import queue
 import re
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -41,6 +44,7 @@ from app.db.session import (
 from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.orchestrator import execution
 from app.orchestrator.execution import scoped_thread
+from app.orchestrator.progress import progress_sink, step
 from app.request_manager import approvals as approvals_store
 from app.request_manager import concurrency as concurrency_limits
 from app.request_manager import guards
@@ -55,7 +59,10 @@ BUSY_MESSAGE = "The assistant is busy with other replies right now. Try again in
 
 TITLE_CHARS = 60
 THREAD_ID_MAX = 100  # stored with a suffix when a paused run needs a fresh one
-RECENT_MESSAGES = 2
+DEPARTMENT_LABELS = {"account": "Accounts", "hr": "HR", "logistics": "Logistics", "researcher": "Research",
+                     "superuser": "Superuser", "admin": "Admin"}
+RECENT_MESSAGES = 2  # what triage sees
+WORK_CONTEXT_MESSAGES = 12  # how far back a work request looks for earlier work in this chat
 REPORT_EXCERPT_CHARS = 2000
 NSFW_SAMPLE_CHARS = 4000
 
@@ -138,7 +145,8 @@ def _before_the_model(
 ) -> tuple[str, ChatOut | None]:
     """Everything up to generating a private reply. Returns the mode, plus a finished answer
     if nothing is left to generate: a flagged message, or work."""
-    recent = execution.private_history(subject, body.thread_id, key)[-RECENT_MESSAGES:]
+    history = execution.private_history(subject, body.thread_id, key)[-WORK_CONTEXT_MESSAGES:]
+    recent = history[-RECENT_MESSAGES:]
     mine = _departments_of(subject)
     others = {d.name: d.description for d in DEFAULT_DEPARTMENTS if d.name not in mine and d.name != "admin"}
     sorted_message = guards.triage(body.message, mine, recent, others)
@@ -152,6 +160,8 @@ def _before_the_model(
         )
 
     if sorted_message.route == "work":
+        step(f"Passing this to {DEPARTMENT_LABELS.get(sorted_message.department or 'account', 'the team')}"
+             if not sorted_message.action else "Passing this to the accounts team")
         result = handle_request(
             session,
             subject,
@@ -163,6 +173,7 @@ def _before_the_model(
                 chat_thread=body.thread_id,
                 prechecked=True,
                 forward_kind=sorted_message.action,
+                context=_work_turns(history),
             ),
         )
         reply = _work_reply(result)
@@ -227,19 +238,45 @@ def chat_stream(
     key: bytes = Depends(chat_key),
     session: Session = Depends(get_session),
 ) -> StreamingResponse:
-    """Like POST /v1/chat, as server-sent events: {"type":"delta","text":...} as words arrive,
-    then {"type":"done",...the ChatOut fields...} or {"type":"error","detail":...}. Only
-    private replies stream word by word: work finishes first, then arrives whole."""
-    mode, finished = _before_the_model(body, subject, key, session)
-    if finished is not None:
-        done = {"type": "done", **finished.model_dump()}
-        return _stream_response(iter([_event(done)]))
-
-    context = attachments.context_for_thread(session, key, subject.id, body.thread_id)
+    """Like POST /v1/chat, as server-sent events: {"type":"step","text":...} for each thing the
+    agents do ("Checking inventory for laptop"), {"type":"delta","text":...} as the words of a
+    private reply arrive, then {"type":"done",...the ChatOut fields...} or {"type":"error",...}.
+    Work replies arrive whole, after their steps."""
+    # The request's own session closes once the response starts, so the work runs on its own.
     bind = session.get_bind()
     release_connection(session)
+    prepared: queue.Queue = queue.Queue()
+
+    def prepare() -> None:
+        progress_sink.set(lambda text: prepared.put(("step", text)))
+        try:
+            with Session(bind=bind) as own:
+                prepared.put(("ready", _before_the_model(body, subject, key, own)))
+        except Exception as e:  # noqa: BLE001 - re-raised or reported below
+            prepared.put(("fail", e))
+
+    threading.Thread(target=contextvars.copy_context().run, args=(prepare,), daemon=True).start()
+    first = prepared.get()
+    if first[0] == "fail":
+        raise first[1]  # nothing sent yet: a refusal keeps its HTTP status
 
     def events() -> Iterator[str]:
+        event = first
+        while event[0] == "step":  # live, while the work runs
+            yield _event({"type": "step", "text": event[1]})
+            event = prepared.get()
+        if event[0] == "fail":
+            # The type only: an exception's text could quote the message.
+            logger.error("chat stream failed: %s", type(event[1]).__name__)
+            yield _event({"type": "error", "detail": "That request failed on the server. Try again."})
+            return
+        mode, finished = event[1]
+        if finished is not None:
+            yield _event({"type": "done", **finished.model_dump()})
+            return
+
+        with Session(bind=bind) as own:
+            context = attachments.context_for_thread(own, key, subject.id, body.thread_id)
         with _private_slot(subject) as free:
             if not free:
                 yield _event({"type": "error", "detail": BUSY_MESSAGE})
@@ -250,13 +287,11 @@ def chat_stream(
                 if kind == "delta":
                     yield _event({"type": "delta", "text": value})
                 elif kind == "error":
-                    # The type only: an exception's text could quote the private message.
                     logger.error("chat stream failed: %s", type(value).__name__)
                     yield _event({"type": "error", "detail": "That reply failed on the server. Try again."})
                     return
                 else:
                     reply = value
-        # The request's own session has closed by the time a stream runs.
         with Session(bind=bind) as later:
             _remember_thread(later, key, subject.id, body.thread_id, body.message)
         yield _event({"type": "done", **ChatOut(thread_id=body.thread_id, reply=reply, mode=mode).model_dump()})
@@ -272,6 +307,18 @@ def _departments_of(subject: Subject) -> dict[str, str]:
         for d in DEFAULT_DEPARTMENTS
         if "admin" in roles or d.name in roles
     }
+
+
+def _work_turns(history: list[dict]) -> list[dict]:
+    """The exchanges in this chat that were handled as work: each reply marked handled_by,
+    with the request just before it. Those already left the encrypted chat when they were
+    sent; private turns never do."""
+    turns = []
+    for before, reply in zip(history, history[1:]):
+        if reply.get("role") == "assistant" and reply.get("handled_by") and before.get("role") == "user":
+            turns += [{"role": "user", "content": before["content"]},
+                      {"role": "assistant", "content": reply["content"]}]
+    return turns
 
 
 def _work_thread(session: Session, subject_id: str, thread_id: str) -> str:

@@ -169,7 +169,7 @@ async function api(path, { method = "GET", body, form, raw } = {}) {
 }
 
 // Calls onDelta with each piece of the reply as it arrives. Resolves with the finished reply.
-async function streamChat(body, onDelta) {
+async function streamChat(body, onDelta, onStep = () => {}) {
   const response = await fetch("/v1/chat/stream", {
     method: "POST",
     headers: { authorization: `Bearer ${state.token}`, "content-type": "application/json" },
@@ -198,6 +198,7 @@ async function streamChat(body, onDelta) {
       if (!line.startsWith("data: ")) continue;
       const event = JSON.parse(line.slice(6));
       if (event.type === "delta") onDelta(event.text);
+      else if (event.type === "step") onStep(event.text);
       else if (event.type === "error") throw new Error(event.detail);
       else if (event.type === "done") finished = event;
     }
@@ -600,6 +601,17 @@ async function chatView(thread, { reloadThreads, paint }) {
       const thinking = h("div", { class: "msg assistant thinking" }, "Thinking...");
       messages.append(thinking);
       toBottom();
+      // What the agents are doing, as it happens: earlier steps get a tick, the current one pulses.
+      const steps = h("ol", { class: "steps", "aria-live": "polite" });
+      const onStep = (textOfStep) => {
+        if (!steps.isConnected) {
+          thinking.classList.remove("thinking");
+          thinking.replaceChildren(steps);
+        }
+        steps.querySelectorAll("li.now").forEach((li) => li.classList.replace("now", "done"));
+        steps.append(h("li", { class: "now" }, textOfStep));
+        toBottom();
+      };
       try {
         let started = false;
         const result = await streamChat({ message: text, thread_id: thread }, (piece) => {
@@ -610,7 +622,7 @@ async function chatView(thread, { reloadThreads, paint }) {
           }
           thinking.append(piece);
           toBottom();
-        });
+        }, onStep);
         thinking.remove();
         if (result.outcome === "flagged_nsfw") {
           mine.remove();
