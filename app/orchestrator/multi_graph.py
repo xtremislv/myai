@@ -42,7 +42,6 @@ def build_team_graph() -> StateGraph:
 @contextmanager
 def compiled_team_graph(serde=None):
     with PostgresSaver.from_conn_string(_settings.postgres_dsn) as checkpointer:
-        checkpointer.setup()
         if serde is not None:
             checkpointer.serde = serde
         yield build_team_graph().compile(checkpointer=checkpointer)

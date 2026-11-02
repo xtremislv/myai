@@ -42,7 +42,6 @@ def compiled_graph(serde=None):
     """Yield a graph compiled with a live Postgres checkpointer connection. Pass a
     serde to encrypt what this run stores."""
     with PostgresSaver.from_conn_string(_settings.postgres_dsn) as checkpointer:
-        checkpointer.setup()  # idempotent: creates checkpoint tables if missing
         if serde is not None:
             checkpointer.serde = serde
         yield build_graph().compile(checkpointer=checkpointer)

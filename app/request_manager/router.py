@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
-from app.db.session import Approval, AuditLog, Department, DepartmentTask
+from app.db.session import Approval, AuditLog, Department, DepartmentTask, release_connection
 from app.departments.packs import is_finance_call
 from app.observability import (
     rm_approvals_total,
@@ -147,6 +147,7 @@ def handle_request(
         # 5. execute. Accounts is told when the admin works in its department.
         if "admin" in subject.roles and department == "account":
             guards.notify_accounts(session, subject.id, req.message)
+        release_connection(session)
         try:
             out = runner(subject, req, department)
         except Exception as e:  # noqa: BLE001
@@ -211,6 +212,7 @@ def resolve_approval(session: Session, approval: Approval, *, resumer=resume_gra
             f"requested by {approval.subject_id}",
         )
 
+    release_connection(session)
     try:
         out = resumer(approval, approved, approval.reason)
     except Exception as e:  # noqa: BLE001 - includes StaleApproval
@@ -253,6 +255,7 @@ def execute_task(session: Session, task: DepartmentTask, processor_id: str, *, r
     subject = Subject(id=processor_id, roles=(task.department,))
     req = RMRequest(message=task.message, thread_id=f"task-{task.id}", mode=task.mode)
     start = time.perf_counter()
+    release_connection(session)
     try:
         out = runner(subject, req, task.department)
     except Exception as e:  # noqa: BLE001

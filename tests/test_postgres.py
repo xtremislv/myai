@@ -8,16 +8,22 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from cryptography.exceptions import InvalidTag
+from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.acl.models import Subject
-from app.db.session import Base, engine, init_db
+from app.auth.security import issue_token
+from app.db.session import Base, SessionLocal, engine, init_db
+from app.departments.registry import seed_departments
 from app.llm import client as llm
+from app.main import app
 from app.orchestrator import execution, tools
 from app.orchestrator.execution import PendingAction
 
@@ -32,6 +38,8 @@ OTHER_KEY = b"o" * 32
 @pytest.fixture(scope="module", autouse=True)
 def migrated():
     init_db()
+    with SessionLocal() as session:
+        seed_departments(session)
 
 
 def _dump_all_checkpoint_data() -> bytes:
@@ -148,3 +156,43 @@ def test_resume_refuses_a_different_call_on_a_real_checkpoint(monkeypatch):
             tool="manage_bill", args={"bill_id": "SOMETHING-ELSE"},
         )
     assert ran == []
+
+
+def _idle_transactions() -> int:
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+            "AND state = 'idle in transaction' AND pid <> pg_backend_pid()"
+        )).scalar()
+
+
+@pytest.mark.parametrize(
+    ("path", "roles"), [("/v1/chat", ["researcher"]), ("/v1/request", ["researcher"])]
+)
+def test_no_transaction_is_held_open_while_the_model_runs(monkeypatch, path, roles):
+    """A held transaction ties up a pooled connection for the whole model call, and blocked
+    LangGraph's CREATE INDEX CONCURRENTLY forever on a fresh database."""
+    seen = []
+
+    def _chat(messages, **kwargs):
+        seen.append(_idle_transactions())
+        return "ok"
+
+    monkeypatch.setattr(llm, "chat", _chat)
+    user = f"user-{uuid.uuid4().hex}"
+    token = issue_token(user, user, roles, chat_key=KEY)
+    result = {}
+
+    def _call():
+        response = TestClient(app).post(
+            path, headers={"authorization": f"Bearer {token}"},
+            json={"message": "hello", "thread_id": "t"},
+        )
+        result["status"] = response.status_code
+
+    worker = threading.Thread(target=_call, daemon=True)
+    worker.start()
+    worker.join(timeout=30)
+    assert not worker.is_alive(), "request hung"
+    assert result["status"] == 200
+    assert seen and all(count == 0 for count in seen), seen

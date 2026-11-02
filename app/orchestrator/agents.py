@@ -15,6 +15,7 @@ from typing import Any
 
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
+from app.orchestrator.context import with_attachments
 from app.orchestrator.nodes import _department, _parse_tool_call, run_tool
 from app.orchestrator.tools import tools_for
 
@@ -45,7 +46,7 @@ def planner(state: dict[str, Any]) -> dict[str, Any]:
     graph_node_total.labels(node="planner").inc()
     with tracer.start_as_current_span("team.planner"):
         convo = [{"role": "system", "content": PLANNER_PROMPT}, *_conversation(state)]
-        plan = llm.chat(convo)
+        plan = llm.chat(with_attachments(convo))
     return {
         "plan": [plan],
         "research_steps": 0,
@@ -67,7 +68,7 @@ def researcher(state: dict[str, Any]) -> dict[str, Any]:
             *_notes_as_messages(state),
             *_conversation(state),
         ]
-        reply = llm.chat(convo)
+        reply = llm.chat(with_attachments(convo))
 
     call = _parse_tool_call(reply)
     if call and "tool" in call:
@@ -107,7 +108,7 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
             *_notes_as_messages(state),
             *_conversation(state),
         ]
-        answer = llm.chat(convo)
+        answer = llm.chat(with_attachments(convo))
     return {"messages": [{"role": "assistant", "content": answer}], "next": "__end__"}
 
 

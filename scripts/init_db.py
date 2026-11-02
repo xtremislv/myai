@@ -30,9 +30,11 @@ def main() -> None:
                 roles=["admin"],
             )
             # The admin chose this password, so it can hold their chat key right away.
-            user_keys.provision(admin, args.admin_pass)
+            chat_key = user_keys.provision(admin, args.admin_pass)
+            recovery_code = user_keys.add_recovery_code(admin, chat_key)
             s.add(admin)
             s.commit()
+            print(f"admin recovery code (save it now, it is not shown again): {recovery_code}")
         # All access policies come from the department packs (incl. admin's
         # full-access grant). Deny-by-default applies to everything else.
         summary = seed_departments(s)

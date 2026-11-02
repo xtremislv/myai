@@ -1,5 +1,8 @@
 # User Guide — sending requests to the AI Platform
 
+The web dashboard at `$BASE/ui/` covers everything in this guide without needing `curl`: log in, private
+chat with attachments, department requests, approvals, the inbox and reports. Below is the API it uses.
+
 How to authenticate and send requests to the platform's API. For hosting/setup see
 **CLOUD_SETUP_GUIDE.md**; for what's built vs. planned see **PROGRESS_AND_ROADMAP.md**.
 
@@ -61,8 +64,19 @@ TOKEN=$(curl -s $BASE/v1/auth/change-password \
   -d '{"old_password":"from-the-admin","new_password":"your-own-long-password"}' | jq -r .access_token)
 ```
 
-> **Your password protects your private chats, and nobody can recover it.** Your chat key can only be
-> unlocked with it. If you lose it, those chats cannot be read by anyone, including you and the admin.
+The first response also has a `recovery_code`. **Save it somewhere safe: it is shown once.** Your chat key
+can only be unlocked with your password or this code. Anyone holding the code can read your private
+chats, and if you lose both, nobody can read them again, including you and the admin.
+
+```bash
+# forgot your password: this sets a new one and returns a new code (the old code stops working)
+curl -s $BASE/v1/auth/recover -H 'content-type: application/json' \
+  -d '{"username":"alice","recovery_code":"ABCD-EFGH-...","new_password":"a-new-long-password"}'
+
+# lost your code but know your password: this replaces it
+curl -s $BASE/v1/auth/recovery-code -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"password":"your-own-long-password"}'
+```
 
 Send the token on every request as `Authorization: Bearer $TOKEN`.
 
@@ -93,7 +107,25 @@ and it stays separate from your `/v1/request` conversations, even with the same 
 access to department tools or data, so use `/v1/request` for work that needs them.
 
 The text is encrypted in the database with a key only your password unlocks, and it is kept indefinitely.
-Attachments are deleted after 3 days. While a message is being answered, the server handles it unencrypted.
+While a message is being answered, the server handles it unencrypted.
+
+**Attachments** belong to one chat, and only you can get them. They are encrypted with the same key and
+deleted after 3 days. The limit is 10 MB per file.
+
+```bash
+curl -s $BASE/v1/chat/attachments -H "authorization: Bearer $TOKEN" \
+  -F thread_id=alice-1 -F file=@notes.pdf            # upload
+curl -s "$BASE/v1/chat/attachments?thread_id=alice-1" -H "authorization: Bearer $TOKEN"   # list
+curl -s $BASE/v1/chat/attachments/<id> -H "authorization: Bearer $TOKEN" -o notes.pdf     # download
+curl -s -X DELETE $BASE/v1/chat/attachments/<id> -H "authorization: Bearer $TOKEN"        # delete
+```
+
+While a file exists, the AI can read it in every message of that chat if it is text or a PDF. It cannot read
+other kinds of file yet, such as images. Replies it writes about a file are chat text, so they are kept after
+the file is deleted. A readable file that is explicit or illegal is rejected, and its name and an excerpt are
+reported to HR and the admin. Files the AI cannot read, such as images, are not checked.
+
+Your past chats are at `GET /v1/chat/threads` and `GET /v1/chat/threads/<thread_id>/messages`.
 
 The one exception: a message classified as **explicit or illegal** is blocked and that single message is
 reported to HR and the admin (`"outcome":"flagged_nsfw"`). The rest of the conversation is not shared.

@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.api import routes_admin, routes_auth, routes_chat, routes_request
+from app.api import routes_admin, routes_auth, routes_chat, routes_dashboard, routes_request
 from app.config import get_settings, validate_secrets
 from app.db.session import engine, init_db
 from app.observability import setup_logging, setup_tracing
@@ -39,6 +41,28 @@ app.include_router(routes_auth.router)
 app.include_router(routes_chat.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_request.router)
+app.include_router(routes_dashboard.router)
+app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="ui")
+
+
+@app.middleware("http")
+async def ui_security_headers(request: Request, call_next):
+    """The UI holds tokens that can open private chats, so it only runs its own files."""
+    response = await call_next(request)
+    if request.url.path.startswith("/ui"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+            "img-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/ui/")
 
 
 @app.get("/healthz")

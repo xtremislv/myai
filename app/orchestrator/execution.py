@@ -15,6 +15,7 @@ from typing import Any
 from langgraph.types import Command
 
 from app.acl.models import Subject
+from app.orchestrator.context import attachment_text
 from app.vault import user_keys
 
 
@@ -78,6 +79,7 @@ def run(
     department: str | None,
     *,
     chat_key: bytes | None = None,
+    attachments: str | None = None,
 ) -> str | PendingAction:
     """With a chat_key this is a private conversation: its own checkpoint namespace,
     encrypted with that user's key."""
@@ -90,9 +92,23 @@ def run(
         "subject_roles": list(subject.roles),
         "scratchpad": {"department": department} if department else {},
     }
-    with _graph_cm(mode, serde) as graph:
-        final = graph.invoke(initial, config=config)
-        return _outcome(graph, config, final)
+    token = attachment_text.set(attachments)
+    try:
+        with _graph_cm(mode, serde) as graph:
+            final = graph.invoke(initial, config=config)
+            return _outcome(graph, config, final)
+    finally:
+        attachment_text.reset(token)
+
+
+def private_history(subject: Subject, thread_id: str, chat_key: bytes) -> list[dict[str, Any]]:
+    """The user and assistant messages of one of this user's private chats."""
+    from app.orchestrator.agents import _conversation
+
+    config = {"configurable": {"thread_id": private_thread(subject.id, thread_id)}}
+    with _graph_cm("single", user_keys.checkpoint_serde(chat_key)) as graph:
+        values = graph.get_state(config).values
+    return [{"role": m["role"], "content": m["content"]} for m in _conversation(values)]
 
 
 def resume(

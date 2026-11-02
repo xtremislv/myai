@@ -184,7 +184,9 @@ Then reach the API at `http://localhost:8000` and Grafana at `http://localhost:3
 1. `curl localhost:8000/healthz` → `{"status":"ok"}`.
 2. Log in and get a token (see **USER_GUIDE.md** §2).
 3. Send a `team`-mode chat request and get a reply.
-4. Open Grafana → **AI Platform — Diagnostics & Logs**: gateway/vLLM "UP", node activity on your
+4. Open the web dashboard at `/ui/` on the gateway and sign in as the admin. `scripts.init_db` printed the
+   admin's recovery code once: save it.
+5. Open Grafana → **AI Platform — Diagnostics & Logs**: gateway/vLLM "UP", node activity on your
    request, and the log panels streaming.
 
 ---

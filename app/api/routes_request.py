@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
 from app.api.deps import current_subject, require_admin
-from app.db.session import DepartmentTask, get_session
+from app.db.session import DepartmentTask, Report, User, get_session
 from app.request_manager import approvals as approvals_store
 from app.request_manager.router import RMRequest, execute_task, handle_request, resolve_approval
 
@@ -54,11 +54,17 @@ def submit_request(
     return RequestOut(**result.__dict__)
 
 
+def _usernames(session: Session, user_ids: set[str]) -> dict[str, str]:
+    rows = session.query(User.id, User.username).filter(User.id.in_(user_ids)).all()
+    return dict(rows)
+
+
 # ---- Approvals (admin only) ----
 class ApprovalOut(BaseModel):
     id: str
     department: str
     subject_id: str
+    subject_name: str
     message: str
     thread_id: str
     mode: str
@@ -76,13 +82,16 @@ def list_approvals(
     _admin: Subject = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> list[ApprovalOut]:
+    rows = approvals_store.list_pending(session)
+    names = _usernames(session, {a.subject_id for a in rows})
     return [
         ApprovalOut(
             id=a.id, department=a.department, subject_id=a.subject_id,
+            subject_name=names.get(a.subject_id, a.subject_id),
             message=a.message, thread_id=a.thread_id, mode=a.mode, state=a.state,
             tool=a.tool, tool_args=a.tool_args,
         )
-        for a in approvals_store.list_pending(session)
+        for a in rows
     ]
 
 
@@ -123,6 +132,7 @@ class TaskOut(BaseModel):
     id: str
     department: str
     requester_id: str
+    requester_name: str
     kind: str
     message: str
     state: str
@@ -146,8 +156,13 @@ def list_inbox(
         .order_by(DepartmentTask.created_at)
         .all()
     )
+    names = _usernames(session, {t.requester_id for t in tasks})
     return [
-        TaskOut(id=t.id, department=t.department, requester_id=t.requester_id, kind=t.kind, message=t.message, state=t.state)
+        TaskOut(
+            id=t.id, department=t.department, requester_id=t.requester_id,
+            requester_name=names.get(t.requester_id, t.requester_id),
+            kind=t.kind, message=t.message, state=t.state,
+        )
         for t in tasks
     ]
 
@@ -181,6 +196,7 @@ class ReportOut(BaseModel):
     id: str
     kind: str
     subject_id: str
+    subject_name: str
     message: str
     state: str
 
@@ -193,11 +209,13 @@ def list_reports(
     roles = set(subject.roles)
     if not ({"hr", "admin", "account"} & roles):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "reports are visible to hr, admin and account only")
-    from app.db.session import Report
-
     rows = session.query(Report).filter(Report.state == "open").order_by(Report.created_at).all()
+    visible = [r for r in rows if roles & set(r.notified)]
+    names = _usernames(session, {r.subject_id for r in visible})
     return [
-        ReportOut(id=r.id, kind=r.kind, subject_id=r.subject_id, message=r.message, state=r.state)
-        for r in rows
-        if roles & set(r.notified)
+        ReportOut(
+            id=r.id, kind=r.kind, subject_id=r.subject_id,
+            subject_name=names.get(r.subject_id, r.subject_id), message=r.message, state=r.state,
+        )
+        for r in visible
     ]

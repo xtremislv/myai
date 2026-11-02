@@ -27,11 +27,34 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
     # True until the user replaces the admin-set password; private chat needs this done.
     must_change_password: bool = False
+    # Only present when a new code was just created. It is never shown again.
+    recovery_code: str | None = None
 
 
 class ChangePasswordIn(BaseModel):
     old_password: str
     new_password: str = Field(min_length=12)
+
+
+class RecoverIn(BaseModel):
+    username: str
+    recovery_code: str
+    new_password: str = Field(min_length=12)
+
+
+class PasswordIn(BaseModel):
+    password: str
+
+
+class RecoveryCodeOut(BaseModel):
+    recovery_code: str
+
+
+class UserOut(BaseModel):
+    id: str
+    username: str
+    roles: list[str]
+    chat_enabled: bool
 
 
 class CreateUserIn(BaseModel):
@@ -67,16 +90,68 @@ def change_password(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
     if body.new_password == body.old_password:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "new password must be different")
+    recovery_code = None
     try:
         if user.wrapped_chat_key is None:
             chat_key = user_keys.provision(user, body.new_password)
+            recovery_code = user_keys.add_recovery_code(user, chat_key)
         else:
             chat_key = user_keys.rewrap(user, body.old_password, body.new_password)
     except InvalidTag as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
     user.password_hash = hash_password(body.new_password)
     session.commit()
-    return TokenOut(access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key))
+    return TokenOut(
+        access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
+        recovery_code=recovery_code,
+    )
+
+
+@router.post("/recover", response_model=TokenOut)
+def recover(body: RecoverIn, session: Session = Depends(get_session)) -> TokenOut:
+    """Set a new password with a recovery code. The code is used up: a new one is issued."""
+    user = session.query(User).filter(User.username == body.username).one_or_none()
+    if user is None or user.wrapped_recovery_key is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad username or recovery code")
+    try:
+        chat_key = user_keys.unlock_with_recovery_code(user, body.recovery_code)
+    except InvalidTag as e:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad username or recovery code") from e
+    user_keys.wrap_with_password(user, body.new_password, chat_key)
+    new_code = user_keys.add_recovery_code(user, chat_key)
+    user.password_hash = hash_password(body.new_password)
+    session.commit()
+    return TokenOut(
+        access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
+        recovery_code=new_code,
+    )
+
+
+@router.post("/recovery-code", response_model=RecoveryCodeOut)
+def new_recovery_code(
+    body: PasswordIn,
+    subject: Subject = Depends(current_subject),
+    session: Session = Depends(get_session),
+) -> RecoveryCodeOut:
+    """Replace the recovery code, for a user who lost it but still has their password."""
+    user = session.get(User, subject.id)
+    if user is None or user.wrapped_chat_key is None or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+    try:
+        chat_key = user_keys.unlock(user, body.password)
+    except InvalidTag as e:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
+    code = user_keys.add_recovery_code(user, chat_key)
+    session.commit()
+    return RecoveryCodeOut(recovery_code=code)
+
+
+@router.get("/users", response_model=list[UserOut])
+def list_users(session: Session = Depends(get_session), _admin=Depends(require_admin)) -> list[UserOut]:
+    return [
+        UserOut(id=u.id, username=u.username, roles=u.roles, chat_enabled=u.wrapped_chat_key is not None)
+        for u in session.query(User).order_by(User.username).all()
+    ]
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)

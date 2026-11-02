@@ -48,6 +48,10 @@ class User(Base):
     chat_key_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     chat_key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     wrapped_chat_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # The same key, wrapped by the user's one-time recovery code.
+    recovery_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    recovery_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    wrapped_recovery_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -152,8 +156,8 @@ class ChatHistory(Base):
     """Attachments on a chat, deleted after 3 days by scripts/purge_history.py.
 
     Message text is not stored here: it stays encrypted in the checkpoints, kept
-    indefinitely. `artifacts` is a list of {"type", "ref"}, where ref is the object
-    key in MinIO.
+    indefinitely. `artifacts` is a list of {"ref", "meta"}: ref is the object key in
+    MinIO, meta is the file's name, type and size, encrypted with the owner's key.
     """
 
     __tablename__ = "chat_history"
@@ -163,6 +167,18 @@ class ChatHistory(Base):
     artifacts: Mapped[list] = mapped_column(JSON, default=list)  # media/file refs; purged after 3d
     artifacts_purged: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChatThread(Base):
+    """Lets a user list their private chats. The title is encrypted with their key."""
+
+    __tablename__ = "chat_threads"
+    owner_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    encrypted_title: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class AuditLog(Base):
@@ -188,3 +204,21 @@ def init_db() -> None:
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "migrations"))
     command.upgrade(config, "head")
+    _setup_checkpoint_tables()
+
+
+def _setup_checkpoint_tables() -> None:
+    """LangGraph's own tables. This must run at startup and never during a request: its
+    CREATE INDEX CONCURRENTLY waits for every open transaction, including the caller's."""
+    if engine.dialect.name != "postgresql":
+        return
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    with PostgresSaver.from_conn_string(_settings.postgres_dsn) as checkpointer:
+        checkpointer.setup()
+
+
+def release_connection(session: Session) -> None:
+    """End the session's transaction before a long model call, so that call does not hold
+    a pooled connection and an open transaction for its whole duration."""
+    session.commit()

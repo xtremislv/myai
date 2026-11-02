@@ -31,6 +31,10 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   for `/v1/chat`.
 - Private chat text is encrypted per user (`app/vault/user_keys.py`). Keep conversation text out of `str`
   fields on `AgentState`: PostgresSaver stores those as plain JSON, skipping encryption.
+- Attachment text goes to the model through `app/orchestrator/context.py`, never graph state: state is
+  checkpointed forever, and attachments must be gone after 3 days.
+- The web UI is plain files in `app/web/`, served at `/ui/` under a strict CSP: no inline scripts or styles,
+  no third-party assets. The token stays in JS memory because it can open private chats.
 - `tests/test_postgres.py` runs only with `POSTGRES_INTEGRATION=1` and a throwaway `POSTGRES_DSN`.
 - `/v1/chat` is the user's private channel: no tools, no logging or audit of content. Only a message flagged
   as explicit or illegal leaves it, reported to hr + admin. There is one admin, whose finance activity on

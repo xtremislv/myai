@@ -12,6 +12,7 @@ from app.db.session import SessionLocal
 from app.departments.packs import critical_tools, is_finance_call
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
+from app.orchestrator.context import with_attachments
 from app.orchestrator.tools import tools_for
 from app.request_manager import guards
 
@@ -98,7 +99,7 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
     graph_node_total.labels(node="agent").inc()
     with tracer.start_as_current_span("graph.agent"):
         convo = [{"role": "system", "content": _system_prompt(state)}, *state.get("messages", [])]
-        reply = llm.chat(convo)
+        reply = llm.chat(with_attachments(convo))
 
     tool_call = _parse_tool_call(reply)
     if tool_call:

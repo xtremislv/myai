@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "ai-platform"
     minio_secure: bool = False
+    attachment_max_bytes: int = 10 * 1024 * 1024
 
     # --- Vault (envelope encryption) ---
     # 32 raw bytes, base64-encoded. Generate: python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"

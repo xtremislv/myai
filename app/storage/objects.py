@@ -31,9 +31,23 @@ def ensure_bucket() -> None:
         c.make_bucket(_settings.minio_bucket)
 
 
+# Private-chat attachments and the retention job bypass the ACL by design. Attachments are
+# checked by owner and encrypted with the owner's key (app/storage/attachments.py); retention
+# acts for the system. Everything else goes through ObjectStore.
+def put_system_object(key: str, data: bytes) -> None:
+    _client().put_object(_settings.minio_bucket, key, io.BytesIO(data), length=len(data))
+
+
+def get_system_object(key: str) -> bytes:
+    resp = _client().get_object(_settings.minio_bucket, key)
+    try:
+        return resp.read()
+    finally:
+        resp.close()
+        resp.release_conn()
+
+
 def remove_expired_object(key: str) -> None:
-    """For the retention job, which acts for the system and not for a subject, so it has
-    no ACL decision to make. Everything else goes through ObjectStore."""
     _client().remove_object(_settings.minio_bucket, key)
 
 
