@@ -39,7 +39,8 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
    the order of roles. Test a work request early.
 
 ## Then do these
-1. Confirm the real model id and choose quantization for the card. `gemma-3-26b-a4b-it` is a placeholder.
+1. Confirm the real model id and choose quantization for the card. `gemma-3-26b-a4b-it` is a placeholder. The rented
+   card is a Quadro RTX 8000 (48 GB, Turing, driver 580, CUDA 13.0): no FP8, so use AWQ or GPTQ INT4 weights.
 2. Benchmark, and tune `--max-model-len`, `--max-num-seqs`, and `max_concurrency` in `app/departments/packs.py`.
 3. **Test triage accuracy with the real model** (`TRIAGE_PROMPT` in `guards.py`). A personal message wrongly sorted as
    work is stored outside the user's encryption, so measure that error especially. The NSFW and forwarding prompts

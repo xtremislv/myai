@@ -12,6 +12,7 @@ On aiccloud.in, deploy a GPU with an Ubuntu 22.04 + CUDA image and at least 100 
 | GPU | Memory | FP8? | Notes |
 |---|---|---|---|
 | L40S | 48 GB | Yes | Recommended |
+| Quadro RTX 8000 | 48 GB | No | Older (Turing): use AWQ or GPTQ INT4 weights |
 | A100 80GB | 80 GB | No | Plenty of room |
 | H100 80GB | 80 GB | Yes | Fastest |
 | RTX 4090 | 24 GB | Yes | Tight: fewer people at once |
