@@ -84,18 +84,22 @@ TRIAGE_PROMPT = (
     "or update company records, orders, bills, inventory, shipments, a company or department "
     "mailbox (finance, careers, contact), research files, or the team's or department's shared "
     "files, or research, browse websites or book something on the company's behalf. "
-    'Otherwise "private": questions, writing help, advice, personal matters, general '
+    'Otherwise "private": questions (including how-to questions about workplace topics such as HR '
+    "processes, which use no company data), writing help, advice, personal matters, general "
     "knowledge, and the person's OWN things: their own files, notes and lists, their own "
     "email inbox, and reminders for themselves (\"remind me...\", \"my files\", \"my mail\", "
     "\"save a note\", \"create a file\" with no team or department named are all private). "
     "Reminders or notifications for a team, the warehouse, staff or other people are work. "
+    "Making documents from a company or department template, form or letterhead is work; from "
+    "the person's own template or a file they attached it is private, even for documents that "
+    "sound like HR or accounts paperwork (an offer letter, an invoice) when the template is attached. "
     'If you are unsure, choose "private".\n\n'
     "department: for work, the department that owns that data or system, from this list, otherwise "
     "null. Choose the owner even if it is marked not available to this person: never substitute "
     "a different department.\n{departments}\n\n"
     'action: "order" to buy or order products, "service" to book or subscribe to a service, '
-    '"bill" to pay or record a bill or invoice, otherwise "none". Asking how these work is '
-    '"none".\n\n'
+    '"bill" to pay or record a bill or invoice, otherwise "none". Asking how these work, and '
+    'making documents such as invoices or letters from a template, is "none".\n\n'
     'steps: "many" if it needs planning, several sources, using websites, booking, working through '
     'a mailbox, or several file changes, otherwise "one".\n\n'
     'Reply with ONLY JSON: {{"safety": "...", "route": "...", "department": "...", '

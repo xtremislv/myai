@@ -166,16 +166,45 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
                              tools=tools, tool_choice="none", stream=private)
             return {"messages": [{"role": "assistant", "content": reply}], "next": "__end__"}
 
-        reply = llm.chat(with_attachments(convo), tools=tools, stream=private)
+        unread = searched_without_reading(this_turn(state.get("messages", [])))
+        # If sources still need reading, a final answer now would be replaced: don't stream it.
+        reply = llm.chat(with_attachments(convo), tools=tools, stream=private and not unread)
         calls = calls_in(reply)
         if not calls and not reply.strip():
             reply = llm.chat(with_attachments([*convo, {"role": "user", "content": EMPTY_NUDGE}]),
+                             tools=tools, stream=private and not unread)
+            calls = calls_in(reply)
+        if not calls and unread and state.get("tool_rounds", 0) < MAX_TOOL_ROUNDS - 1:
+            step("Opening the best sources")
+            reply = llm.chat(with_attachments([*convo, {"role": "user", "content": READ_SOURCES}]),
                              tools=tools, stream=private)
             calls = calls_in(reply)
 
     if calls:
         return {"messages": [assistant_calls(reply, calls)], "next": "tools"}
     return {"messages": [{"role": "assistant", "content": reply}], "next": "__end__"}
+
+
+# Search snippets are not evidence: an answer built on web or news search must have opened at
+# least one result. Scholarly results carry abstracts, so they count as read.
+SEARCH_TOOLS = frozenset({"web_search", "news_search"})
+READING_TOOLS = frozenset({"fetch_page", "scrape_page", "browser_open", "browser_read", "scholar_search"})
+READ_SOURCES = (
+    "Before answering: you have only search-result snippets, which are not proof. Open the two or "
+    "three most relevant results with fetch_page (in one step), then answer from what the pages say, "
+    "naming them. If none can be opened, answer from the snippets and say so."
+)
+
+
+def this_turn(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The messages since the person's latest message."""
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    return messages[last_user + 1:]
+
+
+def searched_without_reading(messages: list[dict[str, Any]]) -> bool:
+    names = {m.get("name") for m in messages if m.get("role") == "tool"}
+    return bool(names & SEARCH_TOOLS) and not names & READING_TOOLS
 
 
 # Older tool results are cut to this many characters before going back to the model: web pages

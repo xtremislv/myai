@@ -2,9 +2,12 @@
 
 With an API key in the vault (``search/tavily`` or ``search/serper``) that provider is used: they
 are built for automated clients and give much better results. Without one, web search uses
-Bing (its rendered results page plus its RSS feed, filtered for relevance, because Bing
-degrades results for automated clients from datacenter addresses), and news uses Bing News
-RSS, which is reliable and dated. Results come back as (title, url, snippet, date).
+Bing's RSS feed, then Bing News, then Bing's rendered page, keeping only results that match
+most of the query (measured 2026-11-03: Bing gives this server results that match one word, or
+none, for most queries), and news uses Bing News RSS, which is reliable and dated.
+
+scholarly() searches research papers: arXiv, Crossref and PubMed, which are reachable here and
+need no key. Results come back as (title, url, snippet, date).
 """
 from __future__ import annotations
 
@@ -110,15 +113,60 @@ _STOP = {
 }
 
 
-def relevant(query: str, results: list[Result]) -> list[Result]:
-    """Drop results that share no meaningful word with the query (Bing's junk for bots)."""
-    words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2 and w not in _STOP}
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in _STOP}
+
+
+def _matches(word: str, haystack: set[str]) -> bool:
+    """A query word is found if a result word starts with it, or the reverse ("battery" and
+    "batteries" share a stem of at least 5 letters)."""
+    return any(h == word or (len(word) >= 5 and len(h) >= 5 and (h.startswith(word[:5]) and word.startswith(h[:5])))
+               for h in haystack)
+
+
+def relevance(query: str, result: Result) -> float:
+    words = _words(query)
+    if not words:
+        return 1.0
+    haystack = set(re.findall(r"[a-z0-9]+", f"{result.title} {result.snippet} {result.url}".lower()))
+    return sum(_matches(w, haystack) for w in words) / len(words)
+
+
+def relevant(query: str, results: list[Result], threshold: float = 0.5) -> list[Result]:
+    """Keep results that match at least half the meaningful query words (two or more when the
+    query has three or more), best first. Bing gives automated clients from datacenter
+    addresses results that often match one word only ("solid state battery" -> "SOLID
+    principles"); those are dropped rather than handed to the agent as if they were relevant."""
+    import math
+
+    words = _words(query)
     if not words:
         return results
-    return [
-        r for r in results
-        if words & set(re.findall(r"[a-z0-9]+", f"{r.title} {r.snippet} {r.url}".lower()))
-    ]
+    need = max(threshold, math.ceil(len(words) * 0.6) / len(words) if len(words) >= 3 else 0)
+    scored = [(relevance(query, r), i, r) for i, r in enumerate(results)]
+    return [r for score, _, r in sorted(scored, key=lambda t: (-t[0], t[1])) if score >= need]
+
+
+def reachable(results: list[Result]) -> list[Result]:
+    """Drop results on sites this server can't open (DNS-poisoned or private names), so agents
+    don't spend steps on links that will fail. Lookups are cached by the network guard."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.browsing.netguard import Blocked, resolve_public
+
+    def ok(r: Result) -> bool:
+        parts = urlsplit(r.url)
+        try:
+            resolve_public(parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80))
+            return True
+        except Blocked:
+            return False
+
+    if not results:
+        return results
+    with ThreadPoolExecutor(min(8, len(results))) as pool:
+        keep = list(pool.map(ok, results))
+    return [r for r, k in zip(results, keep) if k]
 
 
 _MONTH = (
@@ -146,22 +194,37 @@ def _dedupe(results: list[Result]) -> list[Result]:
     return out
 
 
+ENOUGH = 3  # relevant results before trying the next (slower) source
+
+
 def _bing(query: str, limit: int) -> list[Result]:
+    """Keyless search, cheapest source first: Bing's RSS feed, then Bing News (reliable, and
+    often the only relevant source for bots), then Bing's rendered results page."""
     from app.browsing.browser import browser
 
     found: list[Result] = []
-    url = f"https://www.bing.com/search?q={quote_plus(query)}&setlang=en&cc={_market().split('-')[-1]}"
+
+    def good() -> list[Result]:
+        return reachable(_dedupe(relevant(query, found)))
+
     try:
-        b = browser()
-        found += parse_bing_html(b.call(b.html_of, url), limit)
-    except Exception as e:  # noqa: BLE001 - the feed below still works
-        logger.warning("browser search failed: %s", type(e).__name__)
-    try:
-        feed = f"https://www.bing.com/search?format=rss&q={quote_plus(query)}&count={limit}&setlang=en"
-        found += parse_rss(fetch(feed).body, limit)
+        feed = f"https://www.bing.com/search?format=rss&q={quote_plus(query)}&count={max(limit, 10)}&setlang=en"
+        found += parse_rss(fetch(feed).body, max(limit, 10))
     except Exception as e:  # noqa: BLE001
         logger.warning("feed search failed: %s", type(e).__name__)
-    return _dedupe(relevant(query, found))[:limit]
+    if len(good()) < ENOUGH:
+        try:
+            found += news(query, limit)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("news fallback failed: %s", type(e).__name__)
+    if len(good()) < ENOUGH:
+        url = f"https://www.bing.com/search?q={quote_plus(query)}&setlang=en&cc={_market().split('-')[-1]}"
+        try:
+            b = browser()
+            found += parse_bing_html(b.call(b.html_of, url), limit)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("browser search failed: %s", type(e).__name__)
+    return good()[:limit]
 
 
 def _tavily(key: str, query: str, limit: int, topic: str) -> list[Result]:
@@ -208,7 +271,7 @@ def news(query: str, limit: int = 8, api: tuple[str, str] | None = None) -> list
         except Exception as e:  # noqa: BLE001
             logger.warning("%s news failed: %s", api[0], type(e).__name__)
     url = f"https://www.bing.com/news/search?format=rss&q={quote_plus(query)}&mkt={_market()}"
-    results = parse_rss(fetch(url).body, limit)
+    results = reachable(parse_rss(fetch(url).body, limit))
     return sorted(results, key=lambda r: r.date, reverse=True)
 
 
@@ -219,3 +282,85 @@ def render(results: list[Result]) -> str:
         f"{i}. {r.title}" + (f" ({r.date})" if r.date else "") + f"\n   {r.url}" + (f"\n   {r.snippet}" if r.snippet else "")
         for i, r in enumerate(results, 1)
     )
+
+
+# ---- research papers ----
+def _arxiv(query: str, limit: int) -> list[Result]:
+    terms = "+AND+".join(f"all:{quote_plus(w)}" for w in sorted(_words(query))[:8]) or f"all:{quote_plus(query)}"
+    body = fetch(f"https://export.arxiv.org/api/query?search_query={terms}&max_results={limit}&sortBy=relevance").body
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    out = []
+    for entry in ET.fromstring(body).findall("a:entry", ns):
+        title = " ".join((entry.findtext("a:title", "", ns)).split())
+        link = entry.findtext("a:id", "", ns).strip()
+        authors = ", ".join(a.findtext("a:name", "", ns) for a in entry.findall("a:author", ns)[:3])
+        abstract = " ".join(entry.findtext("a:summary", "", ns).split())
+        date = entry.findtext("a:published", "", ns)[:10]
+        if title and link:
+            out.append(Result(f"{title} (arXiv; {authors})", link, abstract[:300], date))
+    return out
+
+
+def _crossref(query: str, limit: int) -> list[Result]:
+    import json
+
+    data = json.loads(fetch(
+        f"https://api.crossref.org/works?query={quote_plus(query)}&rows={limit}"
+        "&select=DOI,title,author,container-title,issued,abstract,type"
+    ).body)
+    out = []
+    for item in data.get("message", {}).get("items", []):
+        title = " ".join((item.get("title") or [""])[0].split())
+        if not title or not item.get("DOI"):
+            continue
+        parts = (item.get("issued", {}).get("date-parts") or [[None]])[0]
+        year = str(parts[0]) if parts and parts[0] else ""
+        venue = (item.get("container-title") or [""])[0]
+        authors = ", ".join(f"{a.get('family', '')}" for a in (item.get("author") or [])[:3])
+        abstract = re.sub(r"<[^>]+>", " ", item.get("abstract") or "")
+        out.append(Result(f"{title} ({venue or item.get('type', '')}; {authors})", f"https://doi.org/{item['DOI']}",
+                          " ".join(abstract.split())[:300], year))
+    return out
+
+
+def _pubmed(query: str, limit: int) -> list[Result]:
+    import json
+
+    ids = json.loads(fetch(
+        f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={quote_plus(query)}"
+        f"&retmode=json&retmax={limit}&sort=relevance"
+    ).body)["esearchresult"].get("idlist", [])
+    if not ids:
+        return []
+    data = json.loads(fetch(
+        f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={','.join(ids)}&retmode=json"
+    ).body)["result"]
+    out = []
+    for pid in ids:
+        item = data.get(pid, {})
+        authors = ", ".join(a.get("name", "") for a in item.get("authors", [])[:3])
+        out.append(Result(f"{item.get('title', '').strip()} ({item.get('fulljournalname', '')}; {authors})",
+                          f"https://pubmed.ncbi.nlm.nih.gov/{pid}/", "", (item.get("pubdate") or "")[:4]))
+    return out
+
+
+SCHOLARLY = {"arxiv": _arxiv, "crossref": _crossref, "pubmed": _pubmed}
+
+
+def scholarly(query: str, limit: int = 6, sources: tuple[str, ...] = ("arxiv", "crossref", "pubmed")) -> list[Result]:
+    """Research papers from several free indexes, most relevant first, at most `limit` each."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Years the model adds ("2024 2025 2026") make arXiv require them as words and find nothing.
+    query = " ".join(re.sub(r"\b(19|20)\d{2}\b", " ", clean_query(query)).split()) or query
+
+    def one(name: str) -> list[Result]:
+        try:
+            return SCHOLARLY[name](query, limit)
+        except Exception as e:  # noqa: BLE001 - one index down must not sink the rest
+            logger.warning("%s search failed: %s", name, type(e).__name__)
+            return []
+
+    with ThreadPoolExecutor(len(sources)) as pool:
+        found = [r for batch in pool.map(one, sources) for r in batch]
+    return _dedupe(relevant(query, found))[: limit * 2]

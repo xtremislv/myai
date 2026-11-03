@@ -145,6 +145,39 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   scratch database and folder and checks them. Verified on this server (8 users, 342 checkpoints, migration 0006).
   `backup.sh` used to `source .env`, which broke on `VLLM_EXTRA_ARGS`; it now reads KEY=value lines.
 
+## Connectivity, research quality, templates (2026-11-03, evening)
+- **Network from this server** (`scripts/check_connectivity.py` re-checks it): DNS answers are poisoned on the
+  path, even with `nameserver 1.1.1.1/8.8.8.8` already in /etc/resolv.conf (Wikipedia, Google, YouTube, Reddit
+  resolve to Facebook/Twitter/Dropbox addresses), many TLS connections are cut mid-handshake (BBC, The Hindu,
+  Livemint, Economic Times, data.gov.in), and others are "network unreachable" (Reuters, NDTV, DuckDuckGo, Brave,
+  Times of India). Working: Bing (RSS + News RSS), Tavily API, arXiv, Crossref, PubMed, RBI, india.gov.in, World
+  Bank, Moneycontrol, Booking, and at times GitHub, PyPI, Open-Meteo, Amazon, Flipkart. **Reachability also
+  varies by the hour**: at 14:00 UTC almost all outbound HTTPS (even Bing and 1.1.1.1) timed out, while the
+  tunnel stayed up. The owner was given steps to try encrypted DNS; that, and any proxy/VPN egress, is their call.
+- **The `ddgs` (DuckDuckGo) library** was tried: every backend it uses is blocked here. Not added.
+- **Keyless web search** returned results matching one query word (or none) for most queries. Now: Bing RSS ->
+  Bing News -> rendered Bing, keeping results that match ~60% of the query words and dropping hosts this server
+  can't reach (`search.relevant`, `search.reachable`). A Tavily or Serper key is still the real fix.
+- **`scholar_search`** (new, all departments and private chat): arXiv + Crossref + PubMed in parallel, years
+  stripped from queries.
+- **Block pages**: `fetch_page`/`scrape_page` share `_readable`: a 401/403/429/503 or a page that looks like a
+  block/CAPTCHA (`extract.block_reason`) is retried in Chromium, and if still blocked the tool says so instead
+  of returning the block page as content. Chromium gets past Investopedia, IMF, RBI, PIB; not Britannica, AP,
+  Stack Overflow, Indian Express, Amazon.
+- **Agents read sources**: answers built only on web/news search snippets get one nudge to open the best 2-3
+  results (`READ_SOURCES`, single agent and specialists). Verified live: every research answer opened pages.
+- **Templates** (`app/documents/`, table `doc_templates`, migration 0007): tools `list_templates,
+  read_template, create_from_template, save_template`; a `documents` specialist; a Templates page. Placeholders
+  (`{{ x }}`, loops; Jinja sandbox, StrictUndefined) are filled exactly; missing values come back as MISSING and
+  nothing is saved. Word: per-paragraph fill keeping styles; table rows with `item.` repeat per `items`. A file
+  without placeholders is an example: the model rewrites it (Word: paragraph by paragraph, so layout survives),
+  keeping the issuer's details and marking unknown subject facts `[TO FILL: ...]`. Batches: JSON list or a
+  CSV/JSON `data_file`, `output_path` with placeholders. Sources: chat attachments (private, via the
+  `attachment_files` context var), My files `templates/`, company templates (work only; ACL
+  `template:<dept>/*`, `template:global/*` read for everyone at work). Verified live with Gemma and real Word
+  files. `write_file`/`append_file`/`edit_file` now refuse .docx/.pdf/.xlsx and other binary formats.
+- Triage eval: 71 cases x 3 x 2 personas = 426/426, 0 personal as work (adds attached-template and how-to cases).
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

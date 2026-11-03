@@ -130,10 +130,39 @@ def extract_text(name: str, content_type: str, data: bytes) -> str | None:
     lower = name.lower()
     if content_type == "application/pdf" or lower.endswith(".pdf"):
         return _pdf_text(data)
+    if lower.endswith(".docx") or content_type == DOCX_TYPE:
+        return _docx_text(data)
     suffix = lower[lower.rfind("."):] if "." in lower else ""
     if content_type.startswith("text/") or content_type in _TEXT_TYPES or suffix in _TEXT_SUFFIXES:
         return data.decode("utf-8", errors="replace")
     return None
+
+
+DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _docx_text(data: bytes) -> str | None:
+    try:
+        from app.documents.engine import text_of
+
+        return text_of("file.docx", data).strip() or None
+    except Exception:  # noqa: BLE001 - a broken file is still a valid attachment to store
+        logger.warning("could not read a Word attachment")
+        return None
+
+
+def files_for_thread(session: Session, key: bytes, owner_id: str, thread_id: str) -> list[dict]:
+    """This thread's live attachments as {"name", "content_type", "data"}, for tools that need
+    the file itself (templates). Like the text, never put in graph state."""
+    out = []
+    for row in _live_rows(session, owner_id, thread_id):
+        meta = _describe(row, key)
+        try:
+            data = user_keys.decrypt_bytes(key, _get(row.artifacts[0]["ref"]), row.id)
+        except Exception:  # noqa: BLE001
+            continue
+        out.append({"name": meta["name"], "content_type": meta["content_type"], "data": data})
+    return out
 
 
 def _pdf_text(data: bytes) -> str | None:

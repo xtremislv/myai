@@ -30,6 +30,7 @@ TOOL_STEPS = {
     "set_reminder": "Setting a reminder for {when}",
     "web_search": "Searching the web for {query}",
     "news_search": "Checking the news on {query}",
+    "scholar_search": "Searching research papers on {query}",
     "weather": "Checking the weather in {location}",
     "fetch_page": "Reading {url}",
     "scrape_page": "Extracting {what} from {url}",
@@ -58,6 +59,10 @@ TOOL_STEPS = {
     "copy_file": "Copying {path} to {new_path}",
     "delete_file": "Deleting {path}",
     "restore_file": "Restoring {path}",
+    "list_templates": "Looking at the templates",
+    "read_template": "Reading the template {name}",
+    "create_from_template": "Making documents from {template}",
+    "save_template": "Saving the template {name}",
     "review_report": "Opening report {report_id}",
 }
 

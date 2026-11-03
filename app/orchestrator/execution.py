@@ -20,7 +20,7 @@ from langgraph.types import Command
 
 from app.acl.models import Subject
 from app.llm.client import token_sink
-from app.orchestrator.context import attachment_text, user_key
+from app.orchestrator.context import attachment_files, attachment_text, user_key
 from app.orchestrator.progress import progress_sink
 from app.vault import user_keys
 
@@ -109,6 +109,7 @@ def run(
     chat_key: bytes | None = None,
     attachments: str | None = None,
     context: list[dict[str, Any]] | None = None,
+    files: list[dict] | None = None,
 ) -> str | PendingAction:
     """With a chat_key this is a private conversation: its own checkpoint namespace,
     encrypted with that user's key."""
@@ -133,6 +134,7 @@ def run(
             )
     token = attachment_text.set(attachments)
     key_token = user_key.set(chat_key)
+    files_token = attachment_files.set(files)
     try:
         with _graph_cm(mode, serde) as graph:
             if context and not chat_key:
@@ -140,6 +142,7 @@ def run(
             final = graph.invoke(initial, config=config)
             return _outcome(graph, config, final)
     finally:
+        attachment_files.reset(files_token)
         user_key.reset(key_token)
         attachment_text.reset(token)
 
@@ -155,7 +158,8 @@ def _missing(graph, config, context: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def stream_private(
-    subject: Subject, message: str, thread_id: str, mode: str, chat_key: bytes, attachments: str | None
+    subject: Subject, message: str, thread_id: str, mode: str, chat_key: bytes, attachments: str | None,
+    files: list[dict] | None = None,
 ) -> Iterator[tuple[str, Any]]:
     """Run a private reply, yielding ("step", text) for what the agents are doing (searching,
     opening a page), ("delta", text) as words arrive, and then either
@@ -167,7 +171,8 @@ def stream_private(
         token_sink.set(lambda text: events.put(("delta", text)))
         progress_sink.set(lambda text: events.put(("step", text)))
         try:
-            events.put(("final", run(subject, message, thread_id, mode, None, chat_key=chat_key, attachments=attachments)))
+            events.put(("final", run(subject, message, thread_id, mode, None, chat_key=chat_key,
+                                     attachments=attachments, files=files)))
         except Exception as e:  # noqa: BLE001 - reported to the reader
             events.put(("error", e))
 

@@ -83,3 +83,28 @@ def select_text(html: str, selector: str, limit: int = 30) -> list[str]:
         if text:
             out.append(text)
     return out
+
+
+# Pages a site shows instead of its content when it refuses automated visitors. Only checked on
+# short pages, so an article that merely mentions "access denied" is not mistaken for one.
+_BLOCK_SIGNS = (
+    "access denied", "request blocked", "the request could not be satisfied", "attention required",
+    "just a moment", "checking your browser", "verify you are human", "verify you are a human",
+    "are you a robot", "captcha", "unusual traffic", "pardon our interruption", "bot detection",
+    "enable javascript and cookies", "403 forbidden", "forbidden", "you don't have permission",
+    "please complete the security check", "request unsuccessful", "incapsula", "cloudflare ray id",
+)
+BLOCK_PAGE_MAX_CHARS = 1500
+
+
+def block_reason(title: str, text: str) -> str | None:
+    """Why this looks like a block or challenge page rather than the real content, or None."""
+    if len(text) > BLOCK_PAGE_MAX_CHARS:
+        return None
+    head = f"{title}\n{text[:600]}".lower()
+    sign = next((s for s in _BLOCK_SIGNS if s in head), None)
+    if sign:
+        return sign
+    if title.strip().lower() in ("error", "") or title.lower().startswith(("error |", "error -", "403", "404")):
+        return f"an error page ('{title.strip() or 'no title'}')"
+    return None

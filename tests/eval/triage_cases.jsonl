@@ -63,3 +63,9 @@
 {"id": "w60", "msg": "Save the Q4 battery supplier comparison into the research files", "route": "work", "dept": ["researcher"]}
 {"id": "w61", "msg": "Check the careers inbox for new applications and summarize them", "route": "work", "dept": ["hr"]}
 {"id": "w62", "msg": "Update the logistics team's shared dispatch checklist file with the new courier", "route": "work", "dept": ["logistics"]}
+{"id": "p68", "msg": "Use the template I attached to make a cover letter for the Acme job", "route": "private"}
+{"id": "p69", "msg": "Fill my rent receipt template for October: tenant Ravi, amount 18000", "route": "private"}
+{"id": "w63", "msg": "Generate offer letters from the HR offer letter template for the three new hires", "route": "work", "dept": ["hr"]}
+{"id": "w64", "msg": "Create invoices from the accounts invoice template for these orders", "route": "work", "dept": ["account"]}
+{"id": "p70", "msg": "Using the attached offer letter template, make an offer letter for Ravi Kumar, Software Engineer, joining 1 December", "route": "private"}
+{"id": "p71", "msg": "Make an invoice like the one I attached for my freelance client, 3 hours at 2000/hour", "route": "private"}

@@ -22,6 +22,8 @@ Resource type conventions (urn = "type:id"):
   reminder:<owner>/*         a person's own reminders  -> owner ($self)
   files:<owner>/*            a person's own files      -> owner ($self); encrypted with their key
   shared:<department>/*      a department's shared files -> that department (delete needs approval)
+  template:<department>/*    a department's document templates -> that department
+  template:global/*          company-wide templates   -> read: everyone (at work); write: admin
   secret:mail/personal/*, secret:system/*  -> never the admin (people's mail logins, server keys)
   report:nsfw/*              NSFW reports             -> hr, admin
 
@@ -34,7 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 MAIL_TOOLS = ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail", "summarize_mail")
-LOOKUP_TOOLS = ("web_search", "news_search", "fetch_page", "scrape_page", "weather")
+LOOKUP_TOOLS = ("web_search", "news_search", "scholar_search", "fetch_page", "scrape_page", "weather")
 BROWSE_TOOLS = (
     "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",
     "browser_scroll", "browser_back",
@@ -46,10 +48,13 @@ FILE_TOOLS = (
     "delete_file", "restore_file",
 )
 REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
+# Documents from templates: company templates (database) at work; in private chat the person's
+# own templates (My files, templates/) and files attached to the chat.
+TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "save_template")
 # Private chat (no department), owner's decisions of 2026-11-03: read-only web access, plus the
 # person's OWN mailbox (personal category only; sending needs their confirmation), their own
 # files and reminders. Nothing that commits on the web (no browser_commit), no company data.
-PRIVATE_TOOLS = (*LOOKUP_TOOLS, *BROWSE_TOOLS, *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS)
+PRIVATE_TOOLS = (*LOOKUP_TOOLS, *BROWSE_TOOLS, *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS)
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
 ALWAYS_CRITICAL = ("send_mail", "delete_file", "browser_commit")
@@ -89,11 +94,12 @@ ACCOUNT = DepartmentSpec(
         Grant("inventory:*", ("read", "list")),
         Grant("web:*", ("read", "write")),
         Grant("shared:account/*", ("read", "write", "list", "delete")),
+        Grant("template:account/*", ("read", "write", "list", "delete")),
     ),
     tools=(
         "balance_lookup", *MAIL_TOOLS, "manage_order", "manage_bill",
         "initiate_payment", "book_service", "inventory_lookup",
-        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS,
+        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
     ),
     quota_per_min=60,
     max_concurrency=4,
@@ -117,8 +123,9 @@ HR = DepartmentSpec(
         Grant("report:nsfw/*", ("read", "list")),
         Grant("inventory:*", ("read", "list")),
         Grant("shared:hr/*", ("read", "write", "list", "delete")),
+        Grant("template:hr/*", ("read", "write", "list", "delete")),
     ),
-    tools=(*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS),
+    tools=(*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
 )
 
 LOGISTICS = DepartmentSpec(
@@ -132,10 +139,11 @@ LOGISTICS = DepartmentSpec(
         Grant("web:search", ("read",)),
         Grant("web:fetch", ("read",)),
         Grant("shared:logistics/*", ("read", "write", "list", "delete")),
+        Grant("template:logistics/*", ("read", "write", "list", "delete")),
     ),
     tools=(
         "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification",
-        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS,
+        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
     ),
     quota_per_min=120,
     max_concurrency=6,
@@ -150,9 +158,10 @@ RESEARCHER = DepartmentSpec(
         Grant("web:*", ("read",)),
         Grant("inventory:*", ("read", "list")),
         Grant("shared:researcher/*", ("read", "write", "list", "delete")),
+        Grant("template:researcher/*", ("read", "write", "list", "delete")),
     ),
     tools=(
-        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS,
+        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
     ),
     quota_per_min=120,
     max_concurrency=6,
@@ -164,8 +173,9 @@ SUPERUSER = DepartmentSpec(
     grants=(
         Grant("inventory:*", ("read", "write", "list")),
         Grant("shared:superuser/*", ("read", "write", "list", "delete")),
+        Grant("template:superuser/*", ("read", "write", "list", "delete")),
     ),
-    tools=("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS),
+    tools=("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
     quota_per_min=120,
     max_concurrency=6,
 )
@@ -196,6 +206,7 @@ GLOBAL = DepartmentSpec(
         Grant("web:search", ("read",), subject="*"),
         Grant("web:fetch", ("read",), subject="*"),
         Grant("web:browse", ("read",), subject="*"),
+        Grant("template:global/*", ("read", "list"), subject="*"),  # company-wide templates
     ),
     tools=(),
 )

@@ -372,6 +372,7 @@ function morePages() {
     has("admin") && ["credentials", "Credentials", credentialsView],
     ["notifications", "Notifications", notificationsView, "unread_notifications"],
     ["files", "My files", filesView],
+    ["templates", "Templates", templatesView],
     ["reminders", "Reminders", remindersView],
     ["overview", "Overview", overviewView],
     ["account", "My account", accountView],
@@ -1590,6 +1591,73 @@ async function mailSettingsCard() {
     ),
   );
   return card;
+}
+
+// ---- document templates ----
+async function templatesView(refresh) {
+  const rows = await api("/v1/templates");
+  const error = errorBox();
+  const listError = errorBox();
+  const scopes = [...state.roles.filter((r) => r !== "admin"), ...(has("admin") ? [...DEPARTMENTS, "global"] : [])]
+    .filter((v, i, a) => a.indexOf(v) === i);
+  const name = h("input", { required: true, maxLength: 128, placeholder: "e.g. Offer letter" });
+  const description = h("input", { maxLength: 512, placeholder: "What it's for (optional)" });
+  const scope = h("select", null, scopes.map((sc) => h("option", { value: sc }, sc === "global" ? "Everyone (global)" : departmentName(sc))));
+  const file = h("input", { type: "file", required: true, accept: ".docx,.md,.txt,.html,.csv,.json,.pdf" });
+  const download = (t) => async () => {
+    const blob = await api(`/v1/templates/${t.id}`, { raw: true });
+    const link = h("a", { href: URL.createObjectURL(blob), download: t.filename });
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+  return h("div", null,
+    heading("Templates", "Company document templates. Ask the assistant at work, e.g. \"make offer letters for these "
+      + "three people from the Offer letter template\". Your own templates go in My files, folder templates/, or attach one to a chat."),
+    listError,
+    h("div", { class: "card" }, table(
+      ["Name", "For", "Format", "Fills in", ""],
+      rows.map((t) => [
+        h("span", null, h("strong", null, t.name), t.description && h("div", { class: "small muted" }, t.description)),
+        t.scope === "global" ? "Everyone" : departmentName(t.scope),
+        t.filename.split(".").pop().toUpperCase(),
+        t.fields.length ? h("span", { class: "mono small" }, t.fields.join(", ")) : h("span", { class: "muted small" }, "Example: imitated"),
+        h("div", { class: "row" },
+          h("button", { type: "button", onclick: download(t) }, "Download"),
+          h("button", { type: "button", class: "danger", onclick: async () => {
+            listError.clear();
+            try { await api(`/v1/templates/${t.id}`, { method: "DELETE" }); refresh(); } catch (err) { listError.fail(err); }
+          } }, "Delete"),
+        ),
+      ]),
+      "No templates yet.",
+    )),
+    scopes.length > 0 && h("form", {
+      class: "card",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.clear();
+        const form = new FormData();
+        form.append("file", file.files[0]);
+        form.append("name", name.value);
+        form.append("scope", scope.value);
+        form.append("description", description.value);
+        try { await api("/v1/templates", { method: "POST", form }); refresh(); } catch (err) { error.fail(err); }
+      },
+    },
+      h("h2", null, "Add a template"),
+      error,
+      h("div", { class: "row wrap" },
+        h("label", null, "Name", name),
+        h("label", null, "For", scope),
+        h("label", { class: "grow" }, "Description", description),
+      ),
+      h("label", null, "File (Word, Markdown, text, HTML, CSV, JSON; a PDF works as an example)", file),
+      h("p", { class: "small muted" }, "Mark the parts to fill with {{ name }}, {{ joining_date }} and so on. In Word, "
+        + "a table row using {{ item.description }} and {{ item.amount }} repeats once per line item. A file "
+        + "without placeholders works too: new documents copy its structure and style with the new facts."),
+      h("button", { class: "primary", type: "submit" }, "Upload"),
+    ),
+  );
 }
 
 loginScreen();

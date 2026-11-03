@@ -282,7 +282,8 @@ database and folder, checks them, deletes them). Set `BACKUP_DEST` to copy backu
 Rotate the vault master key with `scripts/rotate_vault_key.py` (stop the gateway and scheduler first; it
 explains itself with `--help`). Everyone is signed out; nothing stored is lost.
 
-`scripts/load_test.py` measures the model under 1-16 simultaneous chats.
+`scripts/load_test.py` measures the model under 1-16 simultaneous chats. `scripts/check_connectivity.py` shows
+which sites the agents can reach from this network (search, news, reference, government, APIs).
 
 ### Browser for the agents
 The agents' headless browser needs Chromium and its system libraries:

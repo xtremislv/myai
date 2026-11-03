@@ -29,6 +29,7 @@ from app.departments.packs import (
     MAIL_TOOLS,
     PRIVATE_TOOLS,
     REMINDER_TOOLS,
+    TEMPLATE_TOOLS,
 )
 from app.storage.objects import ObjectStore
 from app.vault.aesgcm_vault import AESGCMVault
@@ -388,11 +389,28 @@ def _current_text(state: dict[str, Any], path: str) -> tuple[str | None, str]:
     return text, ""
 
 
+# Formats that are not plain text: writing text into them would make a broken file.
+BINARY_SUFFIXES = (".docx", ".doc", ".pdf", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".png", ".jpg", ".jpeg",
+                   ".gif", ".webp", ".zip")
+
+
+def _not_text(path: str) -> str | None:
+    if path.strip().lower().endswith(BINARY_SUFFIXES):
+        return (f"ERROR: '{path}' is not a plain-text format, so text can't be written into it. For a Word "
+                "document use create_from_template (with a template or an example document), or save "
+                "the text as .md or .txt instead.")
+    return None
+
+
 def write_file(state: dict[str, Any], path: str, content: str, overwrite: bool = True) -> str:
+    if (err := _not_text(path)) is not None:
+        return err
     return _save(state, path, content.encode(), overwrite=overwrite)
 
 
 def append_file(state: dict[str, Any], path: str, content: str) -> str:
+    if (err := _not_text(path)) is not None:
+        return err
     text, err = _current_text(state, path)
     if text is None:
         if "no file" in err:
@@ -411,6 +429,8 @@ def edit_file(state: dict[str, Any], path: str, find: str, replace: str, replace
     """Replace exact text in a file. `find` must appear exactly once unless replace_all."""
     if not find:
         return "ERROR: 'find' must be the exact text to change (use write_file to replace a whole file)"
+    if (err := _not_text(path)) is not None:
+        return err
     text, err = _current_text(state, path)
     if text is None:
         return err
@@ -517,6 +537,269 @@ def restore_file(state: dict[str, Any], path: str) -> str:
         return f"'{key}' is back to its previous version."
 
     return _file_error(theirs)
+
+
+# ---- documents from templates ----
+MAX_RECORDS = 50          # documents per call when filling placeholders
+MAX_IMITATIONS = 10       # documents per call when the model writes each one
+
+
+def _template_scopes(state: dict[str, Any]) -> list[str]:
+    from app.departments.packs import DEFAULT_DEPARTMENTS
+
+    dept = (state.get("scratchpad") or {}).get("department")
+    if dept == "admin":
+        return [d.name for d in DEFAULT_DEPARTMENTS] + ["global"]
+    return [dept, "global"]
+
+
+def _stem(name: str) -> str:
+    base = name.rsplit("/", 1)[-1]
+    return base.rsplit(".", 1)[0].lower() if "." in base else base.lower()
+
+
+def _resolve_template(state: dict[str, Any], name: str):
+    """(filename, bytes, where it came from) or an ERROR string."""
+    from app.storage.userfiles import FileError
+
+    wanted = (name or "").strip()
+    if not wanted:
+        return "ERROR: name the template (list_templates shows what is available)"
+    if _private(state):
+        from app.orchestrator.context import attachment_files
+
+        for f in attachment_files.get() or []:
+            if wanted.lower() in (f["name"].lower(), _stem(f["name"])):
+                return f["name"], f["data"], "attached to this chat"
+        found = _my_files(state, "read")
+        if isinstance(found, str):
+            return found
+        key, owner = found
+        from app.storage import userfiles
+
+        with SessionLocal() as session:
+            for candidate in (wanted, f"templates/{wanted}"):
+                try:
+                    info, data = userfiles.read(session, key, owner, candidate)
+                    return info.path, data, "your files"
+                except FileError:
+                    pass
+            for info in userfiles.list_files(session, key, owner, "templates"):
+                if _stem(info.path) == _stem(wanted):
+                    return info.path, userfiles.read(session, key, owner, info.path)[1], "your files"
+        return (f"ERROR: no template '{wanted}' in this chat's attachments or your files (templates/ folder). "
+                "Attach it, or save one with save_template.")
+    from app.documents import store
+
+    with SessionLocal() as session:
+        row = store.find(session, _subject(state), wanted, _template_scopes(state))
+        if row is not None:
+            return row.filename, row.content, f"company template ({row.scope})"
+        try:
+            path, data = _dept_files(session, state).read(wanted)
+            return path, data, "department files"
+        except (FileError, PermissionError):
+            pass
+    return f"ERROR: no template '{wanted}' (list_templates shows what is available)"
+
+
+def list_templates(state: dict[str, Any]) -> str:
+    if _private(state):
+        from app.orchestrator.context import attachment_files
+
+        lines = [f"- {f['name']} (attached to this chat)" for f in attachment_files.get() or []]
+        found = _my_files(state, "list")
+        if isinstance(found, str):
+            return found
+        key, owner = found
+        from app.storage import userfiles
+
+        with SessionLocal() as session:
+            lines += [f"- {f.path} (your files)" for f in userfiles.list_files(session, key, owner, "templates")]
+        return ("\n".join(lines) or "No templates yet: attach one, or save one with save_template.") + (
+            "\n(Company templates are used in work requests.)")
+    if (err := _enforce(state, "list", "template", f"{_template_scopes(state)[0]}/")) is not None:
+        return err
+    from app.documents import store
+
+    with SessionLocal() as session:
+        rows = store.visible(session, _subject(state), _template_scopes(state))
+        listing = [f"- {r.name}  (for: {r.scope}; format: {r.filename.rsplit('.', 1)[-1]}"
+                   + (f"; {r.description}" if r.description else "") + ")"
+                   for r in rows]
+    return "\n".join(listing) or "No company templates yet. Save one with save_template."
+
+
+def read_template(state: dict[str, Any], name: str) -> str:
+    from app.documents import engine
+
+    got = _resolve_template(state, name)
+    if isinstance(got, str):
+        return got
+    filename, data, origin = got
+    try:
+        names = engine.fields(filename, data) if engine.kind_of(filename) != "pdf" else []
+        text = engine.text_of(filename, data)
+    except engine.TemplateError as e:
+        return f"ERROR: {e}"
+    head = f"TEMPLATE: {filename} ({origin}, {engine.kind_of(filename)})\n"
+    if names:
+        head += ("Placeholders to fill: " + ", ".join(names) + ". Pass them as a JSON object in `data`"
+                 + (" (items = a list of objects, one per table row)" if "items" in names else "") + ".\n")
+    else:
+        head += "No placeholders: it is an example. New documents follow its structure with your data.\n"
+    return untrusted(f"the template {filename}", head + "\n" + extract_clip(text))
+
+
+def extract_clip(text: str) -> str:
+    from app.browsing.extract import clip
+
+    return clip(text, min(_max_chars(), 4000))
+
+
+def _records(state: dict[str, Any], data: str, data_file: str):
+    """(records or None for free text, error)."""
+    from app.documents import engine
+
+    if data_file:
+        if _private(state):
+            found = _my_files(state, "read")
+            if isinstance(found, str):
+                return None, found
+            key, owner = found
+            from app.storage import userfiles
+
+            try:
+                with SessionLocal() as session:
+                    info, raw = userfiles.read(session, key, owner, data_file)
+                name = info.path
+            except userfiles.FileError as e:
+                return None, f"ERROR: {e}"
+        else:
+            try:
+                with SessionLocal() as session:
+                    name, raw = _dept_files(session, state).read(data_file)
+            except Exception as e:  # noqa: BLE001
+                return None, f"ERROR: couldn't read {data_file}: {e}"
+        try:
+            return engine.records_from_file(name, raw), ""
+        except engine.TemplateError as e:
+            return None, f"ERROR: {e}"
+    return engine.parse_data(data), ""
+
+
+def create_from_template(
+    state: dict[str, Any], template: str, data: str = "", output_path: str = "", data_file: str = "",
+    instructions: str = "",
+) -> str:
+    """Make one document per record from a template and save it (private: your files; work: the
+    department's folder). data: a JSON object, a JSON list of objects, or plain text."""
+    import json as _json
+
+    from app.documents import engine
+    from app.llm import client as llm
+
+    got = _resolve_template(state, template)
+    if isinstance(got, str):
+        return got
+    filename, raw, _origin = got
+    kind = engine.kind_of(filename)
+    records, err = _records(state, data, data_file)
+    if err:
+        return err
+    try:
+        names = engine.fields(filename, raw) if kind != "pdf" else []
+    except engine.TemplateError as e:
+        return f"ERROR: {e}"
+    suffix = ".md" if kind == "pdf" else "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ".txt"
+    stem = _stem(filename)
+
+    outputs: list[tuple[dict, bytes]] = []
+    try:
+        if names:  # fill placeholders exactly
+            if records is None:
+                if not data.strip():
+                    return f"MISSING: give values for {', '.join(names)} (as a JSON object in data)."
+                records = [engine.extract_fields(names, data, llm.chat)]
+            if len(records) > MAX_RECORDS:
+                return f"ERROR: at most {MAX_RECORDS} documents per call; split the data"
+            for i, rec in enumerate(records):
+                try:
+                    body = engine.fill_docx(raw, rec) if kind == "docx" else engine.fill_text(
+                        engine.text_of(filename, raw), rec).encode()
+                except engine.MissingFields as e:
+                    who = f" (record {i + 1})" if len(records) > 1 else ""
+                    return (f"MISSING{who}: {', '.join(e.names)}. Ask the person or look these up, then call "
+                            "create_from_template again with them in data. Nothing was saved.")
+                outputs.append((rec, body))
+        else:  # an example: the model writes each new document
+            texts = [data] if records is None else [_json.dumps(r, ensure_ascii=False, indent=1) for r in records]
+            if not any(t.strip() for t in texts):
+                return "ERROR: give the data for the new document (facts, names, numbers) in data"
+            if len(texts) > MAX_IMITATIONS:
+                return f"ERROR: at most {MAX_IMITATIONS} documents per call when the template is an example"
+            for i, text in enumerate(texts):
+                if kind == "docx":
+                    body = engine.imitate_docx(raw, text, llm.chat, instructions)
+                else:
+                    body = engine.imitate_text(engine.text_of(filename, raw), text, filename, llm.chat, instructions).encode()
+                outputs.append(((records or [{}])[i] if records else {}, body))
+    except engine.TemplateError as e:
+        return f"ERROR: {e}"
+
+    saved, used = [], set()
+    for i, (rec, body) in enumerate(outputs):
+        name = engine.output_name(output_path, rec, i, stem, suffix)
+        if len(outputs) > 1 and (name in used or "{" not in (output_path or "{")):
+            name = name[: -len(suffix)] + f"-{i + 1}{suffix}"
+        used.add(name)
+        result = _save(state, name, body)
+        if result.startswith(("ERROR", "ACCESS")):
+            return result + (f" ({len(saved)} document(s) saved before this: {', '.join(saved)})" if saved else "")
+        path = result.split("'")[1] if "'" in result else name
+        gaps = body.count(b"[TO FILL")
+        saved.append(path + (f" ({gaps} gap(s) marked [TO FILL])" if gaps else ""))
+    how = "filled in" if names else "written from the example"
+    return f"Created {len(saved)} document(s), {how}:\n" + "\n".join(f"- {p}" for p in saved)
+
+
+def save_template(
+    state: dict[str, Any], name: str, content: str = "", source_path: str = "", description: str = "",
+    scope: str = "",
+) -> str:
+    """Keep a template for later: text with {{ placeholders }} in content, or an existing file
+    (source_path, e.g. a Word file). Private: your templates/ folder. Work: the department's
+    company templates (scope "global" for everyone, if allowed)."""
+    filename, data = "", b""
+    if source_path:
+        got = _resolve_template(state, source_path)
+        if isinstance(got, str):
+            return got
+        filename, data, _ = got
+    elif content:
+        data = content.encode()
+        filename = name if "." in name.rsplit("/", 1)[-1] else f"{name}.md"
+    else:
+        return "ERROR: give the template text in content, or a file in source_path"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "md"
+    if _private(state):
+        base = name.rsplit("/", 1)[-1]
+        target = f"templates/{base if base.lower().endswith('.' + ext) else base + '.' + ext}"
+        return _save(state, target, data)
+    from app.documents import store
+
+    dept = (state.get("scratchpad") or {}).get("department")
+    target_scope = (scope or dept or "global").strip().lower()
+    try:
+        with SessionLocal() as session:
+            row = store.save(session, _subject(state), target_scope, _stem(name) if "." in name else name,
+                             f"{_stem(name)}.{ext}", data, description)
+            label = f"{row.name} [{row.scope}]"
+    except PermissionError as e:
+        return f"ACCESS DENIED: {e}"
+    except ValueError as e:
+        return f"ERROR: {e}"
+    return f"Saved template {label}."
 
 
 # ---- logistics tools ----
@@ -670,7 +953,16 @@ def web_search(state: dict[str, Any], query: str) -> str:
     from app.browsing import search
 
     api = _search_api()
-    return untrusted("web search results", _web_call(lambda: search.render(search.web(query, api=api))))
+
+    def go() -> str:
+        results = search.web(query, api=api)
+        if results:
+            return search.render(results)
+        hint = "" if api else (" Keyless web search from this server is weak (no search API key is set).")
+        return ("No relevant results." + hint + " Try fewer or different words, news_search for anything "
+                "current, scholar_search for research papers, or open a well-known site directly with fetch_page.")
+
+    return untrusted("web search results", _web_call(go))
 
 
 def news_search(state: dict[str, Any], query: str) -> str:
@@ -700,30 +992,47 @@ def _rendered(url: str) -> str:
     return b.call(b.html_of, url)
 
 
+def _readable(url: str):
+    """(page, title, text) for a public URL, using real Chromium when the plain request is
+    blocked or the page needs JavaScript; or an ERROR string when the site refuses automated
+    access. A block or challenge page is never passed off as the site's content."""
+    from app.browsing import extract
+    from app.browsing.fetch import fetch
+
+    page = fetch(url)
+    status = page.status
+    title, text = extract.page_text(page.body) if page.is_html else ("", page.body)
+    blocked = status in (401, 403, 429, 503) or (page.is_html and extract.block_reason(title, text))
+    if blocked or (page.is_html and len(text) < 200):
+        try:
+            rendered = _rendered(page.url)
+        except Exception:  # noqa: BLE001 - report the original answer below
+            rendered = None
+        if rendered:
+            r_title, r_text = extract.page_text(rendered)
+            if not extract.block_reason(r_title, r_text) and len(r_text) >= len(text):
+                page = type(page)(page.url, 200, "text/html", rendered)
+                title, text, status, blocked = r_title, r_text, 200, None
+    if blocked or status >= 400:
+        why = blocked if isinstance(blocked, str) else f"HTTP {status}"
+        return (f"ERROR: {page.url} refused automated access ({why}), so its content isn't available. "
+                "Try another source for the same information.")
+    return page, title, text
+
+
 def fetch_page(state: dict[str, Any], url: str) -> str:
     if (err := _enforce(state, "read", "web", "fetch")) is not None:
         return err
     if _leaks(state, url=url):
         return LEAK_REFUSAL
     from app.browsing import extract
-    from app.browsing.fetch import fetch
 
     def go() -> str:
-        page = fetch(url)
-        body = page.body
-        challenged = page.status in (403, 429, 503) or "Just a moment" in body[:3000]
-        if challenged or (page.is_html and len(extract.page_text(body)[1]) < 200):
-            try:
-                body = _rendered(page.url)
-            except Exception:  # noqa: BLE001 - report the original status below
-                pass
-            else:
-                challenged = "Just a moment" in body[:3000]
-                page = type(page)(page.url, 200, "text/html", body)
-        if challenged or page.status >= 400:
-            return f"ERROR: {page.url} answered HTTP {page.status} or blocked automated access. Try another site."
+        got = _readable(url)
+        if isinstance(got, str):
+            return got
+        page, title, text = got
         if page.is_html:
-            title, text = extract.page_text(page.body)
             if len(text) < 200:
                 return f"{title}\n{text}\n(Little text: the page may need JavaScript. Try browser_open.)"
             return f"PAGE: {title}\nURL: {page.url}\n\n{extract.clip(text, _max_chars())}"
@@ -739,10 +1048,12 @@ def scrape_page(state: dict[str, Any], url: str, what: str = "text", selector: s
     if _leaks(state, url=url):
         return LEAK_REFUSAL
     from app.browsing import extract
-    from app.browsing.fetch import fetch
 
     def go() -> str:
-        page = fetch(url)
+        got = _readable(url)
+        if isinstance(got, str):
+            return got
+        page, _, text = got
         if not page.is_html:
             return "ERROR: that is not a web page; use fetch_page to read it"
         if selector:
@@ -753,10 +1064,21 @@ def scrape_page(state: dict[str, Any], url: str, what: str = "text", selector: s
         elif what == "tables":
             body = "\n\n".join(f"TABLE {i}:\n{t}" for i, t in enumerate(extract.tables(page.body), 1)) or "No tables."
         else:
-            body = extract.page_text(page.body)[1]
+            body = text
         return f"URL: {page.url}\n\n{extract.clip(body, _max_chars())}"
 
     return untrusted(url, _web_call(go))
+
+
+def scholar_search(state: dict[str, Any], query: str) -> str:
+    """Research papers (arXiv, Crossref, PubMed): titles, authors, year, link and abstract."""
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    if _leaks(state, text=query):
+        return LEAK_REFUSAL
+    from app.browsing import search
+
+    return untrusted("research paper indexes", _web_call(lambda: search.render(search.scholarly(query))))
 
 
 # ---- interactive browser: one isolated session per person ----
@@ -849,6 +1171,10 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "delete_file": delete_file,
     "restore_file": restore_file,
     "list_reminders": list_reminders,
+    "list_templates": list_templates,
+    "read_template": read_template,
+    "create_from_template": create_from_template,
+    "save_template": save_template,
     "cancel_reminder": cancel_reminder,
     "inventory_lookup": inventory_lookup,
     "inventory_adjust": inventory_adjust,
@@ -860,6 +1186,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "weather": weather,
     "fetch_page": fetch_page,
     "scrape_page": scrape_page,
+    "scholar_search": scholar_search,
     "browser_open": browser_open,
     "browser_read": browser_read,
     "browser_click": browser_click,
@@ -877,17 +1204,17 @@ DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
     "account": (
         "balance_lookup", *MAIL_TOOLS, "manage_order", "manage_bill",
         "initiate_payment", "book_service", "inventory_lookup",
-        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS,
+        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
     ),
-    "hr": (*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS),
+    "hr": (*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
     "logistics": (
         "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification",
-        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS,
+        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
     ),
     "researcher": (
-        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS,
+        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
     ),
-    "superuser": ("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS),
+    "superuser": ("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
     "admin": ("*",),
 }
 
@@ -923,6 +1250,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                     "'2026-11-05 09:00'), text (what to remember, written to them), repeat (none, "
                     "daily, weekdays, weekly, monthly), email=true to also email it.",
     "list_reminders": "List the person's waiting reminders with their ids.",
+    "list_templates": "List the document templates available (in private chat: attached files and the person's "
+                      "templates/ folder; at work: company and department templates).",
+    "read_template": "Show a template: its placeholders to fill, or that it is an example to imitate, and its text.",
+    "create_from_template": "Make documents from a template and save them. data: a JSON object of values, a JSON "
+                            "list (one document each), or plain text; or data_file: a CSV/JSON file of records. "
+                            "output_path may use placeholders, e.g. 'letters/{{ name }}.docx'. Keeps the "
+                            "template's format (Word stays Word). Reports any values still missing.",
+    "save_template": "Keep a template for later: text with {{ placeholders }} in content, or an existing file "
+                     "via source_path (e.g. a Word file attached to the chat).",
     "cancel_reminder": "Cancel a waiting reminder by the id list_reminders shows.",
     "list_files": "List files in a folder ('' for all). In private chat: the person's own files. At work: "
                   "the department's shared folder, or a data area such as research/. trash=true lists "
@@ -945,6 +1281,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                   "fetch_page before relying on a fact.",
     "news_search": "Search recent news articles, newest first, with dates. Use it for anything current.",
     "fetch_page": "Read the text of a web page, PDF or text file by URL.",
+    "scholar_search": "Search research papers (arXiv, Crossref, PubMed): title, authors, year, link and "
+                      "abstract. Use it for scientific, technical or medical research.",
     "weather": "Current weather and the next 3 days for a place, e.g. 'Mumbai' or 'Hyderabad, India'.",
     "scrape_page": "Extract from a web page by URL: what='text', 'links' or 'tables', or the text of "
                    "elements matching a CSS selector.",

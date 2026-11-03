@@ -27,12 +27,14 @@ from app.orchestrator.agents import _conversation
 from app.orchestrator.clock import with_now
 from app.orchestrator.context import with_attachments
 from app.orchestrator.nodes import (
+    READ_SOURCES,
     _department,
     assistant_calls,
     calls_in,
     compact_tool_results,
     execute_calls,
     pending_calls,
+    searched_without_reading,
 )
 from app.orchestrator.progress import step
 from app.orchestrator.tools import TOOL_DESCRIPTIONS, tool_schemas
@@ -69,8 +71,8 @@ SPECIALISTS: dict[str, Specialist] = {
             about="finds current, factual information on the web and in company documents: news, "
                   "prices, facts, comparisons, anything that may have changed recently",
             tools=(
-                "web_search", "news_search", "weather", "fetch_page", "scrape_page", "read_document",
-                "list_documents",
+                "web_search", "news_search", "scholar_search", "weather", "fetch_page", "scrape_page",
+                "read_document", "list_documents", "read_file", "list_files",
             ),
             max_rounds=6,
             prompt=(
@@ -79,7 +81,9 @@ SPECIALISTS: dict[str, Specialist] = {
                 "it up instead of relying on memory. Use news_search for current events and web_search "
                 "for the rest, with short queries of a few key words and no dates (news_search already "
                 "returns the newest first). Your search tools are live: what they return is real and "
-                "current, even when it is newer than anything you remember. Then open the two or three most relevant results with "
+                "current, even when it is newer than anything you remember. For scientific, technical or "
+                "medical questions also use scholar_search (papers with abstracts). Then open the two "
+                "or three most relevant results with "
                 "fetch_page; a "
                 "snippet alone is not proof. Prefer official and recent sources and check that a "
                 "page's date fits the question. Where sources disagree, say so. Run independent "
@@ -153,6 +157,29 @@ SPECIALISTS: dict[str, Specialist] = {
                 "it. Only delete when the task clearly asks, and then just call delete_file: the person "
                 "is asked to confirm it before it runs. Report "
                 "exactly which files you created or changed."
+            ),
+        ),
+        Specialist(
+            name="documents",
+            core=("create_from_template",),
+            title="Making the documents",
+            about="makes documents from a template (company, department, the person's own, or a file "
+                  "attached to the chat): letters, invoices, reports, certificates; one or many from "
+                  "a list of records; and saves new templates",
+            tools=(
+                "list_templates", "read_template", "create_from_template", "save_template", "list_files",
+                "read_file",
+            ),
+            max_rounds=8,
+            prompt=(
+                "You are the DOCUMENTS specialist. Find the template (list_templates), then read it "
+                "(read_template) to see whether it has placeholders to fill or is an example to "
+                "imitate. Gather the values from the task (and from files the task names), then call "
+                "create_from_template once: data as a JSON object (or a JSON list for several "
+                "documents, or data_file for a CSV/JSON of records), and an output_path that names "
+                "each document sensibly, e.g. 'letters/{{ name }}.docx'. If it reports MISSING "
+                "values the task doesn't give, don't invent them: report exactly which values are "
+                "needed. Report the files created."
             ),
         ),
         Specialist(
@@ -350,6 +377,14 @@ def make_specialist(name: str):
                 calls = calls_in(reply)
                 if not calls and not reply.strip():
                     convo.append({"role": "user", "content": "Call a tool, or write your report."})
+                    reply = llm.chat(convo, tools=tools)
+                    calls = calls_in(reply)
+                own = state.get("messages", [])[state.get("agent_start", 0):]
+                can_read = any(t["function"]["name"] == "fetch_page" for t in tools)
+                if not calls and can_read and rounds < spec.max_rounds - 1 and searched_without_reading(own):
+                    step("Opening the best sources")
+                    convo.append({"role": "assistant", "content": str(reply)})
+                    convo.append({"role": "user", "content": READ_SOURCES})
                     reply = llm.chat(convo, tools=tools)
                     calls = calls_in(reply)
         if calls:

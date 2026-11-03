@@ -247,11 +247,13 @@ def chat(
         return finished
 
     context = attachments.context_for_thread(session, key, subject.id, body.thread_id)
+    files = attachments.files_for_thread(session, key, subject.id, body.thread_id)
     release_connection(session)
     with _private_slot(subject) as free:
         if not free:
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, BUSY_MESSAGE)
-        reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key, attachments=context)
+        reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key,
+                              attachments=context, files=files)
     _remember_thread(session, key, subject.id, body.thread_id, body.message)
     return _private_reply(body.thread_id, mode, reply)
 
@@ -315,12 +317,13 @@ def chat_stream(
 
         with Session(bind=bind) as own:
             context = attachments.context_for_thread(own, key, subject.id, body.thread_id)
+            files = attachments.files_for_thread(own, key, subject.id, body.thread_id)
         with _private_slot(subject) as free:
             if not free:
                 yield _event({"type": "error", "detail": BUSY_MESSAGE})
                 return
             for kind, value in execution.stream_private(
-                subject, body.message, body.thread_id, mode, key, context
+                subject, body.message, body.thread_id, mode, key, context, files
             ):
                 if kind == "delta":
                     yield _event({"type": "delta", "text": value})

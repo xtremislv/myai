@@ -56,6 +56,11 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Mailboxes a person configures are `guarded`: public addresses on mail ports only (`connector.check_servers`).
 - Once a conversation has read mail or files, web tools refuse long URLs/queries (`_leaks` in `tools.py`).
 - After changing the triage prompt, run `scripts/eval_triage.py` (cases in `tests/eval/triage_cases.jsonl`).
+- Templates (`app/documents/`): fill with the sandboxed Jinja env in `engine.py` only (never a plain
+  `jinja2.Template`: templates come from users). Company templates are work-only; private chat uses the
+  person's own templates and attachments (`attachment_files` context var).
+- Web tools must never pass a block/CAPTCHA page off as content (`extract.block_reason`, `tools._readable`).
+  `scripts/check_connectivity.py` shows what this network lets through; it changes over time.
 
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing

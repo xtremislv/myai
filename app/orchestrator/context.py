@@ -26,3 +26,8 @@ def with_attachments(convo: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # The person's private-chat key during a private run, so tools can open their own files.
 # Like attachment text, it must never be put in graph state (which is checkpointed).
 user_key: ContextVar[bytes | None] = ContextVar("user_key", default=None)
+
+
+# This turn's chat attachments as files ({"name", "content_type", "data"}), for tools that need
+# the file itself, e.g. a Word template. Same lifetime rule as attachment_text.
+attachment_files: ContextVar[list[dict] | None] = ContextVar("attachment_files", default=None)

@@ -23,6 +23,7 @@ from app.api import (
     routes_me,
     routes_ops,
     routes_request,
+    routes_templates,
 )
 from app.config import get_settings, validate_secrets
 from app.db.session import engine, init_db
@@ -70,6 +71,7 @@ app.include_router(routes_request.router)
 app.include_router(routes_dashboard.router)
 app.include_router(routes_me.router)
 app.include_router(routes_ops.router)
+app.include_router(routes_templates.router)
 app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="ui")
 
 

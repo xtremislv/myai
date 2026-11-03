@@ -26,6 +26,9 @@ dependencies = [
     "redis>=5.2",
     "minio>=7.2",
     "pypdf>=5.0",
+    # document templates (app/templates): Word files and {{ placeholders }} in a sandbox
+    "python-docx>=1.1",
+    "jinja2>=3.1",
     # agents' web access (app/browsing); Chromium: `playwright install --with-deps chromium`
     "playwright>=1.48",
     "beautifulsoup4>=4.12",

@@ -14,6 +14,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     func,
 )
@@ -262,6 +263,24 @@ class OpsAlert(Base):
     state: Mapped[str] = mapped_column(String(16), default="firing")  # firing|resolved
     started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DocTemplate(Base):
+    """A company document template: global (everyone at work) or one department's.
+    Personal templates are ordinary files in a person's "My files" (templates/ folder)."""
+
+    __tablename__ = "doc_templates"
+    __table_args__ = (UniqueConstraint("scope", "name", name="uq_doc_templates_scope_name"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(64), index=True)  # "global" or a department name
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(String(512), default="")
+    filename: Mapped[str] = mapped_column(String(256))  # its extension decides the format
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_by: Mapped[str] = mapped_column(String(128), default="")
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class AuditLog(Base):

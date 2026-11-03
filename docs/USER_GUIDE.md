@@ -208,6 +208,18 @@ curl -s $BASE/v1/reminders -H "authorization: Bearer $TOKEN"                 # w
 curl -s $BASE/v1/notifications?unread_only=true -H "authorization: Bearer $TOKEN"
 curl -s $BASE/v1/files -H "authorization: Bearer $TOKEN" -F folder=notes -F file=@todo.md   # upload
 ```
+**Documents from templates.** Give the assistant a template and the data, and it makes the document in the
+same format (Word stays Word):
+- Attach a template to a private chat, or keep it in *My files* under `templates/`: "make a rent receipt
+  from my template for Ravi, October, 18000". At work, use company templates (*Templates* page): "make offer
+  letters from the Offer letter template for these three people".
+- Mark what to fill with `{{ name }}`, `{{ joining_date }}`; in Word, a table row using `{{ item.description }}`
+  repeats once per line item. Missing values are asked for, never invented.
+- A document without placeholders works as an example: "make a similar certificate for Vikram from the
+  attached one". The new document keeps the layout and the issuer's details, takes every fact about the new
+  person from you, and marks anything it doesn't know as `[TO FILL: ...]`.
+- Many at once: give a list, or a CSV in your files ("one letter per row of people.csv, named by name").
+
 When a private reply needs your go-ahead, `/v1/chat` answers `"outcome":"confirm"` with a `confirm` object
 (the exact email or file). Answer with `POST /v1/chat/threads/<id>/confirm {"approve": true|false}`;
 `GET /v1/chat/threads/<id>/pending` shows it again. Sending a new message instead counts as "no".
