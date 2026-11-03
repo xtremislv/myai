@@ -714,11 +714,11 @@ async function chatView(thread, { reloadThreads, paint }) {
   const confirmCard = (pending) => {
     const error = errorBox();
     const card = h("div", { class: "confirm card" });
-    const decide = (approve) => async () => {
+    const decide = (approve, asWork = false) => async () => {
       error.clear();
       card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       try {
-        const result = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/confirm`, { method: "POST", body: { approve } });
+        const result = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/confirm`, { method: "POST", body: { approve, as_work: asWork } });
         card.remove();
         showResult(result);
       } catch (err) {
@@ -735,17 +735,49 @@ async function chatView(thread, { reloadThreads, paint }) {
         h("dt", null, LABELS[k] || k), h("dd", { class: k === "body" ? "pre" : null }, v),
       ])),
       error,
-      h("div", { class: "row" },
-        h("button", { class: "primary", type: "button", onclick: decide(true) },
-          pending.tool === "send_mail" ? "Send" : pending.tool === "browser_commit" ? "Yes, place it" : "Yes, go ahead"),
-        h("button", { type: "button", onclick: decide(false) }, "No"),
-      ),
+      pending.purchase && h("p", { class: "small muted" }, "Is this for personal use or for work? Work orders go to the Accounts "
+        + "team, who pay with the company's details."),
+      pending.purchase
+        ? h("div", { class: "row" },
+          h("button", { class: "primary", type: "button", onclick: decide(true) }, "Personal: place it"),
+          h("button", { type: "button", onclick: decide(false, true) }, "Work: send to Accounts"),
+          h("button", { type: "button", onclick: decide(false) }, "Cancel"))
+        : h("div", { class: "row" },
+          h("button", { class: "primary", type: "button", onclick: decide(true) },
+            pending.tool === "send_mail" ? "Send" : pending.tool === "browser_commit" ? "Yes, go ahead" : "Yes, go ahead"),
+          h("button", { type: "button", onclick: decide(false) }, "No")),
     );
     messages.append(card);
     toBottom();
   };
 
   const say = (text) => { input.value = text; grow(); composer.requestSubmit(); };
+  const secretBox = (scope, ask) => {
+    const value = h("input", { type: "password", autocomplete: "one-time-code", "aria-label": ask.what });
+    const reveal = h("input", { type: "checkbox", onchange: () => { value.type = reveal.checked ? "text" : "password"; } });
+    const err = errorBox();
+    const box = h("form", {
+      class: "card confirm",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        err.clear();
+        try {
+          await api(`/v1/browser/${encodeURIComponent(scope)}/secret`, { method: "POST", body: { ref: ask.ref, value: value.value, site: ask.site } });
+          box.replaceChildren(h("div", { class: "notice good" }, `Entered on ${ask.site}.`));
+          say("I've entered it, please carry on.");
+        } catch (e) { err.fail(e); }
+      },
+    },
+      h("strong", null, icon("lock"), ` ${ask.what}`),
+      h("p", { class: "small muted" }, `Typed straight into the page on ${ask.site}. It isn't saved, shown to the assistant, or kept in this chat.`),
+      err,
+      h("div", { class: "row" }, value, h("button", { class: "primary", type: "submit" }, "Enter")),
+      h("label", { class: "check small" }, reveal, h("span", null, "Show")),
+    );
+    messages.append(box);
+    toBottom();
+    value.focus();
+  };
   const openBrowser = (scope, reason) => {
     content.querySelectorAll(".live").forEach((el) => el.remove());
     messages.append(browserPanel(scope, reason, { onDone: () => say("Done, please carry on.") }));
@@ -753,10 +785,16 @@ async function chatView(thread, { reloadThreads, paint }) {
     toBottom();
   };
 
+  const handover = (b) => {
+    if (!b) return;
+    if (b.secret) secretBox(b.scope, b.secret);
+    else openBrowser(b.scope, b.reason);
+  };
+
   const showResult = (result) => {
     if (result.outcome === "confirm") confirmCard(result.confirm);
     else if (result.reply) bubble("assistant", result.reply);
-    if (result.browser) openBrowser(result.browser.scope, result.browser.reason);
+    handover(result.browser);
   };
 
   const watchRequests = async () => {
@@ -844,7 +882,7 @@ async function chatView(thread, { reloadThreads, paint }) {
           await reloadThreads();
         } else {
           bubble("assistant", result.reply, result.route === "work" ? result.department : null);
-          if (result.browser) openBrowser(result.browser.scope, result.browser.reason);
+          handover(result.browser);
           await reloadThreads();
           if (result.route === "work") await watchRequests();
           toBottom();
@@ -1486,6 +1524,7 @@ async function accountView() {
   return h("div", null,
     heading("My account"),
     await mailSettingsCard(),
+    await walletCard(),
     h("div", { class: "card" },
       h("h2", null, "Profile"),
       h("dl", { class: "facts" },
@@ -1548,6 +1587,79 @@ async function accountView() {
       h("button", { type: "submit" }, "Create new code"),
     ),
   );
+}
+
+
+// ---- saved details: logins, cards, UPI, addresses (encrypted with the person's key) ----
+const WALLET_FORMS = {
+  login: [["site", "Website, e.g. amazon.in"], ["username", "Username or email"], ["password", "Password", "password"], ["label", "Name (optional)"]],
+  card: [["label", "Name, e.g. HDFC credit card"], ["name", "Name on card"], ["number", "Card number", "password"], ["expiry", "Expiry (MM/YY)"]],
+  upi: [["upi_id", "UPI ID, e.g. name@okhdfc"], ["label", "Name (optional)"]],
+  address: [["label", "Name, e.g. Home"], ["name", "Full name"], ["phone", "Phone"], ["line1", "Address line 1"], ["line2", "Address line 2"],
+    ["city", "City"], ["state", "State"], ["pincode", "PIN code"]],
+};
+
+async function walletCard() {
+  const card = h("div", { class: "card" });
+  const items = await api("/v1/me/wallet");
+  const error = errorBox();
+  const kind = h("select", null, [["login", "Website login"], ["card", "Card"], ["upi", "UPI ID"], ["address", "Address"]]
+    .map(([v, t]) => h("option", { value: v }, t)));
+  const fields = h("div", { class: "row wrap" });
+  let inputs = {};
+  const drawFields = () => {
+    inputs = {};
+    fill(fields, WALLET_FORMS[kind.value].map(([name, label, type]) => {
+      const input = h("input", { type: type || "text", autocomplete: "off" });
+      inputs[name] = input;
+      return h("label", null, label, input);
+    }));
+  };
+  kind.addEventListener("change", drawFields);
+  drawFields();
+  const redraw = async () => card.replaceWith(await walletCard());
+  const reveal = (item, out) => async () => {
+    const pw = h("input", { type: "password", autocomplete: "current-password", "aria-label": "Your account password" });
+    const err = errorBox();
+    out.replaceChildren(h("div", { class: "row" }, pw, h("button", { type: "button", onclick: async () => {
+      err.clear();
+      try {
+        const data = await api(`/v1/me/wallet/${item.id}/reveal`, { method: "POST", body: { password: pw.value } });
+        delete data.kind;
+        out.replaceChildren(h("dl", { class: "facts" }, Object.entries(data).flatMap(([k, v]) => [h("dt", null, k), h("dd", { class: "mono" }, v)])),
+          h("button", { type: "button", onclick: () => out.replaceChildren() }, "Hide"));
+      } catch (e) { err.fail(e); }
+    } }, "Unlock"), err));
+    pw.placeholder = "Your account password";
+    pw.focus();
+  };
+  fill(card,
+    h("h2", null, "Saved details"),
+    h("p", { class: "muted" }, "Logins, cards, UPI IDs and addresses the assistant can use to sign in and order for you. They're "
+      + "encrypted with your key: nobody else can see them, the admin included, and the assistant never sees the values; it "
+      + "only fills them in on the right site. CVVs and OTPs are never saved: you're asked at each payment."),
+    items.length
+      ? h("div", { class: "notes" }, items.map((item) => {
+        const out = h("div");
+        return h("div", { class: "card note" },
+          h("div", { class: "row spread" }, h("span", null, h("span", { class: "pill" }, item.kind), " ", item.summary),
+            h("div", { class: "row" },
+              h("button", { type: "button", onclick: reveal(item, out) }, "Show"),
+              h("button", { type: "button", class: "danger", onclick: async () => { await api(`/v1/me/wallet/${item.id}`, { method: "DELETE" }); redraw(); } }, "Delete"))),
+          out);
+      }))
+      : h("div", { class: "empty" }, "Nothing saved yet."),
+    h("form", {
+      class: "settings",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.clear();
+        const data = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+        try { await api("/v1/me/wallet", { method: "POST", body: { kind: kind.value, data } }); redraw(); } catch (e) { error.fail(e); }
+      },
+    }, h("h3", null, "Add"), error, h("label", null, "Kind", kind), fields, h("button", { class: "primary", type: "submit" }, "Save")),
+  );
+  return card;
 }
 
 // ---- notifications (the bell) ----
@@ -1727,11 +1839,13 @@ async function mailSettingsCard() {
     const input = h("input", props);
     return [input, h("label", null, label, input)];
   };
-  const [imapHost, imapHostLabel] = field("IMAP server", { required: true, placeholder: "imap.example.com", value: box.imap_host || "" });
-  const [smtpHost, smtpHostLabel] = field("SMTP server (to send)", { placeholder: "smtp.example.com", value: box.smtp_host || "" });
+  const [address, addressLabel] = field("Email address", { type: "email", required: true, autocomplete: "off", value: box.username || "" });
+  const [password, passwordLabel] = field("App password", { type: "password", required: true, autocomplete: "new-password", placeholder: "16 letters for Gmail" });
+  const [imapHost, imapHostLabel] = field("IMAP server", { placeholder: "imap.example.com" });
+  const [smtpHost, smtpHostLabel] = field("SMTP server (to send)", { placeholder: "smtp.example.com" });
   const [smtpPort, smtpPortLabel] = field("SMTP port", { type: "number", value: 465, min: 1 });
-  const [username, usernameLabel] = field("Username (usually your email address)", { required: true, autocomplete: "off", value: box.username || "" });
-  const [password, passwordLabel] = field("Password or app password", { type: "password", required: true, autocomplete: "new-password" });
+  const other = h("details", null, h("summary", { class: "small" }, "Another provider (enter its servers)"),
+    h("div", { class: "row wrap" }, imapHostLabel, smtpHostLabel, smtpPortLabel));
 
   const tz = h("input", { value: prefs.timezone || "", placeholder: "Asia/Kolkata" });
   const emailAddr = h("input", { type: "email", value: prefs.email || "", placeholder: "Defaults to your mailbox address" });
@@ -1751,8 +1865,8 @@ async function mailSettingsCard() {
         await api("/v1/me/mailbox", {
           method: "PUT",
           body: {
+            address: address.value, password: password.value,
             imap_host: imapHost.value, imap_port: 993, smtp_host: smtpHost.value, smtp_port: Number(smtpPort.value) || 465,
-            username: username.value, password: password.value,
           },
         });
         password.value = "";
@@ -1764,10 +1878,13 @@ async function mailSettingsCard() {
     },
   },
     h("p", { class: "muted" }, "Connect your own mailbox so the assistant can read, summarize and answer your mail in your private chats. "
-      + "Gmail and Outlook need an app password. Sending always asks you first."),
+      + "Sending always asks you first. The servers are chosen from your address (Gmail first)."),
+    h("p", { class: "small muted" }, "Gmail: your normal password won't work. Turn on 2-Step Verification, then create an app password at ",
+      mdLink("https://myaccount.google.com/apppasswords", "myaccount.google.com/apppasswords"),
+      " and paste it here. Outlook/Hotmail can't connect with a password (Microsoft blocks it)."),
     error, note,
-    h("div", { class: "row wrap" }, imapHostLabel, usernameLabel, passwordLabel),
-    h("div", { class: "row wrap" }, smtpHostLabel, smtpPortLabel),
+    h("div", { class: "row wrap" }, addressLabel, passwordLabel),
+    other,
     h("button", { class: "primary", type: "submit" }, box.connected ? "Update mailbox" : "Connect mailbox"),
   );
 

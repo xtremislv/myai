@@ -40,6 +40,12 @@ class ActIn(BaseModel):
     url: str = Field(default="", max_length=2000)
 
 
+class SecretIn(BaseModel):
+    ref: int
+    value: str = Field(min_length=1, max_length=500)
+    site: str = Field(max_length=255)  # the site the agent asked on: the page must still be there
+
+
 class CloseIn(BaseModel):
     forget: bool = False  # also drop the saved logins (sign out of every site)
 
@@ -103,3 +109,25 @@ def close(scope: str, body: CloseIn, subject: Subject = Depends(current_subject)
         b.call(b.close, key)
     if body.forget:
         logins.forget(subject.id, scope)
+
+
+@router.post("/{scope}/secret", response_model=StateOut)
+def secret(scope: str, body: SecretIn, subject: Subject = Depends(current_subject), creds=Depends(_bearer)) -> StateOut:
+    """The person answers the agent's secure prompt (a password, CVV or OTP): typed into that one
+    field if the page is still on the same site. Not logged, stored, or shown to the agent."""
+    from app.wallet import site_of
+
+    key, key_for_logins = _scope_key(scope, subject, creds)
+    b = browser()
+    if not b.has(key):
+        raise HTTPException(status.HTTP_409_CONFLICT, "the browser closed; ask the assistant to open the page again")
+
+    def same_site(url: str) -> str | None:
+        return None if site_of(url) == body.site else f"the page moved to {site_of(url)}, so nothing was typed"
+
+    try:
+        b.call(b.fill_value, key, body.ref, body.value, same_site)
+    except BrowserError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from None
+    logins.persist(subject.id, scope, key_for_logins, force=True)
+    return StateOut(open=True, url=b.call(b.url_of, key))

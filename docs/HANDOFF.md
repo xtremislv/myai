@@ -211,6 +211,19 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - **Keyless web search** now tries DuckDuckGo's HTML page first (reachable through the proxy; good results,
   ~2 s; sometimes rate-limits with HTTP 202), then Bing.
 
+## Saved details, secure secrets, personal-or-work orders, simple mail setup (2026-11-03, late)
+- **Owner reversed** "agents never type passwords or card details": they now may, from the person's own encrypted
+  saved details, without the model seeing values (`app/wallet.py`, table `wallet_items`, migration 0008; tools
+  `list_saved_details`, `fill_saved`, `ask_person_for_secret`; private chat only; admin denied `wallet:*`).
+  Logins only on their own registrable domain; cards/UPI only on `PAYMENT_SITES` or sites added to the card.
+  CVVs/PINs/OTPs are never stored. `browser_type` still refuses sensitive fields.
+- **Secure box:** `ask_person_for_secret` → chat shows a password-style input → `POST /v1/browser/<scope>/secret`
+  types into that field only if the page is still on the same site. Not logged or kept.
+- **Personal or work:** the agent asks; the order card (`ConfirmOut.purchase`) offers "Personal: place it" /
+  "Work: send to Accounts" (`as_work` → `guards.forward_to_account`, commit declined).
+- **Mail:** address + app password; Gmail first (`app/mail/providers.py`); errors quote the provider and say how to
+  fix it. Outlook/365 answer "Basic authentication is disabled" (OAuth needed, not built).
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

@@ -58,7 +58,7 @@ _MARK_JS = r"""
                    el.getAttribute('aria-label')].filter(Boolean).join(' ');
     const secret = el.type === 'password' || SENSITIVE.test(ident);
     if ((tag === 'input' || tag === 'textarea') && !secret) value = (el.value || '').slice(0, 40);
-    if (secret && el.value) value = '(filled in by the person)';
+    if (secret && el.value) value = '(filled)';
     if (tag === 'select') value = (el.options[el.selectedIndex] || {}).text || '';
     const options = tag === 'select' ? Array.from(el.options).slice(0, 12).map(o => o.text.trim()) : [];
     out.push({ref: i, tag, kind: el.getAttribute('type') || el.getAttribute('role') || '', label, value, options,
@@ -410,6 +410,33 @@ class Browser:
             await s.page.go_back(timeout=NAV_TIMEOUT_MS)
             await self._settle(s.page)
             return await self._snapshot(s.page, "Went back.")
+
+    # ---- saved details and secrets: typed by the server, never shown to the model ----
+    async def url_of(self, key: str) -> str:
+        s = await self._session(key, create=False)
+        return s.page.url
+
+    async def fill_value(self, key: str, ref: int, value: str, page_ok) -> str:
+        """Type `value` into control [ref], if page_ok(current url) returns None (else its reason).
+        Checked under the session lock, so the page can't change between the check and the typing."""
+        s = await self._session(key, create=False)
+        async with s.lock:
+            why = page_ok(s.page.url)
+            if why:
+                raise BrowserError(f"not filled: {why}")
+            handle, info = await self._element(s.page, ref)
+            if info["tag"] not in ("input", "textarea") and info.get("role") not in ("textbox", "combobox"):
+                raise BrowserError(f"[{ref}] is not a text field")
+            try:
+                await handle.fill(value, timeout=10_000)
+            except Exception:  # noqa: BLE001
+                try:
+                    await handle.click()
+                    await s.page.keyboard.type(value, delay=20)
+                except Exception as e:  # noqa: BLE001
+                    raise BrowserError(f"could not fill [{ref}]: {_short(e)}") from None
+            await asyncio.sleep(0.5)
+            return await self._snapshot(s.page, f"Filled [{ref}] '{info['text'] or info['field'][:40]}'.")
 
     # ---- saved logins and the person's live view (app/api/routes_browser.py) ----
     def has(self, key: str) -> bool:

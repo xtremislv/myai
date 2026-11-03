@@ -6,8 +6,8 @@ history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.m
 this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
-  `main` (owner's rule). Last commit: `21b48ae`.
-- Tests: **483 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+  `main` (owner's rule). See `git log -1` for the last commit.
+- Tests: **503 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -55,7 +55,8 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Files | Agents create/edit/move/restore freely (versions kept); deleting needs a go-ahead. |
 | Reminders | In-app bell + browser pop-up, optional email, opt-in morning mail digest. |
 | Alerts | Server alerts go to the admin's in-app bell. |
-| Ordering | Personal orders from private chat (person confirms); company orders through Accounts with an approver. Sign-in, OTP and payment are done by the person in a **live browser panel**; agents never type them. |
+| Ordering | Every order asks **"personal or work?"** (agent asks first; the order card enforces it with "Personal: place it" / "Work: send to Accounts"). Personal orders use the person's **saved details** (logins, cards, UPI, addresses), encrypted with their key; only they can view them (after re-entering their password). The agent fills them into pages without seeing them, and only on the right site. Secrets that aren't saved, CVVs and OTPs are asked through a **secure box** in the chat (typed straight into the page). Work orders go to Accounts with company details. CVVs are never stored. |
+| Mail setup | Address + app password only; Gmail first, then the provider named by the domain. Outlook can't work with passwords (Microsoft blocks it). |
 | Network | The owner rents a VPS in Mumbai and asked for the agents' web traffic to go through it (done). |
 | Infra | Grafana on the server only. No Docker on this host (it's a container). |
 
@@ -92,12 +93,19 @@ the web, read and answer mail, manage files, make documents from templates, set 
 
 **Shopping**
 - `product_search` (Amazon, Flipkart, Reliance Digital work; Croma blocks), `product_page`.
-- A shopping specialist fills the cart and goes to checkout; `ask_person_to_browse` shows the **live browser** in
-  the chat for sign-in/OTP/payment; `browser_commit` places the order after a confirmation card.
-- Saved website logins: private ones encrypted with the person's key; work ones in the vault.
+- A shopping specialist asks "personal or work?", fills the cart, signs in and pays with the person's **saved
+  details** (`list_saved_details`, `fill_saved`: values never reach the model; logins only on their own site,
+  cards/UPI only on known shops and payment gateways), asks for CVV/OTP/unsaved passwords through a **secure box**
+  (`ask_person_for_secret`), and places the order with `browser_commit` after the Personal/Work card.
+- `ask_person_to_browse` shows the **live browser** for CAPTCHAs and app approvals.
+- Saved website sessions (cookies): private ones encrypted with the person's key; work ones in the vault.
+- My account > **Saved details**: add/delete logins, cards, UPI IDs, addresses; "Show" needs the account password.
 
 **Mail** (real IMAP/SMTP once a mailbox is connected)
-- People connect their own mailbox under My account (public mail servers only, ports 993/465/587).
+- People connect their own mailbox under My account with just the address and an **app password** (Gmail:
+  2-Step Verification + myaccount.google.com/apppasswords, IMAP enabled); the provider is chosen from the address
+  (`app/mail/providers.py`). Gmail answers a normal password with AUTHENTICATIONFAILED; Outlook refuses passwords
+  entirely (needs OAuth, not built).
 - `summarize_mail` (gist, action, deadline per email), read, search, open, mark, send (confirmed).
 - Opt-in morning digest that also sets reminders for deadlines found in mail.
 
@@ -197,7 +205,7 @@ reply streamed (Markdown) → UI; work exchanges are also copied into the encryp
 `users` (roles, wrapped chat keys, prefs, digest time), `acl_policies`, `departments`, `vault_secrets`,
 `approvals`, `department_tasks` (accounts inbox), `reports` (NSFW, finance notices), `audit_log`, `chat_threads`
 (encrypted titles), `chat_history` (attachment refs), `user_files`, `reminders`, `notifications`, `ops_alerts`,
-`doc_templates`, plus LangGraph's `checkpoints`, `checkpoint_writes`, `checkpoint_blobs`.
+`doc_templates`, `wallet_items` (saved details, encrypted per person; migration 0008), plus LangGraph's `checkpoints`, `checkpoint_writes`, `checkpoint_blobs`.
 
 MinIO keys: `chat_attachments/<user>/<id>`, `userfiles/<user>/<id>/<version>`, `browserstate/<user>`,
 `shared/<dept>/…`, `research/…`, `reports/…`, `_versions/<key>/<time>`.
@@ -206,7 +214,7 @@ MinIO keys: `chat_attachments/<user>/<id>`, `userfiles/<user>/<id>/<version>`, `
 
 | Data | Protected by | Readable by |
 |---|---|---|
-| Private chats, chat titles, attachments, My files, private saved website logins | the person's **chat key** (scrypt-wrapped by password and recovery code; carried sealed in the JWT) | only that person (and the server while handling their request) |
+| Private chats, chat titles, attachments, My files, private saved website sessions, **saved details** (logins, cards, UPI, addresses) | the person's **chat key** (scrypt-wrapped by password and recovery code; carried sealed in the JWT) | only that person (and the server while handling their request) |
 | Vault secrets: mailbox logins, search keys, work saved logins, notes key | **vault master key** (`VAULT_MASTER_KEY` in `.env`) | the server; admin can't read `mail/personal/*`, `system/*`, `browser/*` |
 | Reminders, notifications | **notes key** (a vault secret) | the server (so they fire while the person is away) |
 | Work runs, approvals, inbox, reports, audit | plain DB rows | the department / approver / admin per ACL |
@@ -229,6 +237,8 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 ## 6. Limitations and known gaps
 
 **Not verified end to end**
+- Signing in with saved details and paying through the secure box on a real shop (unit-tested with a fake
+  browser; the agent was seen asking "personal or work?" live).
 - A real order on any shop (product search works on Amazon/Flipkart/Reliance; checkout + live-panel sign-in +
   confirm path is built and unit-tested, not run against a real account).
 - Mail summaries and the digest against a real mailbox (no test mailbox exists).
@@ -240,6 +250,9 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 **Security / ops gaps**
 - Public login page on a quick tunnel, no failed-login limit (owner's choice), no domain/TLS of our own.
 - DNS-rebinding window between the guard's check and Chromium's/the proxy's own lookup.
+- Saved details are typed by the server into pages the agent chooses: the site checks (login = its own site;
+  card/UPI = allowlisted shops and gateways in `app/wallet.py`) are the main defence against a page tricking the
+  agent; review the allowlist before adding sites.
 - The leak guard (refusing long URLs/queries after reading mail or files) is a partial defence against
   prompt-injected exfiltration, not a proof.
 - Backups stay on this server (`BACKUP_DEST` empty), and nothing runs them on a schedule here.
@@ -263,7 +276,7 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 
 1. **Try a real personal order** (cheap item) via the globe button: sign in to Amazon in the live panel, ask
    the assistant to order, confirm the card. Fix whatever the real checkout throws up.
-2. **Connect a real mailbox** (owner's) and check `summarize_mail` + the morning digest.
+2. **Connect a real mailbox** with a Gmail app password and check `summarize_mail` + the morning digest.
 3. **Add a Tavily (free tier) key** on the Credentials page as `search/tavily`.
 4. **Off-server backups:** set `BACKUP_DEST` (rclone) and run `backup.sh` daily from the scheduler or
    `onstart.sh`.

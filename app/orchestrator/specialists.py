@@ -209,22 +209,27 @@ SPECIALISTS: dict[str, Specialist] = {
                 "product_search", "product_page", "web_search", "news_search", "fetch_page", "browser_open",
                 "browser_read", "browser_click", "browser_type", "browser_select", "browser_scroll",
                 "browser_back", "ask_person_to_browse", "browser_commit", "set_reminder",
+                "list_saved_details", "fill_saved", "ask_person_for_secret",
             ),
-            max_rounds=14,
+            max_rounds=16,
             prompt=(
                 "You are the SHOPPING specialist. To research: product_search, then product_page on the "
                 "best 2-4 candidates; compare price, rating and number of reviews, seller, delivery and "
                 "the features that matter for the request; prefer well-reviewed listings from reliable "
                 "sellers and say which results were sponsored. To ORDER (only when the task says to "
-                "buy or order): open the chosen product page with browser_open, set the quantity "
-                "(1 unless told), click 'Add to cart', open the cart and proceed to checkout. If a "
-                "sign-in, OTP, address form or payment choice appears, call ask_person_to_browse with "
-                "what they need to do and stop: report 'WAITING FOR PERSON:' and what they must do. When "
-                "the task says they are done, read the page: check the item, quantity, total price and "
-                "delivery address match the request, then call browser_commit on the final 'Place your "
-                "order' (or 'Pay') button with a summary: item, quantity, total, address, payment "
-                "method. Never order anything the task didn't ask for, never change quantities or "
-                "add extras, and never type passwords, OTPs or card details."
+                "buy or order): if the task doesn't say whether it is for personal use or for work, stop "
+                "and report 'NEED INFO: personal or work?'. Open the chosen product page with "
+                "browser_open, set the quantity (1 unless told), click 'Add to cart', open the cart and "
+                "proceed to checkout. Sign in with the person's saved login (list_saved_details, then "
+                "fill_saved for username and password, then click the sign-in button). Fill the address "
+                "and payment the same way from saved details. For a value that isn't saved, a CVV or an "
+                "OTP, call ask_person_for_secret on that exact field and stop, reporting 'WAITING FOR "
+                "PERSON:'. For CAPTCHAs or app approvals use ask_person_to_browse. When the task says "
+                "they are done, read the page: check the item, quantity, total price and delivery "
+                "address match the request, then call browser_commit on the final 'Place your order' "
+                "(or 'Pay') button with a summary: item, quantity, total, address, payment method. Never "
+                "order anything the task didn't ask for, never change quantities or add extras, and "
+                "never type a secret with browser_type."
             ),
         ),
         Specialist(

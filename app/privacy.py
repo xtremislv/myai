@@ -70,6 +70,9 @@ def erase_user(session: Session, user_id: str, *, delete_account: bool = False, 
     from app.browsing import logins
 
     logins.erase_owner(session, user_id, remove_object)
+    from app import wallet
+
+    counts["saved_details"] = wallet.erase_owner(session, user_id)
     counts["reminders_and_notifications"] = reminders.erase_owner(session, user_id)
     AESGCMVault(session).delete(secret_name("personal", user_id))
 

@@ -265,6 +265,22 @@ class OpsAlert(Base):
     last_seen: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WalletItem(Base):
+    """One saved personal detail: a website login, a card, a UPI ID or an address. Everything
+    about it (kind label aside) is encrypted with the owner's chat key (app/wallet.py), so only
+    they can open it; agents fill it into pages without seeing it."""
+
+    __tablename__ = "wallet_items"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # login | card | upi | address
+    encrypted: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class DocTemplate(Base):
     """A company document template: global (everyone at work) or one department's.
     Personal templates are ordinary files in a person's "My files" (templates/ folder)."""

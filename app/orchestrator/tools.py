@@ -1072,6 +1072,94 @@ def scrape_page(state: dict[str, Any], url: str, what: str = "text", selector: s
     return untrusted(url, _web_call(go))
 
 
+# ---- the person's saved details (app/wallet.py): filled into pages, never shown to the model ----
+def _wallet_owner(state: dict[str, Any], action: str):
+    """(session factory, key, owner) for private chat, or an error string."""
+    from app.orchestrator.context import user_key
+
+    if not _private(state):
+        return ("ERROR: saved personal details are only used in the person's private chat. A company order "
+                "goes to the Accounts team, who pay with the company's details.")
+    key = user_key.get()
+    if key is None:
+        return "ERROR: saved details can only be opened in the person's private chat"
+    owner = _subject(state).id
+    if (err := _enforce(state, action, "wallet", f"{owner}/")) is not None:
+        return err
+    return key, owner
+
+
+def list_saved_details(state: dict[str, Any], kind: str = "") -> str:
+    """The person's saved logins, cards, UPI IDs and addresses, masked, with their ids."""
+    from app import wallet
+
+    found = _wallet_owner(state, "list")
+    if isinstance(found, str):
+        return found
+    key, owner = found
+    with SessionLocal() as session:
+        items = wallet.listing(session, key, owner, kind.strip().lower())
+    if not items:
+        return ("Nothing saved yet. The person can add logins, cards, UPI IDs and addresses under My account > "
+                "Saved details, or you can ask them for a value with ask_person_for_secret.")
+    return "\n".join(f"[{i['id']}] {i['kind']}: {i['summary']}" for i in items)
+
+
+def fill_saved(state: dict[str, Any], detail_id: str, field: str, ref: int) -> str:
+    """Type one field of a saved detail into browser control [ref]. Logins only on their own site;
+    cards and UPI only on known shops and payment pages. The value is never returned."""
+    from app import wallet
+    from app.browsing import logins
+    from app.browsing.browser import browser
+
+    found = _wallet_owner(state, "read")
+    if isinstance(found, str):
+        return found
+    key, owner = found
+    try:
+        with SessionLocal() as session:
+            kind, data = wallet.get(session, key, owner, detail_id.strip().strip("[]"))
+        value = wallet.field_value(kind, data, field.strip().lower())
+    except wallet.WalletError as e:
+        return f"ERROR: {e}"
+    b = browser()
+
+    def go() -> str:
+        session_key = logins.open_session(owner, "private", key)
+        result = b.call(b.fill_value, session_key, ref, value, lambda url: wallet.allowed_on(kind, data, url))
+        logins.persist(owner, "private", key)
+        return result
+
+    return untrusted("a web page", _web_call(go))
+
+
+def ask_person_for_secret(state: dict[str, Any], ref: int, what: str) -> str:
+    """Ask the person to type a secret (a password not saved yet, a CVV, an OTP, a UPI PIN-free
+    code) into field [ref]: a secure box appears in the chat, and what they type goes straight into
+    the page, never into the chat or to you."""
+    from app.browsing import logins
+    from app.browsing.browser import browser
+    from app.orchestrator.context import browser_request
+    from app.wallet import site_of
+
+    if (err := _enforce(state, "read", "web", "browse")) is not None:
+        return err
+    holder = browser_request.get()
+    if holder is None:
+        return ("Nobody is watching this run live, so a secret can't be asked for now. Tell the person what "
+                "is needed; they can enter it in the live browser.")
+    scope, key_for_logins = _browser_scope(state)
+    owner = _subject(state).id
+    try:
+        session_key = logins.open_session(owner, scope, key_for_logins)
+        url = browser().call(browser().url_of, session_key)
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR: no page is open ({type(e).__name__})"
+    holder.update({"scope": scope, "secret": {"ref": int(ref), "what": what[:120], "site": site_of(url)}})
+    return (f"The person now sees a secure box asking for: {what}. Stop here and tell them briefly what to "
+            "enter; when they reply that it's done, read the page and carry on. Don't call more tools now.")
+
+
 def product_search(state: dict[str, Any], query: str, site: str = "") -> str:
     """Products on shopping sites (Amazon, Flipkart; or site=croma / reliancedigital / all)."""
     if (err := _enforce(state, "read", "web", "search")) is not None:
@@ -1271,6 +1359,9 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "product_search": product_search,
     "product_page": product_page,
     "ask_person_to_browse": ask_person_to_browse,
+    "list_saved_details": list_saved_details,
+    "fill_saved": fill_saved,
+    "ask_person_for_secret": ask_person_for_secret,
     "browser_open": browser_open,
     "browser_read": browser_read,
     "browser_click": browser_click,
@@ -1369,8 +1460,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                       "flipkart, croma, reliancedigital or all (default amazon + flipkart).",
     "product_page": "Read one product page: price, rating, reviews, availability, seller, delivery, key "
                     "features. Use it before recommending or ordering.",
-    "ask_person_to_browse": "Hand the live browser to the person for what agents never do: sign in, OTPs, "
-                            "card/UPI details, choosing how to pay. Then stop and tell them what to do.",
+    "ask_person_to_browse": "Hand the whole live browser to the person (e.g. a CAPTCHA, an app approval, "
+                            "anything you can't do with saved details). Then stop and tell them what to do.",
+    "list_saved_details": "The person's saved logins, cards, UPI IDs and addresses (masked) with their ids. "
+                          "kind: login, card, upi or address.",
+    "fill_saved": "Type one field of a saved detail into browser field [ref], e.g. detail_id='a1b2', field="
+                  "'password'. Fields: login username/password; card number/name/expiry/expiry_month/"
+                  "expiry_year; upi upi_id; address name/phone/line1/line2/city/state/pincode. You never "
+                  "see the value. Logins only on their own site; cards only on shops and payment pages.",
+    "ask_person_for_secret": "Ask the person to type a secret into field [ref] through a secure box (a "
+                             "password that isn't saved, the card CVV, an OTP). Then stop and wait.",
     "fetch_page": "Read the text of a web page, PDF or text file by URL.",
     "scholar_search": "Search research papers (arXiv, Crossref, PubMed): title, authors, year, link and "
                       "abstract. Use it for scientific, technical or medical research.",

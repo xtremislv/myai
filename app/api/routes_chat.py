@@ -83,10 +83,13 @@ class ConfirmOut(BaseModel):
     tool: str
     title: str
     details: dict[str, str]
+    purchase: bool = False  # an order or payment: the card asks "personal or work?"
 
 
 class ConfirmIn(BaseModel):
     approve: bool
+    # For an order: the person said it is for work, so it goes to the Accounts team instead.
+    as_work: bool = False
 
 
 CONFIRM_TITLES = {
@@ -99,7 +102,12 @@ CONFIRM_TITLES = {
 def confirm_out(pending: dict) -> ConfirmOut:
     args = pending.get("args") or {}
     shown = {k: str(v)[:4000] for k, v in args.items() if v not in ("", None)}
-    return ConfirmOut(tool=pending["tool"], title=CONFIRM_TITLES.get(pending["tool"], f"Allow {pending['tool']}?"), details=shown)
+    purchase = pending["tool"] == "browser_commit" and bool(PURCHASE_WORDS.search(f"{args.get('label', '')} {args.get('summary', '')}"))
+    title = "Place this order?" if purchase else CONFIRM_TITLES.get(pending["tool"], f"Allow {pending['tool']}?")
+    return ConfirmOut(tool=pending["tool"], title=title, details=shown, purchase=purchase)
+
+
+PURCHASE_WORDS = re.compile(r"\b(order|buy|pay|purchase|checkout|place)\b", re.IGNORECASE)
 
 
 def _private_reply(thread_id: str, mode: str, out) -> ChatOut:
@@ -453,6 +461,7 @@ def thread_confirm(
     body: ConfirmIn,
     subject: Subject = Depends(current_subject),
     key: bytes = Depends(chat_key),
+    session: Session = Depends(get_session),
 ) -> ChatOut:
     """Go ahead with (or decline) the action the assistant asked you to confirm."""
     pending = execution.private_pending(subject, thread_id, key)
@@ -460,13 +469,27 @@ def thread_confirm(
         raise HTTPException(status.HTTP_409_CONFLICT, "nothing is waiting for your confirmation in this chat")
     handover: dict = {}
     browser_request.set(handover)
+    if body.as_work and pending["tool"] == "browser_commit":
+        # Work purchases are paid with company details by Accounts, never from personal ones.
+        args = pending["args"]
+        guards.forward_to_account(
+            session, kind="order", requester_id=subject.id, chat_thread=thread_id, mode="agents",
+            thread_id=f"{thread_id}~order-{uuid.uuid4().hex[:6]}",
+            message=f"Order for work, prepared in a chat: {args.get('summary', '')}".strip(),
+        )
+        reason = ("the person said this order is for work: it was sent to the Accounts team, who will place it "
+                  "with the company's details. Tell them it's with Accounts and they can follow it in this chat")
+        body = ConfirmIn(approve=False)
+    else:
+        reason = "" if body.approve else "the person said no"
+    release_connection(session)  # the model call below can take a while
     with _private_slot(subject) as free:
         if not free:
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, BUSY_MESSAGE)
         try:
             out = execution.resume_private(
                 subject, thread_id, key, approved=body.approve, tool=pending["tool"], args=pending["args"],
-                mode=pending["mode"], reason="" if body.approve else "the person said no",
+                mode=pending["mode"], reason=reason,
             )
         except execution.StaleApproval as e:
             raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e

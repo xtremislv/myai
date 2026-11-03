@@ -58,8 +58,11 @@ TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "sa
 # Private chat (no department), owner's decisions of 2026-11-03: web access, plus the person's OWN
 # mailbox (personal category only), files, reminders and templates, and personal shopping:
 # browser_commit places an order only after the person confirms it themselves. No company data.
+# The person's own saved logins, cards, UPI IDs and addresses: private chat only (owner, 2026-11-03).
+WALLET_TOOLS = ("list_saved_details", "fill_saved", "ask_person_for_secret")
 PRIVATE_TOOLS = (
     *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+    *WALLET_TOOLS,
 )
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
@@ -197,6 +200,7 @@ ADMIN = DepartmentSpec(
         Grant("secret:mail/personal/*", ("*",), effect="deny"),  # ...and people's mailbox logins
         Grant("secret:system/*", ("*",), effect="deny"),     # ...and the server's own keys
         Grant("secret:browser/*", ("*",), effect="deny"),    # ...and people's saved website logins
+        Grant("wallet:*", ("*",), effect="deny"),            # ...and people's saved cards and logins
     ),
     tools=("*",),
     quota_per_min=600,
@@ -230,6 +234,7 @@ SELF = DepartmentSpec(
         Grant("chat_history:{owner}/*", ("read", "list", "delete"), subject="$self"),
         Grant("files:{owner}/*", ("read", "write", "list", "delete"), subject="$self"),
         Grant("reminder:{owner}/*", ("read", "write", "list", "delete"), subject="$self"),
+        Grant("wallet:{owner}/*", ("read", "write", "list", "delete"), subject="$self"),
     ),
     tools=(),
 )

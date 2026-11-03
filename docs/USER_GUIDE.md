@@ -221,10 +221,17 @@ same format (Word stays Word):
 - Many at once: give a list, or a CSV in your files ("one letter per row of people.csv, named by name").
 
 **Shopping.** Ask "compare earbuds under 1500 on Flipkart" or "order me a Pixel 9 cover on Amazon". The
-assistant searches shops, compares price, rating, reviews and delivery, and can fill the cart and go to checkout.
-When a shop asks you to sign in, enter an OTP or choose how to pay, a **live browser** appears in the chat: click
-and type there yourself (the assistant never sees what you type), then press "Done, carry on". Before anything
-is bought, you get a card with the exact order to confirm. Your sign-ins are kept, encrypted with your key; "Sign
+assistant searches shops, compares price, rating, reviews and delivery, and asks whether the order is for
+**personal use or work**. Work orders go to the Accounts team. For personal orders it signs in and pays with your
+**Saved details** (My account): logins, cards, UPI IDs and addresses, encrypted with your key so only you can see
+them (showing one needs your password again). It fills them in without seeing them, and only on the right site.
+For your card's CVV, an OTP, or a password you haven't saved, a **secure box** appears in the chat: what you type
+goes straight to the shop's page and isn't kept. Before anything is bought you get a card with the exact order and
+the buttons "Personal: place it" or "Work: send to Accounts". For CAPTCHAs or app approvals, a live browser
+appears where you click and type yourself.
+
+**Mail.** Under My account, enter your email address and an app password (Gmail: turn on 2-Step Verification,
+then create one at myaccount.google.com/apppasswords). Outlook and Hotmail can't be connected with a password. Your sign-ins are kept, encrypted with your key; "Sign
 out & close" forgets them. The globe button next to the message box opens the live browser any time. Orders for
 the company go to Accounts, and an approver confirms each one.
 

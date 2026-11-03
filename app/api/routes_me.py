@@ -69,12 +69,16 @@ def put_prefs(body: PrefsIO, subject: Subject = Depends(current_subject), sessio
 
 # ---- personal mailbox ----
 class MailboxIn(BaseModel):
-    imap_host: str = Field(min_length=3, max_length=255)
+    """Usually just the address and password: the servers are chosen from the address (Gmail
+    first). imap_host etc. are only for providers not in app/mail/providers.py."""
+
+    address: str = Field(default="", max_length=255)
+    password: str = Field(min_length=1, max_length=1024)
+    imap_host: str = Field(default="", max_length=255)
     imap_port: int = 993
     smtp_host: str = Field(default="", max_length=255)
     smtp_port: int = 465
-    username: str = Field(min_length=1, max_length=255)
-    password: str = Field(min_length=1, max_length=1024)
+    username: str = Field(default="", max_length=255)  # defaults to the address
     sender: str = Field(default="", max_length=255, alias="from")
     check: bool = True  # try logging in before saving
 
@@ -104,30 +108,49 @@ def get_mailbox(subject: Subject = Depends(current_subject), session: Session = 
     return MailboxOut(connected=True, imap_host=cfg.imap_host, smtp_host=cfg.smtp_host, username=cfg.username)
 
 
+def _config_for(body: MailboxIn, imap: str, smtp: str, smtp_port: int):
+    user = (body.username or body.address).strip()
+    raw = json.dumps({
+        "imap_host": imap, "imap_port": body.imap_port, "smtp_host": smtp, "smtp_port": smtp_port,
+        "username": user, "password": body.password.replace(" ", "") if "gmail" in imap else body.password,
+        "from": body.sender.strip() or body.address.strip() or user,
+    })
+    return raw, connector.MailConfig.from_secret(raw, guarded=True)
+
+
 @router.put("/me/mailbox", response_model=MailboxOut)
 def put_mailbox(body: MailboxIn, subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> MailboxOut:
-    raw = json.dumps({
-        "imap_host": body.imap_host.strip(), "imap_port": body.imap_port, "smtp_host": body.smtp_host.strip(),
-        "smtp_port": body.smtp_port, "username": body.username.strip(), "password": body.password,
-        "from": body.sender.strip() or body.username.strip(),
-    })
-    cfg = connector.MailConfig.from_secret(raw, guarded=True)
-    try:
-        connector.check_servers(cfg)
-    except ValueError as e:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from None
-    if body.check:
-        release_connection(session)
+    from app.mail import providers
+
+    address = (body.address or body.username).strip()
+    if "@" not in address and not body.imap_host:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "enter your email address")
+    if body.imap_host:  # a provider we don't know: the person gave the servers
+        tries = [(None, body.imap_host.strip(), body.smtp_host.strip(), body.smtp_port)]
+    else:
+        tries = [(p, p.imap_host, p.smtp_host, p.smtp_port) for p in providers.candidates(address)]
+    problems = []
+    release_connection(session)
+    for provider, imap, smtp, smtp_port in tries:
+        if provider is not None and not provider.password_ok:
+            problems.append(provider.help)
+            continue
+        raw, cfg = _config_for(body, imap, smtp, smtp_port)
         try:
-            connector.check_login(cfg)
-        except Exception as e:  # noqa: BLE001 - tell the person what kind of failure, not the password
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"couldn't sign in to the mailbox ({type(e).__name__}). Check the server names, ports, "
-                "username and password; many providers need an app password for IMAP.",
-            ) from None
-    AESGCMVault(session).put(_secret(subject), raw)
-    return MailboxOut(connected=True, imap_host=cfg.imap_host, smtp_host=cfg.smtp_host, username=cfg.username)
+            connector.check_servers(cfg)
+        except ValueError as e:
+            problems.append(str(e))
+            continue
+        if body.check:
+            try:
+                connector.check_login(cfg)
+            except Exception as e:  # noqa: BLE001 - the provider's own words help the person fix it
+                said = str(e) if str(e) else type(e).__name__
+                problems.append(providers.explain(provider, said) if provider else f"the mail server refused the sign-in ({said[:160]})")
+                continue
+        AESGCMVault(session).put(_secret(subject), raw)
+        return MailboxOut(connected=True, imap_host=cfg.imap_host, smtp_host=cfg.smtp_host, username=cfg.username)
+    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, " ".join(dict.fromkeys(problems)) or "couldn't connect")
 
 
 @router.delete("/me/mailbox", status_code=status.HTTP_204_NO_CONTENT)
@@ -318,3 +341,66 @@ def restore_file(
         raise HTTPException(status.HTTP_409_CONFLICT, f"a file named '{info.path}' already exists")
     userfiles.undelete_by_id(session, subject.id, file_id)
     return FileOut(**userfiles.by_id(session, key, subject.id, file_id).as_dict())
+
+
+# ---- saved details (app/wallet.py): only the owner, with their key ----
+class WalletIn(BaseModel):
+    kind: Literal["login", "card", "upi", "address"]
+    data: dict[str, str]
+
+
+class WalletOut(BaseModel):
+    id: str
+    kind: str
+    summary: str
+    site: str = ""
+    label: str = ""
+
+
+class RevealIn(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
+
+
+@router.get("/me/wallet", response_model=list[WalletOut])
+def list_wallet(subject: Subject = Depends(current_subject), key: bytes = Depends(chat_key),
+                session: Session = Depends(get_session)) -> list[WalletOut]:
+    from app import wallet
+
+    return [WalletOut(**i) for i in wallet.listing(session, key, subject.id)]
+
+
+@router.post("/me/wallet", response_model=WalletOut, status_code=status.HTTP_201_CREATED)
+def add_wallet(body: WalletIn, subject: Subject = Depends(current_subject), key: bytes = Depends(chat_key),
+               session: Session = Depends(get_session)) -> WalletOut:
+    from app import wallet
+
+    try:
+        item_id = wallet.add(session, key, subject.id, body.kind, body.data)
+    except wallet.WalletError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from None
+    return next(WalletOut(**i) for i in wallet.listing(session, key, subject.id) if i["id"] == item_id)
+
+
+@router.delete("/me/wallet/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_wallet(item_id: str, subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> None:
+    from app import wallet
+
+    if not wallet.delete(session, subject.id, item_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+
+
+@router.post("/me/wallet/{item_id}/reveal")
+def reveal_wallet(item_id: str, body: RevealIn, subject: Subject = Depends(current_subject),
+                  key: bytes = Depends(chat_key), session: Session = Depends(get_session)) -> dict:
+    """The whole saved detail, after the person types their account password again."""
+    from app import wallet
+    from app.auth.security import verify_password
+
+    user = _user(session, subject)
+    if not verify_password(body.password, user.password_hash):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "wrong password")
+    try:
+        kind, data = wallet.get(session, key, subject.id, item_id)
+    except wallet.WalletError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from None
+    return {"kind": kind, **data}
