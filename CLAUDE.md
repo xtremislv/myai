@@ -1,6 +1,7 @@
 # CLAUDE.md — orientation for Claude Code sessions
 
-**Read `docs/HANDOFF.md` first** — it is the full state, next steps, and open limitations.
+**Read `docs/SESSION_WRAPUP.md` first**: the current state, the owner's requirements, capabilities, architecture,
+limitations and next steps in one place. `docs/HANDOFF.md` has the detailed history of each change.
 
 ## What this is
 Self-hosted AI platform: vLLM-served local LLM (26B/A4B MoE default, Nemotron-switchable) on a rented

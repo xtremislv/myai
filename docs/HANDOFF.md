@@ -1,5 +1,7 @@
 # Handoff for the session on the server
 
+> Start with `docs/SESSION_WRAPUP.md` (current summary and architecture). This file is the detailed log.
+
 You are Claude Code running on the rented GPU server. The code was built and tested on a Windows machine with
 **no Docker, GPU, real model or real MinIO**. Your job is first bring-up and tuning. Setup steps are in
 `docs/SERVER_SETUP.md`.
@@ -201,8 +203,8 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   files are rendered by `md()` in app.js, which builds elements (no innerHTML); links only http(s)/mailto.
 - **Outbound proxy:** `OUTBOUND_PROXY` routes agents' pages, search APIs and Chromium through a proxy; the network
   guard re-checks names through DNS-over-HTTPS via the proxy when local DNS is poisoned. `PROXY_SSH` makes
-  `start_native.sh` keep an SSH SOCKS tunnel (127.0.0.1:1080) to the owner's VPS (148.113.20.33 port 20005, user
-  `tunnel`, key /root/.ssh/proxy_vps, restricted to port forwarding). **Live since 2026-11-03 ~15:30 UTC**
+  `start_native.sh` keep an SSH SOCKS tunnel (127.0.0.1:1080) to the owner's VPS (host, port, user and key in
+  `.env` as `PROXY_SSH*`; the VPS user is restricted to port forwarding). **Live since 2026-11-03 ~15:30 UTC**
   (`OUTBOUND_PROXY=socks5h://127.0.0.1:1080`), exiting in Mumbai (OVH). Connectivity check through it: 28 OK,
   10 site bot-blocks, no DNS or network blocks (was 12 OK, 22 cut, 2 poisoned). Amazon, Flipkart and Reliance
   Digital product search work; Croma, MakeMyTrip, IRCTC, NDTV, The Hindu and Reuters refuse automated visitors.
