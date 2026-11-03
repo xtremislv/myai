@@ -43,3 +43,12 @@ def test_answers_from_snippets_alone_get_sent_to_read_the_sources():
     assert not nodes.searched_without_reading([{"role": "tool", "name": "scholar_search", "content": "..."}])
     messages = [{"role": "user", "content": "old"}, *turn, {"role": "user", "content": "new"}]
     assert nodes.this_turn(messages) == []
+
+
+def test_duckduckgo_results_unwrap_links_and_skip_ads():
+    page = """
+    <div class="result result--ad"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fads.example">Ad</a></div>
+    <div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.python.org%2F3%2Fwhatsnew%2F3.15.html&rut=x">What's new in Python 3.15</a>
+    <a class="result__snippet">Lazy imports and more.</a></div>"""
+    assert search.parse_ddg(page, 5) == [
+        search.Result("What's new in Python 3.15", "https://docs.python.org/3/whatsnew/3.15.html", "Lazy imports and more.")]

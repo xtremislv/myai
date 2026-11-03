@@ -202,8 +202,12 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - **Outbound proxy:** `OUTBOUND_PROXY` routes agents' pages, search APIs and Chromium through a proxy; the network
   guard re-checks names through DNS-over-HTTPS via the proxy when local DNS is poisoned. `PROXY_SSH` makes
   `start_native.sh` keep an SSH SOCKS tunnel (127.0.0.1:1080) to the owner's VPS (148.113.20.33 port 20005, user
-  `tunnel`, key /root/.ssh/proxy_vps, restricted to port forwarding). Waiting on the owner to add the key; then
-  set `OUTBOUND_PROXY=socks5h://127.0.0.1:1080` and restart the gateway.
+  `tunnel`, key /root/.ssh/proxy_vps, restricted to port forwarding). **Live since 2026-11-03 ~15:30 UTC**
+  (`OUTBOUND_PROXY=socks5h://127.0.0.1:1080`), exiting in Mumbai (OVH). Connectivity check through it: 28 OK,
+  10 site bot-blocks, no DNS or network blocks (was 12 OK, 22 cut, 2 poisoned). Amazon, Flipkart and Reliance
+  Digital product search work; Croma, MakeMyTrip, IRCTC, NDTV, The Hindu and Reuters refuse automated visitors.
+- **Keyless web search** now tries DuckDuckGo's HTML page first (reachable through the proxy; good results,
+  ~2 s; sometimes rate-limits with HTTP 202), then Bing.
 
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`

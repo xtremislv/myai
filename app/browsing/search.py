@@ -197,9 +197,38 @@ def _dedupe(results: list[Result]) -> list[Result]:
 ENOUGH = 3  # relevant results before trying the next (slower) source
 
 
+def parse_ddg(page: str, limit: int) -> list[Result]:
+    """DuckDuckGo's plain HTML results page (no JavaScript, no key). Ads are skipped."""
+    from bs4 import BeautifulSoup
+
+    out = []
+    for item in BeautifulSoup(page, "lxml").select("div.result"):
+        if "result--ad" in (item.get("class") or []):
+            continue
+        a = item.select_one("a.result__a[href]")
+        if a is None:
+            continue
+        href = a["href"]
+        target = parse_qs(urlsplit(href).query).get("uddg", [""])[0] if "uddg=" in href else href
+        if not target.startswith(("http://", "https://")):
+            continue
+        snippet = item.select_one(".result__snippet")
+        out.append(Result(" ".join(a.get_text(" ").split()), target,
+                          " ".join(snippet.get_text(" ").split())[:300] if snippet else ""))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _ddg(query: str, limit: int) -> list[Result]:
+    """Reachable only through OUTBOUND_PROXY on this server. HTTP 202 means it is rate-limiting."""
+    page = fetch(f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl={_market().split('-')[-1].lower()}-en")
+    return parse_ddg(page.body, limit) if page.status == 200 else []
+
+
 def _bing(query: str, limit: int) -> list[Result]:
-    """Keyless search, cheapest source first: Bing's RSS feed, then Bing News (reliable, and
-    often the only relevant source for bots), then Bing's rendered results page."""
+    """Keyless search, best source first: DuckDuckGo's HTML page (good results, reachable through
+    the proxy), then Bing's RSS feed, Bing News, and Bing's rendered results page."""
     from app.browsing.browser import browser
 
     found: list[Result] = []
@@ -207,6 +236,12 @@ def _bing(query: str, limit: int) -> list[Result]:
     def good() -> list[Result]:
         return reachable(_dedupe(relevant(query, found)))
 
+    try:
+        found += _ddg(query, limit)
+    except Exception as e:  # noqa: BLE001 - unreachable without the proxy; Bing below
+        logger.info("duckduckgo unavailable: %s", type(e).__name__)
+    if len(good()) >= ENOUGH:
+        return good()[:limit]
     try:
         feed = f"https://www.bing.com/search?format=rss&q={quote_plus(query)}&count={max(limit, 10)}&setlang=en"
         found += parse_rss(fetch(feed).body, max(limit, 10))

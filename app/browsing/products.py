@@ -138,6 +138,8 @@ def _generic_results(soup: BeautifulSoup, base: str) -> list[Product]:
                     break
                 seen.add(url)
                 title = _clean(link.get("title") or link.get_text()) or _clean((card.select_one("img[alt]") or {}).get("alt", ""))
+                title = re.sub(r"^(?:[A-Z][A-Z_]{3,}\s+)+", "", title)  # badges like LIMITED_TIME_OFFER
+                title = PRICE.split(title, 1)[0].strip() if PRICE.search(title) else title  # price glued on
                 text = _clean(card.get_text(" "))
                 rating = re.search(r"\b([1-5](?:\.\d)?)\s?(?:★|out of 5|stars?)", text)
                 out.append(Product(title[:160], url, _site_name(url), "₹" + PRICE.search(text).group(1),
