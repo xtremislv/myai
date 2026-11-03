@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -28,6 +29,14 @@ def _record_usage(model: str, usage) -> None:
     if usage:
         llm_tokens_total.labels(model=model, kind="prompt").inc(usage.prompt_tokens)
         llm_tokens_total.labels(model=model, kind="completion").inc(usage.completion_tokens)
+
+
+# Gemma 4 sometimes emits its (empty) thinking channel as text: "<|channel>thought\n<channel|>".
+_THOUGHT = re.compile(r"<\|channel\>.*?<channel\|>\s*", re.DOTALL)
+
+
+def strip_thoughts(text: str) -> str:
+    return _THOUGHT.sub("", text) if "<|channel>" in text else text
 
 
 class Reply(str):
@@ -132,4 +141,4 @@ def chat(
         _record_usage(model, resp.usage)
         message = resp.choices[0].message
         span.set_attribute("llm.tool_calls", len(getattr(message, "tool_calls", None) or []))
-        return Reply(message.content or "", _calls(message))
+        return Reply(strip_thoughts(message.content or ""), _calls(message))

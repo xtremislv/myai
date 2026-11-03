@@ -235,7 +235,9 @@ def test_orders_and_bookings_need_approval(session, graphs, monkeypatch, tool, a
 
 
 def test_every_critical_tool_exists():
-    assert critical_tools() == {"manage_bill", "initiate_payment", "manage_order", "book_service"}
+    assert critical_tools() == {
+        "manage_bill", "initiate_payment", "manage_order", "book_service", "send_mail", "browser_commit",
+    }
     assert critical_tools() <= set(tools.TOOLS)
 
 

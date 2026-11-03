@@ -27,3 +27,9 @@ class AgentState(TypedDict, total=False):
     tool_rounds: int                # single agent: rounds of tool calls so far (bounded)
     reflections: int                # team: times the reviewer sent research back
     review_notes: Annotated[list[str], operator.add]  # team: what the reviewer found missing
+    # --- agents graph (supervisor + specialists); reports go in research_notes ---
+    active_agent: str               # the specialist working now (a name, never user text)
+    assignments: Annotated[list[str], operator.add]  # tasks the supervisor handed out
+    handoffs: int                   # tasks handed out so far (bounded)
+    agent_rounds: int               # tool rounds in the current task (bounded per specialist)
+    agent_start: int                # index in messages where the current task's own work begins

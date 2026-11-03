@@ -84,7 +84,8 @@ def test_state_has_no_free_text_string_fields():
     """PostgresSaver stores str/int/float/bool channels inline as plain JSON, skipping the
     serializer. Any free-text field must be a list or dict, or it is stored unencrypted."""
     hints = typing.get_type_hints(AgentState)
-    assert {name for name, hint in hints.items() if hint is str} == {"subject_id", "next"}
+    # active_agent only ever holds a specialist name from specialists.SPECIALISTS.
+    assert {name for name, hint in hints.items() if hint is str} == {"subject_id", "next", "active_agent"}
 
 
 # ---- the flow over HTTP ----

@@ -55,6 +55,35 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - `huggingface.co` works only because of `/etc/hosts` entries the owner added (real addresses from DNS-over-HTTPS).
   CDN addresses rotate, so redo them if downloads fail.
 
+## Agents with web, browser and mail (2026-11-03)
+- **`agents` mode** (`app/orchestrator/specialists.py`, `agents_graph.py`): a supervisor hands one task at a time to
+  specialists (research, browser, mail, booking, operations) and a writer answers from their reports. Each
+  specialist's tools are narrowed to the department's tools, and the ACL still checks every call. A specialist is
+  offered only if the department has one of its core tools (researchers get no booking agent). Triage now sends
+  multi-step **work** here (`steps: many`); private multi-step chat still uses `team`. Bounds: 4 hand-offs, 6-12
+  tool rounds per specialist, recursion limit 150.
+- **Web tools** (`app/browsing/`): `web_search`, `news_search`, `fetch_page` (HTML, PDF, text), `scrape_page` (text,
+  links, tables or a CSS selector), and an interactive headless Chromium (`browser_open/read/click/type/select/
+  scroll/back`) with one isolated session per person, closed after 10 idle minutes. Pages come back as their text
+  plus numbered controls. Web and mail text is wrapped as UNTRUSTED CONTENT (prompt-injection defence).
+- **Safety, enforced in code:** `netguard` refuses anything that isn't a public http(s) address, on 80/443/8080/
+  8443. httpx checks the very address it dials; Chromium checks every request and websocket. A DNS-rebinding
+  race between Chromium's check and its own lookup is a known gap. Clicks that book, pay, send or submit a
+  non-search form are refused by `browser_click` and must go through **`browser_commit`, which needs approval**,
+  as does **`send_mail`**. Passwords, card numbers, CVVs and one-time codes are never typed.
+- **Search from this server:** many sites are DNS-poisoned or have their TLS cut here (Google, DuckDuckGo,
+  Wikipedia, Yahoo, Startpage, Times of India...). Bing works but degrades results for bots, so keyless web search
+  uses Bing's results page plus its RSS feed, with irrelevant results dropped. News (Bing News RSS) is good. **For
+  good web search, store a Tavily or Serper key** in the vault as `search/tavily` or `search/serper` (Credentials
+  page). Both APIs are reachable from here.
+- **Mail** (`app/mail/connector.py`): real IMAP/SMTP once a vault secret exists: `mail/<finance|career|contact>`, or
+  `mail/personal/<user id>`, holding JSON `{imap_host, imap_port, smtp_host, smtp_port, username, password, from}`.
+  Until then the mail tools answer `[stub]`. Departments can now send from their own box (write grants added).
+- **Context:** vLLM runs with `--max-model-len 8192`. Older tool results are cut to 400 characters before going back
+  to the model, and a page is at most 3,500 characters. Raising it to 16-32k would let agents read more per step.
+- Playwright (Chromium headless shell) is installed in `.venv` and `~/.cache/ms-playwright`. After a rebuild:
+  `.venv/bin/playwright install --with-deps chromium`. After changing `packs.py`: `python -m scripts.seed_departments`.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.
@@ -86,7 +115,7 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 5. Alert notifications: rules exist in `deploy/prometheus-rules.yml`, but nothing sends them. Add a Grafana contact point.
 
 ## Known limits
-- Payment, email/SMS, ERP and web search tools are stubs until vendor accounts exist.
+- Payment, SMS and ERP tools are stubs until vendor accounts exist. Mail is real once its vault secret exists.
 - Attachments work in private messages only. The AI reads text and PDF only, and unreadable files skip the NSFW check.
 - Each work request runs in one department.
 - A request already waiting for approval keeps the roles its requester had when they asked.

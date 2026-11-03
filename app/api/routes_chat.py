@@ -70,8 +70,9 @@ NSFW_SAMPLE_CHARS = 4000
 class ChatIn(BaseModel):
     message: str
     thread_id: str = Field(min_length=1, max_length=THREAD_ID_MAX)  # private to the caller
-    # "auto" lets triage decide. "single" = one agent loop; "team" = planner -> researcher -> writer.
-    mode: Literal["auto", "single", "team"] = "auto"
+    # "auto" lets triage decide. "single" = one agent loop; "team" = planner -> researcher -> writer;
+    # "agents" = a supervisor handing tasks to specialists (research, browser, mail, booking...).
+    mode: Literal["auto", "single", "team", "agents"] = "auto"
 
 
 class ChatOut(BaseModel):

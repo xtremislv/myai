@@ -15,7 +15,9 @@ Resource type conventions (urn = "type:id"):
   order:* / bill:* / booking:*  orders/bills/bookings -> account (requests are forwarded here)
   payment:*                  payments                 -> account (every call needs approval)
   research:* / reports:*     research data/reports    -> researcher
-  web:*                      web search               -> researcher
+  web:search|fetch|browse    web search, pages, browser -> researcher, account, logistics (browse: not logistics)
+  web:commit                 browser buttons that book/pay/send -> account (every call needs approval)
+  mail:<category>/* write    send mail / mark read    -> the box's department; personal: owner
   notification:* / reminder:*  notifications/reminders -> logistics
   report:nsfw/*              NSFW reports             -> hr, admin
 
@@ -26,6 +28,13 @@ Admin gets everything EXCEPT chat history and personal data (explicit denies).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+MAIL_TOOLS = ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail")
+LOOKUP_TOOLS = ("web_search", "news_search", "fetch_page", "scrape_page")
+BROWSE_TOOLS = (
+    "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",
+    "browser_scroll", "browser_back",
+)
 
 
 @dataclass(frozen=True)
@@ -54,16 +63,18 @@ ACCOUNT = DepartmentSpec(
     grants=(
         Grant("accounts:*", ("read", "write", "list")),
         Grant("balance_sheet:*", ("read", "write", "list")),
-        Grant("mail:finance/*", ("read", "list")),
+        Grant("mail:finance/*", ("read", "list", "write")),
         Grant("order:*", ("read", "write", "list")),
         Grant("bill:*", ("read", "write", "list")),
         Grant("booking:*", ("read", "write", "list")),
         Grant("payment:*", ("read", "write", "list")),
         Grant("inventory:*", ("read", "list")),
+        Grant("web:*", ("read", "write")),
     ),
     tools=(
-        "balance_lookup", "read_mail", "manage_order", "manage_bill",
+        "balance_lookup", *MAIL_TOOLS, "manage_order", "manage_bill",
         "initiate_payment", "book_service", "inventory_lookup",
+        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit",
     ),
     quota_per_min=60,
     max_concurrency=4,
@@ -74,6 +85,8 @@ ACCOUNT = DepartmentSpec(
         "tool:manage_bill",
         "tool:manage_order",
         "tool:book_service",
+        "tool:send_mail",
+        "tool:browser_commit",
     ),
 )
 
@@ -81,11 +94,11 @@ HR = DepartmentSpec(
     name="hr",
     description="HR: career mail and NSFW reports.",
     grants=(
-        Grant("mail:career/*", ("read", "list")),
+        Grant("mail:career/*", ("read", "list", "write")),
         Grant("report:nsfw/*", ("read", "list")),
         Grant("inventory:*", ("read", "list")),
     ),
-    tools=("read_mail", "review_report"),
+    tools=(*MAIL_TOOLS, "review_report"),
 )
 
 LOGISTICS = DepartmentSpec(
@@ -96,8 +109,13 @@ LOGISTICS = DepartmentSpec(
         Grant("shipments:*", ("read", "write", "list")),
         Grant("notification:*", ("write",)),
         Grant("reminder:*", ("write",)),
+        Grant("web:search", ("read",)),
+        Grant("web:fetch", ("read",)),
     ),
-    tools=("inventory_lookup", "inventory_adjust", "track_shipment", "send_notification", "set_reminder"),
+    tools=(
+        "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification", "set_reminder",
+        *LOOKUP_TOOLS,
+    ),
     quota_per_min=120,
     max_concurrency=6,
 )
@@ -111,7 +129,7 @@ RESEARCHER = DepartmentSpec(
         Grant("web:*", ("read",)),
         Grant("inventory:*", ("read", "list")),
     ),
-    tools=("read_document", "list_documents", "web_search", "summarize"),
+    tools=("read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize"),
     quota_per_min=120,
     max_concurrency=6,
 )
@@ -157,7 +175,7 @@ SELF = DepartmentSpec(
     description="Owner-only access to one's personal data.",
     grants=(
         Grant("personal_info:{owner}/*", ("read", "write", "list"), subject="$self"),
-        Grant("mail:personal/{owner}/*", ("read", "list"), subject="$self"),
+        Grant("mail:personal/{owner}/*", ("read", "list", "write"), subject="$self"),
         Grant("chat_history:{owner}/*", ("read", "list", "delete"), subject="$self"),
     ),
     tools=(),
@@ -185,12 +203,12 @@ def critical_tools() -> frozenset[str]:
 # Tools whose use counts as finance activity. read_mail only counts for finance mail,
 # so the admin's own personal mail never triggers a notice.
 FINANCE_TOOLS = frozenset(
-    {"balance_lookup", "manage_order", "manage_bill", "initiate_payment", "book_service"}
+    {"balance_lookup", "manage_order", "manage_bill", "initiate_payment", "book_service", "browser_commit"}
 )
 
 
 def is_finance_call(tool: str, args: dict) -> bool:
-    if tool == "read_mail":
+    if tool in ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail"):
         return args.get("category") == "finance"
     return tool in FINANCE_TOOLS
 

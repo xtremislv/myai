@@ -26,6 +26,10 @@ dependencies = [
     "redis>=5.2",
     "minio>=7.2",
     "pypdf>=5.0",
+    # agents' web access (app/browsing); Chromium: `playwright install --with-deps chromium`
+    "playwright>=1.48",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
     # vault crypto
     "cryptography>=43.0",
     # observability

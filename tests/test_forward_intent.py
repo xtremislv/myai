@@ -127,6 +127,10 @@ def test_every_tool_has_an_acl_gate():
     """Guards the project rule that no tool skips the ACL."""
     import inspect
 
+    # Shared helpers that run the ACL check for the tools that call them.
+    gates = ("_enforce(", "_subject(", "_mailbox(", "_browse(")
+    for helper in (tools._mailbox, tools._browse):
+        assert "_enforce(" in inspect.getsource(helper)
     for name, fn in tools.TOOLS.items():
         source = inspect.getsource(fn)
-        assert "_enforce(" in source or "_subject(" in source, f"{name} has no ACL gate"
+        assert any(g in source for g in gates), f"{name} has no ACL gate"

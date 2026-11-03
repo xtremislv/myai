@@ -25,7 +25,7 @@ router = APIRouter(tags=["request-manager"])
 class RequestIn(BaseModel):
     message: str
     thread_id: str = Field(min_length=1, max_length=128)
-    mode: Literal["single", "team"] = "single"
+    mode: Literal["single", "team", "agents"] = "single"
     department: str | None = None  # optional explicit hint
 
 

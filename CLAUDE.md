@@ -4,7 +4,8 @@
 
 ## What this is
 Self-hosted AI platform: vLLM-served local LLM (26B/A4B MoE default, Nemotron-switchable) on a rented
-aiccloud.in GPU, FastAPI gateway, LangGraph orchestrator (single + team), app-managed AES-GCM vault,
+aiccloud.in GPU, FastAPI gateway, LangGraph orchestrator (single, team, and `agents`: a supervisor over research/browser/mail/booking
+specialists with real web search, scraping and a headless browser in `app/browsing/`), app-managed AES-GCM vault,
 deny-by-default ACL (with owner-only `$self` data), a Request Manager (department routing, quotas,
 approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Loki/Grafana.
 
@@ -27,6 +28,8 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Critical tools are listed as `tool:<name>` in `critical_resources` in `packs.py`. They pause in the graph
   (`run_tool` in `app/orchestrator/nodes.py`) until approved. Code above that interrupt re-runs on resume,
   so it must have no side effects.
+- Web and browser access goes through `app/browsing/netguard.py` (public addresses only). Committing browser
+  clicks and sending mail are critical tools (`browser_commit`, `send_mail`). Wrap web/mail text with `untrusted()`.
 - Never use a client `thread_id` as a checkpoint key directly; use `scoped_thread()`, or `private_thread()`
   for `/v1/chat`.
 - Private chat text is encrypted per user (`app/vault/user_keys.py`). Keep conversation text out of `str`

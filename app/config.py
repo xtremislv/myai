@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # Agents are told the current date and time in this zone ("tomorrow" must mean something).
     timezone: str = "Asia/Kolkata"
 
+    # --- Web access for agents (app/browsing) ---
+    # Bing market for search and news, e.g. en-IN, en-US.
+    search_market: str = "en-IN"
+    # Most characters of one page or tool result handed to the model (the context is small).
+    web_max_chars: int = 3500
+    # Headless Chromium sessions: one per person, closed after this many idle seconds.
+    browser_max_sessions: int = 6
+    browser_idle_seconds: int = 600
+
     # --- Postgres ---
     postgres_dsn: str = "postgresql://ai:ai@postgres:5432/ai_platform"
 

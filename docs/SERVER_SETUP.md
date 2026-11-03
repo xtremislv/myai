@@ -269,3 +269,14 @@ scripts/start_native.sh status     # prints both public addresses
 
 Dashboards: *AI Platform — LLM & ACL* and *AI Platform — Diagnostics & Logs*. Prometheus keeps 15 days (max 2 GB)
 and Loki 14 days of logs.
+
+### Browser for the agents
+The agents' headless browser needs Chromium and its system libraries:
+
+```bash
+.venv/bin/playwright install --with-deps chromium
+```
+
+For good web search, add a Tavily or Serper API key on the admin Credentials page as `search/tavily` or
+`search/serper`. Without one, search falls back to Bing, which gives weaker results to servers.
+

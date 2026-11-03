@@ -1,0 +1,453 @@
+"""An interactive headless browser for agents: open a page, read it, click, type, choose.
+
+One isolated Chromium context per person (no shared cookies), closed after
+`browser_idle_seconds`. Playwright runs on its own asyncio loop in one background thread;
+graph nodes call the sync helpers below from any thread.
+
+What the model sees of a page is a snapshot: the title, the readable text, and the visible
+controls, each with a number (ref) it uses to act on them.
+
+Safety rules, enforced here rather than trusted to the prompt:
+  * Every request the page makes is checked by netguard (no localhost/private network),
+    websockets too. Service workers and downloads are off.
+  * Clicks that would commit something (book, pay, buy, send, submit a non-search form...)
+    are refused by browser_click: they must go through browser_commit, which needs approval.
+  * Passwords, card numbers, CVVs and one-time codes are never typed.
+"""
+from __future__ import annotations
+
+import asyncio
+import atexit
+import re
+import threading
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+from app.browsing import extract
+from app.browsing.fetch import USER_AGENT
+from app.browsing.netguard import Blocked, check_url
+from app.config import get_settings
+
+NAV_TIMEOUT_MS = 30_000
+CALL_TIMEOUT_S = 75
+MAX_ELEMENTS = 60
+PAGE_TEXT_CHARS = 2200
+
+_MARK_JS = r"""
+(maxCount) => {
+  const sel = 'a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=tab],' +
+              '[role=checkbox],[role=radio],[role=option],[role=menuitem],[role=combobox],[contenteditable=true]';
+  document.querySelectorAll('[data-ai-ref]').forEach(e => e.removeAttribute('data-ai-ref'));
+  const out = []; let i = 0;
+  for (const el of document.querySelectorAll(sel)) {
+    if (el.type === 'hidden' || el.disabled) continue;
+    const r = el.getBoundingClientRect(), st = getComputedStyle(el);
+    if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
+    i++; el.setAttribute('data-ai-ref', String(i));
+    const tag = el.tagName.toLowerCase();
+    const label = (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') ||
+                   el.title || el.getAttribute('name') || el.getAttribute('alt') ||
+                   (tag === 'input' && ['submit','button'].includes(el.type) ? el.value : '') || '')
+                   .trim().replace(/\s+/g, ' ').slice(0, 80);
+    let value = '';
+    if ((tag === 'input' || tag === 'textarea') && el.type !== 'password') value = (el.value || '').slice(0, 40);
+    if (tag === 'select') value = (el.options[el.selectedIndex] || {}).text || '';
+    const options = tag === 'select' ? Array.from(el.options).slice(0, 12).map(o => o.text.trim()) : [];
+    out.push({ref: i, tag, kind: el.getAttribute('type') || el.getAttribute('role') || '', label, value, options,
+              href: tag === 'a' ? (el.href || '').slice(0, 100) : '',
+              inView: r.bottom > 0 && r.top < innerHeight});
+    if (i >= maxCount) break;
+  }
+  return out;
+}
+"""
+
+# What an element is, for the commit and sensitive-field checks.
+_INFO_JS = r"""
+(el) => {
+  const form = el.form || el.closest('form');
+  const tag = el.tagName.toLowerCase();
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  const text = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  let searchForm = false;
+  if (form) {
+    const action = (form.getAttribute('action') || '').toLowerCase();
+    searchForm = form.getAttribute('role') === 'search' || action.includes('search') ||
+      !!form.querySelector('input[type=search]') ||
+      Array.from(form.querySelectorAll('input[name]')).some(i => /^(q|query|search|keyword|keywords|s|k)$/i.test(i.name));
+  }
+  const submits = (tag === 'button' && (type === '' || type === 'submit') && !!form) ||
+                  (tag === 'input' && (type === 'submit' || type === 'image'));
+  const field = [el.getAttribute('name'), el.id, el.getAttribute('autocomplete'), el.getAttribute('placeholder'),
+                 el.getAttribute('aria-label')].filter(Boolean).join(' ').toLowerCase();
+  return {tag, type, text, submits, searchForm, field, role: el.getAttribute('role') || ''};
+}
+"""
+
+COMMIT_WORDS = re.compile(
+    r"\b(book|booking|pay|payment|purchase|buy|checkout|check out|place order|order now|confirm|"
+    r"reserve|subscribe|send|submit|sign up|register|delete|transfer|donate|proceed to pay|"
+    r"cancel (?:booking|order|subscription|reservation)|complete (?:booking|purchase|order))\b",
+    re.IGNORECASE,
+)
+SENSITIVE_FIELD = re.compile(
+    r"(password|passwd|card|cc-|cvv|cvc|security code|expiry|exp-|iban|account.?number|"
+    r"routing|otp|one-time|pin\b|ssn|aadhaar|pan\b|upi)",
+    re.IGNORECASE,
+)
+SEARCH_FIELD = re.compile(r"(search|query|\bq\b|keyword|find|destination|from|to|where|city)", re.IGNORECASE)
+
+
+def commit_reason(info: dict[str, Any]) -> str | None:
+    """Why clicking this element would commit something, or None if it looks safe to click."""
+    match = COMMIT_WORDS.search(info.get("text", ""))
+    if match:
+        return f"its label says '{match.group(0)}'"
+    if info.get("submits") and not info.get("searchForm"):
+        return "it submits a form"
+    return None
+
+
+def sensitive_reason(info: dict[str, Any]) -> str | None:
+    """Why this field must never be typed into by the agent, or None."""
+    if info.get("type") == "password":
+        return "it is a password field"
+    if SENSITIVE_FIELD.search(info.get("field", "")):
+        return "it asks for a password, card, bank or one-time code"
+    return None
+
+
+def enter_is_search(info: dict[str, Any]) -> bool:
+    """Pressing Enter in this field only runs a search (safe), rather than submitting a form."""
+    return (
+        info.get("type") == "search"
+        or info.get("role") in ("searchbox", "combobox")
+        or bool(info.get("searchForm"))
+        or (not info.get("submits") and bool(SEARCH_FIELD.search(info.get("field", ""))) and info.get("type") != "email")
+    )
+
+
+@dataclass
+class _Session:
+    context: Any
+    page: Any
+    last_used: float = field(default_factory=time.monotonic)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+class BrowserError(RuntimeError):
+    """Something went wrong on the page. The message is safe to show the model."""
+
+
+class Browser:
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._ready = threading.Event()
+        self._start_lock = threading.Lock()
+        self._sessions: dict[str, _Session] = {}
+        self._pw = None
+        self._chromium = None
+
+    # ---- loop thread ----
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        with self._start_lock:
+            if self._loop is None:
+                self._loop = asyncio.new_event_loop()
+                threading.Thread(target=self._run_loop, name="browser", daemon=True).start()
+                self._ready.wait(30)
+                atexit.register(self.shutdown)
+        return self._loop
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.create_task(self._reaper())
+        self._ready.set()
+        self._loop.run_forever()
+
+    def call(self, coro_fn, *args) -> str:
+        loop = self._ensure_loop()
+        future = asyncio.run_coroutine_threadsafe(coro_fn(*args), loop)
+        try:
+            return future.result(CALL_TIMEOUT_S)
+        except TimeoutError:
+            future.cancel()
+            raise BrowserError("the page took too long to respond") from None
+
+    async def _reaper(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            idle = get_settings().browser_idle_seconds
+            for key, s in list(self._sessions.items()):
+                if time.monotonic() - s.last_used > idle and not s.lock.locked():
+                    await self._close(key)
+
+    def shutdown(self) -> None:
+        """Close Chromium and Playwright's driver cleanly when the process exits."""
+        if self._loop is None or not self._loop.is_running():
+            return
+
+        async def stop() -> None:
+            for key in list(self._sessions):
+                await self._close(key)
+            if self._chromium is not None:
+                await self._chromium.close()
+            if self._pw is not None:
+                await self._pw.stop()
+
+        try:
+            asyncio.run_coroutine_threadsafe(stop(), self._loop).result(10)
+        except Exception:  # noqa: BLE001 - exiting anyway
+            pass
+
+    # ---- sessions ----
+    async def _browser(self):
+        if self._chromium is None or not self._chromium.is_connected():
+            from playwright.async_api import async_playwright
+
+            self._pw = self._pw or await async_playwright().start()
+            self._chromium = await self._pw.chromium.launch(
+                args=["--disable-dev-shm-usage", "--no-first-run", "--disable-background-networking"]
+            )
+        return self._chromium
+
+    async def _session(self, key: str, create: bool = True) -> _Session:
+        s = self._sessions.get(key)
+        if s is not None:
+            s.last_used = time.monotonic()
+            return s
+        if not create:
+            raise BrowserError("no page is open; use browser_open first")
+        if len(self._sessions) >= get_settings().browser_max_sessions:
+            oldest = min(self._sessions, key=lambda k: self._sessions[k].last_used)
+            await self._close(oldest)
+        settings = get_settings()
+        context = await (await self._browser()).new_context(
+            user_agent=USER_AGENT, locale="en-IN", timezone_id=settings.timezone,
+            viewport={"width": 1280, "height": 900}, accept_downloads=False,
+            service_workers="block", java_script_enabled=True,
+        )
+        await context.route("**/*", _guard_request)
+        await context.route_web_socket("**/*", _guard_websocket)
+        page = await context.new_page()
+        page.set_default_timeout(15_000)
+        s = _Session(context, page)
+        self._sessions[key] = s
+        return s
+
+    async def _close(self, key: str) -> None:
+        s = self._sessions.pop(key, None)
+        if s is not None:
+            try:
+                await s.context.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    # ---- actions (run on the loop) ----
+    async def _settle(self, page) -> None:
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+            await page.wait_for_load_state("networkidle", timeout=4_000)
+        except Exception:  # noqa: BLE001 - busy pages never go idle; read what's there
+            pass
+
+    async def _snapshot(self, page, note: str = "") -> str:
+        elements = await page.evaluate(_MARK_JS, 150)
+        title, text = extract.page_text(await page.content())
+        # After scrolling, show the text around where the page is now, not its top.
+        ratio = await page.evaluate(
+            "() => { const h = document.documentElement.scrollHeight - innerHeight;"
+            " return h > 0 ? scrollY / h : 0 }"
+        )
+        text = text_from(text, ratio)
+        visible = [e for e in elements if e["inView"]] + [e for e in elements if not e["inView"]]
+        lines = []
+        for e in visible[:MAX_ELEMENTS]:
+            kind = e["tag"] + (f"[{e['kind']}]" if e["kind"] else "")
+            line = f"[{e['ref']}] {kind} '{e['label']}'"
+            if e["value"]:
+                line += f" value='{e['value']}'"
+            if e["options"]:
+                line += " options=" + "/".join(e["options"])
+            if e["href"] and not e["label"]:
+                line += f" -> {e['href']}"
+            if not e["inView"]:
+                line += " (below)"
+            lines.append(line)
+        more = f"\n…and {len(elements) - MAX_ELEMENTS} more controls (scroll to see them)" if len(elements) > MAX_ELEMENTS else ""
+        return (
+            (f"{note}\n" if note else "")
+            + f"PAGE: {title}\nURL: {page.url}\n\nTEXT:\n{extract.clip(text, PAGE_TEXT_CHARS)}\n\n"
+            + "CONTROLS (use the [number] as ref):\n" + ("\n".join(lines) or "(none)") + more
+        )
+
+    async def _element(self, page, ref: int):
+        handle = await page.query_selector(f'[data-ai-ref="{int(ref)}"]')
+        if handle is None:
+            raise BrowserError(f"there is no control [{ref}] on the page now; read the page again")
+        return handle, await handle.evaluate(_INFO_JS)
+
+    async def open(self, key: str, url: str) -> str:
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        check_url(url)
+        s = await self._session(key)
+        async with s.lock:
+            try:
+                resp = await s.page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            except Exception as e:  # noqa: BLE001
+                raise BrowserError(f"could not open {url}: {_short(e)}") from None
+            await self._settle(s.page)
+            status = f"(HTTP {resp.status})" if resp is not None and resp.status >= 400 else ""
+            return await self._snapshot(s.page, status)
+
+    async def read(self, key: str) -> str:
+        s = await self._session(key, create=False)
+        async with s.lock:
+            return await self._snapshot(s.page)
+
+    async def click(self, key: str, ref: int, commit: bool = False, expect: str = "") -> str:
+        s = await self._session(key, create=False)
+        async with s.lock:
+            handle, info = await self._element(s.page, ref)
+            if commit:
+                if expect and expect.lower() not in info["text"].lower():
+                    raise BrowserError(
+                        f"control [{ref}] now says '{info['text']}', not '{expect}': the page changed, "
+                        "so nothing was clicked. Read the page and ask again."
+                    )
+            else:
+                why = commit_reason(info)
+                if why:
+                    return (
+                        f"NOT CLICKED: [{ref}] '{info['text']}' would commit something ({why}). "
+                        "If the person asked for this, call browser_commit with this ref and its label; "
+                        "a person must approve it."
+                    )
+            try:
+                await handle.click(timeout=10_000)
+            except Exception as e:  # noqa: BLE001
+                raise BrowserError(f"could not click [{ref}]: {_short(e)}") from None
+            await self._settle(s.page)
+            note = f"Clicked [{ref}] '{info['text']}'." + (" (committed after approval)" if commit else "")
+            return await self._snapshot(s.page, note)
+
+    async def type(self, key: str, ref: int, text: str, press_enter: bool) -> str:
+        s = await self._session(key, create=False)
+        async with s.lock:
+            handle, info = await self._element(s.page, ref)
+            why = sensitive_reason(info)
+            if why:
+                return (
+                    f"NOT TYPED: [{ref}] {why}. Agents never enter passwords, card or bank details; "
+                    "the person has to fill that in themselves."
+                )
+            try:
+                await handle.fill(text, timeout=10_000)
+            except Exception:  # noqa: BLE001 - not a plain input (e.g. contenteditable)
+                try:
+                    await handle.click()
+                    await s.page.keyboard.type(text, delay=20)
+                except Exception as e:  # noqa: BLE001
+                    raise BrowserError(f"could not type into [{ref}]: {_short(e)}") from None
+            note = f"Typed into [{ref}]."
+            if press_enter:
+                if not enter_is_search(info):
+                    note += " Did not press Enter: in this field it would submit a form. Click its button instead."
+                else:
+                    await handle.press("Enter")
+                    await self._settle(s.page)
+                    note += " Pressed Enter."
+            else:
+                await asyncio.sleep(0.8)  # let autocomplete suggestions appear
+            return await self._snapshot(s.page, note)
+
+    async def select(self, key: str, ref: int, option: str) -> str:
+        s = await self._session(key, create=False)
+        async with s.lock:
+            handle, info = await self._element(s.page, ref)
+            if info["tag"] != "select":
+                return f"[{ref}] is not a dropdown list; click it to open it, then click the option."
+            try:
+                await handle.select_option(label=option, timeout=5_000)
+            except Exception:  # noqa: BLE001
+                try:
+                    await handle.select_option(value=option, timeout=5_000)
+                except Exception:  # noqa: BLE001
+                    raise BrowserError(f"[{ref}] has no option '{option}'") from None
+            await self._settle(s.page)
+            return await self._snapshot(s.page, f"Chose '{option}' in [{ref}].")
+
+    async def scroll(self, key: str, direction: str) -> str:
+        s = await self._session(key, create=False)
+        async with s.lock:
+            dy = -800 if direction.lower().startswith("up") else 800
+            await s.page.mouse.wheel(0, dy)
+            await asyncio.sleep(0.8)
+            return await self._snapshot(s.page, f"Scrolled {'up' if dy < 0 else 'down'}.")
+
+    async def back(self, key: str) -> str:
+        s = await self._session(key, create=False)
+        async with s.lock:
+            await s.page.go_back(timeout=NAV_TIMEOUT_MS)
+            await self._settle(s.page)
+            return await self._snapshot(s.page, "Went back.")
+
+    async def html_of(self, url: str) -> str:
+        """The rendered HTML of a public page, in a throwaway session (used by search)."""
+        check_url(url)
+        key = "__search__"
+        s = await self._session(key)
+        async with s.lock:
+            await s.page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            try:
+                await s.page.wait_for_load_state("load", timeout=5_000)
+            except Exception:  # noqa: BLE001
+                pass
+            return await s.page.content()
+
+    async def close(self, key: str) -> str:
+        await self._close(key)
+        return "Browser closed."
+
+
+async def _guard_request(route) -> None:
+    url = route.request.url
+    if url.startswith(("data:", "blob:", "about:")):
+        await route.continue_()
+        return
+    try:
+        await asyncio.to_thread(check_url, url)
+    except Blocked:
+        await route.abort("blockedbyclient")
+        return
+    await route.continue_()
+
+
+async def _guard_websocket(ws) -> None:
+    try:
+        await asyncio.to_thread(check_url, ws.url.replace("wss://", "https://", 1).replace("ws://", "http://", 1))
+    except Blocked:
+        await ws.close(code=1008, reason="blocked")
+        return
+    ws.connect_to_server()
+
+
+def text_from(text: str, ratio: float) -> str:
+    """The page text starting near `ratio` (0 = top, 1 = bottom) of the page."""
+    if ratio <= 0.05 or len(text) <= PAGE_TEXT_CHARS:
+        return text
+    start = min(int(len(text) * ratio), len(text) - PAGE_TEXT_CHARS)
+    start = text.rfind("\n", 0, start) + 1
+    return f"[… {start} characters above]\n" + text[start:]
+
+
+def _short(e: Exception) -> str:
+    return str(e).split("\n", 1)[0][:200]
+
+
+_browser = Browser()
+
+
+def browser() -> Browser:
+    return _browser

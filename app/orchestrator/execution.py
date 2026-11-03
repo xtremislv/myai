@@ -49,14 +49,23 @@ def private_thread(subject_id: str, thread_id: str) -> str:
 
 # LangGraph steps one run may take: 8 tool rounds is ~17 steps, a full team run ~20.
 RECURSION_LIMIT = 50
+# The agents graph: up to 4 hand-offs, each up to 12 tool rounds (2 steps per round).
+AGENTS_RECURSION_LIMIT = 150
 
 
 def _graph_cm(mode: str, serde=None):
     # Lazy import: compiling needs a live Postgres connection.
+    from app.orchestrator.agents_graph import compiled_agents_graph
     from app.orchestrator.graph import compiled_graph
     from app.orchestrator.multi_graph import compiled_team_graph
 
+    if mode == "agents":
+        return compiled_agents_graph(serde)
     return compiled_team_graph(serde) if mode == "team" else compiled_graph(serde)
+
+
+def _limit(mode: str) -> int:
+    return AGENTS_RECURSION_LIMIT if mode == "agents" else RECURSION_LIMIT
 
 
 def _pending_interrupt(graph, config: dict) -> dict[str, Any] | None:
@@ -97,7 +106,7 @@ def run(
     serde = user_keys.checkpoint_serde(chat_key) if chat_key else None
     # Above the agents' own budgets (8 tool rounds; 6 research steps + a review), so those
     # end a run gracefully and this only stops something truly stuck.
-    config = {"configurable": {"thread_id": key}, "recursion_limit": RECURSION_LIMIT}
+    config = {"configurable": {"thread_id": key}, "recursion_limit": _limit(mode)}
     initial = {
         "messages": [{"role": "user", "content": message}],
         "subject_id": subject.id,
@@ -191,7 +200,7 @@ def resume(
     args: dict[str, Any],
 ) -> str | PendingAction:
     """Continue a paused run. The subject and roles come from the checkpoint."""
-    config = {"configurable": {"thread_id": checkpoint_thread}, "recursion_limit": RECURSION_LIMIT}
+    config = {"configurable": {"thread_id": checkpoint_thread}, "recursion_limit": _limit(mode)}
     with _graph_cm(mode) as graph:
         pending = _pending_interrupt(graph, config)
         # An approval covers one exact call. Never resume onto anything else.

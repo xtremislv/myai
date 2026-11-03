@@ -82,7 +82,8 @@ TRIAGE_PROMPT = (
     "and medical or educational questions.\n\n"
     'route: "work" only if it clearly asks to use or change company data or systems: look up '
     "or update company records, orders, bills, inventory, shipments, company mail or research "
-    'files. Otherwise "private": questions, writing help, advice, personal matters, general '
+    "files, or research, browse websites or book something on the company's behalf. "
+    'Otherwise "private": questions, writing help, advice, personal matters, general '
     'knowledge. If you are unsure, choose "private".\n\n'
     "department: for work, the department that owns that data or system, from this list, otherwise "
     "null. Choose the owner even if it is marked not available to this person: never substitute "
@@ -90,7 +91,8 @@ TRIAGE_PROMPT = (
     'action: "order" to buy or order products, "service" to book or subscribe to a service, '
     '"bill" to pay or record a bill or invoice, otherwise "none". Asking how these work is '
     '"none".\n\n'
-    'steps: "many" if answering needs planning and several sources, otherwise "one".\n\n'
+    'steps: "many" if it needs planning, several sources, using websites, booking, or working through '
+    'a mailbox, otherwise "one".\n\n'
     'Reply with ONLY JSON: {{"safety": "...", "route": "...", "department": "...", '
     '"action": "...", "steps": "..."}}'
 )
@@ -105,7 +107,7 @@ class Triage:
     route: str = "private"  # private | work
     department: str | None = None
     action: str | None = None  # order | service | bill
-    mode: str = "single"  # single | team
+    mode: str = "single"  # single | agents for work; single | team for private
 
 
 def triage_verdict(
@@ -159,21 +161,24 @@ def triage(
     if verdict["safety"] != "none":
         return Triage(nsfw=True, why=f"classified as {verdict['safety']}")
 
-    mode = "team" if verdict.get("steps") == "many" else "single"
+    many = verdict.get("steps") == "many"
+    # Specialists need tools, which only work has: private multi-step answers use the team graph.
+    mode = "agents" if many else "single"
+    private_mode = "team" if many else "single"
     action = verdict.get("action") if verdict.get("action") in ("order", "service", "bill") else None
     if action:  # anyone may ask for these: they go to the accounts inbox
         return Triage(route="work", action=action, mode=mode)
     department = verdict.get("department")
     # Someone with no department never has work: everything they send stays private.
     if verdict["route"] == "private" or not departments or not isinstance(department, str):
-        return Triage(mode=mode)
+        return Triage(mode=private_mode)
     if department in departments:
         return Triage(route="work", department=department, mode=mode)
     if department in (others or {}):
         # Work this person can't do here. The Request Manager refuses it with a clear
         # "not a member" reason; no data is touched.
         return Triage(route="work", department=department, mode=mode)
-    return Triage(mode=mode)  # unknown name: stay private
+    return Triage(mode=private_mode)  # unknown name: stay private
 
 
 def _parse_verdict(reply: str, allowed: tuple[str, ...]) -> str | None:
