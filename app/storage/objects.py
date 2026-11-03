@@ -88,3 +88,23 @@ class ObjectStore:
     def list(self, subject: Subject, prefix: str = "") -> list[str]:
         self._acl.enforce(subject, Action.LIST, resource_for(prefix, listing=True))
         return [o.object_name for o in self._c.list_objects(self._bucket, prefix=prefix, recursive=True)]
+
+
+def system_object_size(key: str) -> int | None:
+    """The object's size, or None if there is no such object."""
+    from minio.error import S3Error
+
+    try:
+        return _client().stat_object(_settings.minio_bucket, key).size
+    except S3Error as e:
+        if e.code in ("NoSuchKey", "NoSuchObject", "NotFound"):
+            return None
+        raise
+
+
+def list_system_objects(prefix: str) -> list[tuple[str, int, object]]:
+    """(key, size, last_modified) of every object under a prefix. No ACL: callers check."""
+    return [
+        (o.object_name, o.size or 0, o.last_modified)
+        for o in _client().list_objects(_settings.minio_bucket, prefix=prefix, recursive=True)
+    ]

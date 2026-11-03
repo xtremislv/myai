@@ -75,6 +75,41 @@ class ChatIn(BaseModel):
     mode: Literal["auto", "single", "team", "agents"] = "auto"
 
 
+class ConfirmOut(BaseModel):
+    """An action the assistant wants to take in a private chat, shown for the person to confirm.
+    Sent to the owner only, never stored outside their encrypted chat."""
+
+    tool: str
+    title: str
+    details: dict[str, str]
+
+
+class ConfirmIn(BaseModel):
+    approve: bool
+
+
+CONFIRM_TITLES = {
+    "send_mail": "Send this email?",
+    "delete_file": "Delete this file?",
+    "browser_commit": "Confirm this on the website?",
+}
+
+
+def confirm_out(pending: dict) -> ConfirmOut:
+    args = pending.get("args") or {}
+    shown = {k: str(v)[:4000] for k, v in args.items() if v not in ("", None)}
+    return ConfirmOut(tool=pending["tool"], title=CONFIRM_TITLES.get(pending["tool"], f"Allow {pending['tool']}?"), details=shown)
+
+
+def _private_reply(thread_id: str, mode: str, out) -> ChatOut:
+    if isinstance(out, execution.PendingAction):
+        return ChatOut(
+            thread_id=thread_id, reply="", mode=mode, outcome="confirm",
+            confirm=confirm_out({"tool": out.tool, "args": out.args}),
+        )
+    return ChatOut(thread_id=thread_id, reply=out, mode=mode)
+
+
 class ChatOut(BaseModel):
     thread_id: str
     reply: str
@@ -85,6 +120,8 @@ class ChatOut(BaseModel):
     department: str | None = None
     approval_id: str | None = None
     task_id: str | None = None
+    # A private action waiting on the person's own go-ahead (outcome "confirm").
+    confirm: ConfirmOut | None = None
 
 
 class ThreadOut(BaseModel):
@@ -216,7 +253,7 @@ def chat(
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, BUSY_MESSAGE)
         reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key, attachments=context)
     _remember_thread(session, key, subject.id, body.thread_id, body.message)
-    return ChatOut(thread_id=body.thread_id, reply=reply, mode=mode)
+    return _private_reply(body.thread_id, mode, reply)
 
 
 def _event(payload: dict) -> str:
@@ -297,7 +334,7 @@ def chat_stream(
                     reply = value
         with Session(bind=bind) as later:
             _remember_thread(later, key, subject.id, body.thread_id, body.message)
-        yield _event({"type": "done", **ChatOut(thread_id=body.thread_id, reply=reply, mode=mode).model_dump()})
+        yield _event({"type": "done", **_private_reply(body.thread_id, mode, reply).model_dump()})
 
     return _stream_response(events())
 
@@ -385,6 +422,41 @@ def thread_messages(
     key: bytes = Depends(chat_key),
 ) -> list[MessageOut]:
     return [MessageOut(**m) for m in execution.private_history(subject, thread_id, key)]
+
+
+@router.get("/threads/{thread_id}/pending", response_model=ConfirmOut | None)
+def thread_pending(
+    thread_id: str,
+    subject: Subject = Depends(current_subject),
+    key: bytes = Depends(chat_key),
+) -> ConfirmOut | None:
+    """The action this private chat is waiting for you to confirm, if any."""
+    pending = execution.private_pending(subject, thread_id, key)
+    return confirm_out(pending) if pending else None
+
+
+@router.post("/threads/{thread_id}/confirm", response_model=ChatOut)
+def thread_confirm(
+    thread_id: str,
+    body: ConfirmIn,
+    subject: Subject = Depends(current_subject),
+    key: bytes = Depends(chat_key),
+) -> ChatOut:
+    """Go ahead with (or decline) the action the assistant asked you to confirm."""
+    pending = execution.private_pending(subject, thread_id, key)
+    if pending is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "nothing is waiting for your confirmation in this chat")
+    with _private_slot(subject) as free:
+        if not free:
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, BUSY_MESSAGE)
+        try:
+            out = execution.resume_private(
+                subject, thread_id, key, approved=body.approve, tool=pending["tool"], args=pending["args"],
+                mode=pending["mode"], reason="" if body.approve else "the person said no",
+            )
+        except execution.StaleApproval as e:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
+    return _private_reply(thread_id, pending["mode"], out)
 
 
 @router.get("/threads/{thread_id}/requests", response_model=list[ChatRequestOut])

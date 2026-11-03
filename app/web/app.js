@@ -4,6 +4,7 @@
 // reloading the page signs out. All page text is set through textContent.
 const state = {
   token: null, username: "", roles: [], view: "chat", thread: null, threads: [], counts: {}, poll: null,
+  bellPoll: null, unread: 0,
 };
 const root = document.getElementById("app");
 
@@ -62,6 +63,7 @@ const ICONS = {
   pen: "M4 20l1-4L16 5l3 3L8 19l-4 1z",
   spark: "M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
   lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z",
+  bell: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0",
 };
 
 // ---- small DOM helpers ----
@@ -217,8 +219,10 @@ function useToken(result, username) {
 
 function signOut(message) {
   clearInterval(state.poll);
+  clearInterval(state.bellPoll);
   Object.assign(state, {
     token: null, username: "", roles: [], view: "chat", thread: null, threads: [], counts: {}, poll: null,
+    bellPoll: null, unread: 0,
   });
   loginScreen(message);
 }
@@ -366,6 +370,9 @@ function morePages() {
     has("admin", "hr", "account") && ["reports", "Reports", reportsView, "open_reports"],
     has("admin") && ["users", "Users", usersView],
     has("admin") && ["credentials", "Credentials", credentialsView],
+    ["notifications", "Notifications", notificationsView, "unread_notifications"],
+    ["files", "My files", filesView],
+    ["reminders", "Reminders", remindersView],
     ["overview", "Overview", overviewView],
     ["account", "My account", accountView],
   ].filter(Boolean);
@@ -377,10 +384,27 @@ function newThreadId() {
 
 async function refreshCounts() {
   try {
-    state.counts = await api("/v1/dashboard");
+    state.counts = { ...(await api("/v1/dashboard")), unread_notifications: state.unread };
     state.roles = state.counts.roles;
   } catch { /* the page itself reports errors */ }
   return state.counts;
+}
+
+// The bell: checks for new notifications every minute, and pops up a browser notification for
+// new ones while this tab is open (if the person allowed it under Notifications).
+async function checkBell(paint) {
+  try {
+    const { unread } = await api("/v1/notifications/count");
+    if (unread > state.unread && "Notification" in window && Notification.permission === "granted") {
+      const fresh = await api("/v1/notifications?unread_only=true");
+      fresh.slice(0, unread - state.unread).reverse().forEach((n) => {
+        try { new Notification(n.title, { body: n.body.slice(0, 200), tag: n.id }); } catch { /* not supported here */ }
+      });
+    }
+    state.unread = unread;
+    state.counts.unread_notifications = unread;
+    if (state.token) paint();
+  } catch { /* try again next time */ }
 }
 
 function shell() {
@@ -483,6 +507,9 @@ function shell() {
     openChat(newThreadId());
     refreshCounts().then(() => { if (state.token) paint(); });
   });
+  clearInterval(state.bellPoll);
+  checkBell(paint);
+  state.bellPoll = setInterval(() => { if (state.token) checkBell(paint); }, 60000);
 }
 
 function heading(text, subtitle) {
@@ -550,6 +577,43 @@ async function chatView(thread, { reloadThreads, paint }) {
       );
     }));
     return items.some((item) => !FINISHED.has(item.state));
+  };
+
+  // The assistant asks before sending mail or deleting a file in a private chat.
+  const confirmCard = (pending) => {
+    const error = errorBox();
+    const card = h("div", { class: "confirm card" });
+    const decide = (approve) => async () => {
+      error.clear();
+      card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      try {
+        const result = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/confirm`, { method: "POST", body: { approve } });
+        card.remove();
+        showResult(result);
+      } catch (err) {
+        error.fail(err);
+        card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+      }
+    };
+    const LABELS = { to: "To", subject: "Subject", body: "Message", path: "File", category: "Mailbox", in_reply_to: "In reply to" };
+    fill(card,
+      h("strong", null, pending.title),
+      h("dl", { class: "facts" }, Object.entries(pending.details).flatMap(([k, v]) => [
+        h("dt", null, LABELS[k] || k), h("dd", { class: k === "body" ? "pre" : null }, v),
+      ])),
+      error,
+      h("div", { class: "row" },
+        h("button", { class: "primary", type: "button", onclick: decide(true) }, pending.tool === "send_mail" ? "Send" : "Yes, go ahead"),
+        h("button", { type: "button", onclick: decide(false) }, "No"),
+      ),
+    );
+    messages.append(card);
+    toBottom();
+  };
+
+  const showResult = (result) => {
+    if (result.outcome === "confirm") confirmCard(result.confirm);
+    else if (result.reply) bubble("assistant", result.reply);
   };
 
   const watchRequests = async () => {
@@ -627,6 +691,9 @@ async function chatView(thread, { reloadThreads, paint }) {
         if (result.outcome === "flagged_nsfw") {
           mine.remove();
           bubble("flagged", "This message was blocked and reported to HR and the admin. It wasn't saved in this chat.");
+        } else if (result.outcome === "confirm") {
+          confirmCard(result.confirm);
+          await reloadThreads();
         } else {
           bubble("assistant", result.reply, result.route === "work" ? result.department : null);
           await reloadThreads();
@@ -694,6 +761,8 @@ async function chatView(thread, { reloadThreads, paint }) {
     const history = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/messages`);
     history.forEach((m) => bubble(m.role, m.content, m.handled_by));
     if (history.length) setEmpty(false);
+    const pending = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/pending`).catch(() => null);
+    if (pending) confirmCard(pending);
     await watchRequests();
   }
   await paintFiles();
@@ -967,6 +1036,38 @@ function userCard(user, refresh) {
     { danger: !user.disabled },
   );
 
+  const eraseName = h("input", { autocomplete: "off", "aria-label": "Type the username to confirm" });
+  const eraseAccount = h("input", { type: "checkbox" });
+  const eraseError = errorBox();
+  const erase = h("form", {
+    class: "panel",
+    hidden: true,
+    onsubmit: async (event) => {
+      event.preventDefault();
+      eraseError.clear();
+      try {
+        await api(`/v1/auth/users/${user.id}/erase`, {
+          method: "POST", body: { confirm_username: eraseName.value, delete_account: eraseAccount.checked },
+        });
+        refresh();
+      } catch (err) {
+        eraseError.fail(err);
+      }
+    },
+  },
+    h("p", null, `Permanently delete everything stored for ${user.username}: private chats, attachments, files, `
+      + "reminders, notifications, mailbox connection, and the work requests they made. This can't be undone."),
+    h("p", { class: "small muted" }, "Kept: reports of explicit or illegal content, and the access log (which holds no message text). "
+      + "They will need to set a new password to use private chat again."),
+    eraseError,
+    h("label", { class: "check" }, eraseAccount, h("span", null, "Also delete the account")),
+    h("label", null, `Type ${user.username} to confirm`, eraseName),
+    h("div", { class: "row" },
+      h("button", { class: "danger", type: "submit" }, "Erase data"),
+      h("button", { type: "button", onclick: () => { erase.hidden = true; } }, "Cancel"),
+    ),
+  );
+
   const pills = [
     isAdmin && h("span", { class: "pill" }, "Administrator"),
     user.disabled
@@ -996,10 +1097,14 @@ function userCard(user, refresh) {
         class: user.disabled ? "" : "danger",
         onclick: () => { toggle.hidden = false; reset.hidden = true; },
       }, user.disabled ? "Enable" : "Disable"),
+      !isMe && h("button", {
+        type: "button", class: "danger", onclick: () => { erase.hidden = false; reset.hidden = true; toggle.hidden = true; eraseName.focus(); },
+      }, "Erase data"),
       isMe && h("span", { class: "small muted" }, "Change your own password under My account."),
     ),
     reset,
     toggle,
+    erase,
   );
 }
 
@@ -1146,6 +1251,7 @@ async function accountView() {
 
   return h("div", null,
     heading("My account"),
+    await mailSettingsCard(),
     h("div", { class: "card" },
       h("h2", null, "Profile"),
       h("dl", { class: "facts" },
@@ -1208,6 +1314,282 @@ async function accountView() {
       h("button", { type: "submit" }, "Create new code"),
     ),
   );
+}
+
+// ---- notifications (the bell) ----
+const KIND_LABELS = { reminder: ["Reminder", "warn"], digest: ["Mail digest", ""], alert: ["Server alert", "bad"], mail: ["Mail", ""] };
+
+async function notificationsView(refresh) {
+  const items = await api("/v1/notifications");
+  const allow = "Notification" in window && Notification.permission === "default"
+    && h("button", { type: "button", onclick: async () => { await Notification.requestPermission(); refresh(); } }, "Show pop-ups in this browser");
+  const readAll = async () => {
+    await api("/v1/notifications/read", { method: "POST", body: {} });
+    state.unread = 0;
+    state.counts.unread_notifications = 0;
+    refresh();
+  };
+  const open = (n, card) => async () => {
+    card.classList.toggle("open");
+    if (!n.read) {
+      const { unread } = await api("/v1/notifications/read", { method: "POST", body: { id: n.id } });
+      state.unread = unread;
+      state.counts.unread_notifications = unread;
+      card.classList.remove("unread");
+      n.read = true;
+    }
+  };
+  return h("div", null,
+    heading("Notifications", "Reminders, your morning mail digest and, for the admin, server alerts."),
+    h("div", { class: "row" }, items.some((n) => !n.read) && h("button", { type: "button", onclick: readAll }, "Mark all read"), allow),
+    items.length
+      ? h("div", { class: "notes" }, items.map((n) => {
+        const [label, kind] = KIND_LABELS[n.kind] || [n.kind, ""];
+        const card = h("button", { type: "button", class: `card note ${n.read ? "" : "unread"}` },
+          h("div", { class: "row spread" },
+            h("span", { class: "row" }, h("span", { class: `pill ${kind}` }, label), h("strong", null, n.title)),
+            h("span", { class: "small muted" }, new Date(n.created_at).toLocaleString()),
+          ),
+          n.body && h("div", { class: "pre note-body" }, n.body),
+        );
+        card.addEventListener("click", open(n, card));
+        return card;
+      }))
+      : h("div", { class: "card empty" }, "Nothing yet. Reminders you set in chat appear here when they're due."),
+  );
+}
+
+// ---- My files ----
+async function filesView(refresh, { trash = false } = {}) {
+  const data = await api(`/v1/files${trash ? "?trash=true" : ""}`);
+  const error = errorBox();
+  const folder = h("input", { placeholder: "Folder (optional), e.g. notes", "aria-label": "Folder" });
+  const picker = h("input", { type: "file", class: "hidden-input", multiple: true });
+  const page = h("div");
+  const redraw = async (opts) => page.replaceChildren(await filesView(refresh, opts));
+  picker.addEventListener("change", async () => {
+    error.clear();
+    for (const file of picker.files) {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("folder", folder.value);
+      try {
+        await api("/v1/files", { method: "POST", form });
+      } catch (err) {
+        error.fail(err);
+      }
+    }
+    picker.value = "";
+    if (!error.hidden) return;
+    redraw({ trash });
+  });
+  const download = (f) => async () => {
+    const blob = await api(`/v1/files/${f.id}`, { raw: true });
+    const link = h("a", { href: URL.createObjectURL(blob), download: f.path.split("/").pop() });
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+  const act = (fn) => async () => {
+    error.clear();
+    try { await fn(); redraw({ trash }); } catch (err) { error.fail(err); }
+  };
+  page.append(
+    heading(trash ? "Trash" : "My files", trash
+      ? "Deleted files are kept for 7 days, then removed for good."
+      : "Encrypted with your key: only you, and the assistant in your private chats, can open them. "
+        + "Ask the assistant to write notes, edit lists or organize files. Every change keeps the old version."),
+    error,
+    h("div", { class: "row" },
+      !trash && folder,
+      !trash && h("button", { class: "primary", type: "button", onclick: () => picker.click() }, icon("plus"), "Upload"),
+      picker,
+      h("button", { type: "button", onclick: () => redraw({ trash: !trash }) }, trash ? "Back to files" : "Trash"),
+      h("span", { class: "small muted" }, `${formatSize(data.used)} of ${formatSize(data.quota)} used`),
+    ),
+    h("div", { class: "card" }, table(
+      ["Name", "Size", trash ? "Deleted" : "Changed", ""],
+      data.files.map((f) => [
+        h("span", { class: "mono" }, f.path),
+        formatSize(f.size),
+        new Date(trash ? f.deleted_at : f.updated_at).toLocaleString(),
+        h("div", { class: "row" }, trash
+          ? h("button", { type: "button", onclick: act(() => api(`/v1/files/${f.id}/restore`, { method: "POST" })) }, "Restore")
+          : [
+            h("button", { type: "button", onclick: download(f) }, "Download"),
+            h("button", { type: "button", class: "danger", "aria-label": `Delete ${f.path}`, onclick: act(() => api(`/v1/files/${f.id}`, { method: "DELETE" })) }, "Delete"),
+          ]),
+      ]),
+      trash ? "The trash is empty." : "No files yet. Upload some, or ask the assistant to write one.",
+    )),
+  );
+  return page;
+}
+
+// ---- reminders ----
+async function remindersView(refresh) {
+  const items = await api("/v1/reminders");
+  const error = errorBox();
+  const when = h("input", { required: true, placeholder: "tomorrow 9am, in 2 hours, friday 17:30", "aria-label": "When" });
+  const text = h("input", { required: true, maxLength: 500, placeholder: "What to remember", "aria-label": "What" });
+  const repeat = h("select", { "aria-label": "Repeat" },
+    ["none", "daily", "weekdays", "weekly", "monthly"].map((r) => h("option", { value: r }, r === "none" ? "Once" : r[0].toUpperCase() + r.slice(1))));
+  const email = h("input", { type: "checkbox" });
+  return h("div", null,
+    heading("Reminders", "You can also just ask in chat: \"remind me to call the bank tomorrow at 10\"."),
+    h("form", {
+      class: "card",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.clear();
+        try {
+          await api("/v1/reminders", { method: "POST", body: { when: when.value, text: text.value, repeat: repeat.value, email: email.checked } });
+          refresh();
+        } catch (err) {
+          error.fail(err);
+        }
+      },
+    },
+      h("h2", null, "New reminder"),
+      error,
+      h("div", { class: "row wrap" },
+        h("label", { class: "grow" }, "What", text),
+        h("label", null, "When", when),
+        h("label", null, "Repeat", repeat),
+      ),
+      h("label", { class: "check" }, email, h("span", null, "Also email it to me")),
+      h("button", { class: "primary", type: "submit" }, "Add reminder"),
+    ),
+    h("div", { class: "card" }, table(
+      ["When", "What", "Repeats", ""],
+      items.map((r) => [
+        r.due,
+        h("span", null, r.text, r.source === "mail" && h("span", { class: "pill small" }, " from mail")),
+        r.repeat === "none" ? "" : r.repeat,
+        h("button", { type: "button", onclick: async () => { await api(`/v1/reminders/${r.id}`, { method: "DELETE" }); refresh(); } }, "Cancel"),
+      ]),
+      "No reminders waiting.",
+    )),
+  );
+}
+
+// ---- My account: mailbox and reminder settings ----
+async function mailSettingsCard() {
+  const [box, prefs] = await Promise.all([api("/v1/me/mailbox"), api("/v1/me/prefs")]);
+  const card = h("div", { class: "card" });
+  const error = errorBox();
+  const note = h("div");
+  const field = (label, props) => {
+    const input = h("input", props);
+    return [input, h("label", null, label, input)];
+  };
+  const [imapHost, imapHostLabel] = field("IMAP server", { required: true, placeholder: "imap.example.com", value: box.imap_host || "" });
+  const [smtpHost, smtpHostLabel] = field("SMTP server (to send)", { placeholder: "smtp.example.com", value: box.smtp_host || "" });
+  const [smtpPort, smtpPortLabel] = field("SMTP port", { type: "number", value: 465, min: 1 });
+  const [username, usernameLabel] = field("Username (usually your email address)", { required: true, autocomplete: "off", value: box.username || "" });
+  const [password, passwordLabel] = field("Password or app password", { type: "password", required: true, autocomplete: "new-password" });
+
+  const tz = h("input", { value: prefs.timezone || "", placeholder: "Asia/Kolkata" });
+  const emailAddr = h("input", { type: "email", value: prefs.email || "", placeholder: "Defaults to your mailbox address" });
+  const digestOn = h("input", { type: "checkbox", checked: prefs.digest_hour !== null && prefs.digest_hour !== undefined });
+  const digestHour = h("select", null, Array.from({ length: 24 }, (_, i) => h("option", { value: i, selected: (prefs.digest_hour ?? 8) === i }, `${String(i).padStart(2, "0")}:00`)));
+  const digestEmail = h("input", { type: "checkbox", checked: !!prefs.digest_email });
+  const emailReminders = h("input", { type: "checkbox", checked: !!prefs.email_reminders });
+  const prefsError = errorBox();
+  const prefsNote = h("div");
+
+  const connect = h("form", {
+    onsubmit: async (event) => {
+      event.preventDefault();
+      error.clear();
+      note.replaceChildren(h("div", { class: "notice" }, "Checking the login..."));
+      try {
+        await api("/v1/me/mailbox", {
+          method: "PUT",
+          body: {
+            imap_host: imapHost.value, imap_port: 993, smtp_host: smtpHost.value, smtp_port: Number(smtpPort.value) || 465,
+            username: username.value, password: password.value,
+          },
+        });
+        password.value = "";
+        card.replaceWith(await mailSettingsCard());
+      } catch (err) {
+        note.replaceChildren();
+        error.fail(err);
+      }
+    },
+  },
+    h("p", { class: "muted" }, "Connect your own mailbox so the assistant can read, summarize and answer your mail in your private chats. "
+      + "Gmail and Outlook need an app password. Sending always asks you first."),
+    error, note,
+    h("div", { class: "row wrap" }, imapHostLabel, usernameLabel, passwordLabel),
+    h("div", { class: "row wrap" }, smtpHostLabel, smtpPortLabel),
+    h("button", { class: "primary", type: "submit" }, box.connected ? "Update mailbox" : "Connect mailbox"),
+  );
+
+  const digestNow = h("button", { type: "button" }, "Summarize my mail now");
+  digestNow.addEventListener("click", async () => {
+    prefsError.clear();
+    digestNow.disabled = true;
+    prefsNote.replaceChildren(h("div", { class: "notice" }, "Reading your mail..."));
+    try {
+      const { text } = await api("/v1/me/digest", { method: "POST" });
+      prefsNote.replaceChildren(h("div", { class: "notice good pre" }, text || "No new mail."));
+    } catch (err) {
+      prefsNote.replaceChildren();
+      prefsError.fail(err);
+    }
+    digestNow.disabled = false;
+  });
+
+  fill(card,
+    h("h2", null, "Mail and reminders"),
+    box.connected && h("div", { class: "row spread" },
+      h("span", null, h("span", { class: "pill good" }, "Connected"), ` ${box.username} (${box.imap_host})`),
+      h("button", {
+        type: "button", class: "danger",
+        onclick: async () => { await api("/v1/me/mailbox", { method: "DELETE" }); card.replaceWith(await mailSettingsCard()); },
+      }, "Disconnect"),
+    ),
+    connect,
+    h("form", {
+      class: "settings",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        prefsError.clear();
+        try {
+          await api("/v1/me/prefs", {
+            method: "PUT",
+            body: {
+              timezone: tz.value.trim(), email: emailAddr.value.trim(),
+              digest_hour: digestOn.checked ? Number(digestHour.value) : null,
+              digest_email: digestEmail.checked, email_reminders: emailReminders.checked,
+            },
+          });
+          prefsNote.replaceChildren(h("div", { class: "notice good" }, "Saved."));
+        } catch (err) {
+          prefsError.fail(err);
+        }
+      },
+    },
+      h("h3", null, "Daily digest and reminders"),
+      prefsError, prefsNote,
+      h("div", { class: "row" },
+        h("label", { class: "check" }, digestOn, h("span", null, "Every morning, summarize my new mail and set reminders for deadlines in it, at")),
+        digestHour,
+      ),
+      h("label", { class: "check" }, digestEmail, h("span", null, "Also email me the digest")),
+      h("label", { class: "check" }, emailReminders, h("span", null, "Email me every reminder, too")),
+      h("div", { class: "row wrap" },
+        h("label", null, "Time zone", tz),
+        h("label", { class: "grow" }, "Email address for reminders", emailAddr),
+      ),
+      h("div", { class: "row" },
+        h("button", { class: "primary", type: "submit" }, "Save"),
+        box.connected && digestNow,
+      ),
+    ),
+  );
+  return card;
 }
 
 loginScreen();

@@ -21,7 +21,7 @@ from app.vault import user_keys
 
 logger = logging.getLogger(__name__)
 
-MAX_CONTEXT_CHARS = 16_000  # keeps room in the model's context for the conversation
+MAX_CONTEXT_CHARS = 24_000  # keeps room in the model's context for the conversation
 MAX_PDF_PAGES = 50
 _TEXT_TYPES = {"application/json", "application/xml", "application/x-yaml", "application/yaml"}
 _TEXT_SUFFIXES = {".txt", ".md", ".csv", ".tsv", ".json", ".log", ".yaml", ".yml", ".xml"}

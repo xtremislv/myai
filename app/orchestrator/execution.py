@@ -20,7 +20,7 @@ from langgraph.types import Command
 
 from app.acl.models import Subject
 from app.llm.client import token_sink
-from app.orchestrator.context import attachment_text
+from app.orchestrator.context import attachment_text, user_key
 from app.orchestrator.progress import progress_sink
 from app.vault import user_keys
 
@@ -121,9 +121,18 @@ def run(
         "messages": [{"role": "user", "content": message}],
         "subject_id": subject.id,
         "subject_roles": list(subject.roles),
-        "scratchpad": {"department": department} if department else {},
+        "scratchpad": {"department": department, "mode": mode} if department else {"mode": mode},
     }
+    if chat_key:
+        # A private run still waiting on the person's go-ahead: they moved on, so it's a no.
+        waiting = private_pending(subject, thread_id, chat_key)
+        if waiting is not None:
+            resume_private(
+                subject, thread_id, chat_key, approved=False, tool=waiting["tool"], args=waiting["args"],
+                mode=waiting["mode"], reason="the person sent a new message instead of confirming",
+            )
     token = attachment_text.set(attachments)
+    key_token = user_key.set(chat_key)
     try:
         with _graph_cm(mode, serde) as graph:
             if context and not chat_key:
@@ -131,6 +140,7 @@ def run(
             final = graph.invoke(initial, config=config)
             return _outcome(graph, config, final)
     finally:
+        user_key.reset(key_token)
         attachment_text.reset(token)
 
 
@@ -200,6 +210,43 @@ def record_private(
     }
     with _graph_cm("single", user_keys.checkpoint_serde(chat_key)) as graph:
         graph.update_state(config, update, as_node="agent")
+
+
+def private_pending(subject: Subject, thread_id: str, chat_key: bytes) -> dict[str, Any] | None:
+    """The action a private chat is waiting for its owner to confirm: {"tool", "args", "mode"}.
+    Read from the checkpoint's own pending writes, so it doesn't matter which graph paused."""
+    config = {"configurable": {"thread_id": private_thread(subject.id, thread_id)}}
+    # Any graph will do: only its checkpointer is used (the same one every mode shares).
+    with _graph_cm("single", user_keys.checkpoint_serde(chat_key)) as graph:
+        found = graph.checkpointer.get_tuple(config)
+    if found is None:
+        return None
+    for _, channel, value in found.pending_writes or []:
+        if channel != "__interrupt__":
+            continue
+        for item in value if isinstance(value, (list, tuple)) else [value]:
+            payload = getattr(item, "value", item)
+            if isinstance(payload, dict) and "tool" in payload:
+                return {"tool": payload["tool"], "args": payload.get("args", {}), "mode": payload.get("mode") or "single"}
+    return None
+
+
+def resume_private(
+    subject: Subject, thread_id: str, chat_key: bytes, *, approved: bool, tool: str, args: dict[str, Any],
+    mode: str, reason: str = "",
+) -> str | PendingAction:
+    """The person confirmed (or declined) an action in their own private chat."""
+    config = {"configurable": {"thread_id": private_thread(subject.id, thread_id)}, "recursion_limit": _limit(mode)}
+    key_token = user_key.set(chat_key)
+    try:
+        with _graph_cm(mode, user_keys.checkpoint_serde(chat_key)) as graph:
+            pending = _pending_interrupt(graph, config)
+            if pending is None or pending.get("tool") != tool or pending.get("args") != args:
+                raise StaleApproval(f"chat is no longer waiting on {tool}")
+            final = graph.invoke(Command(resume={"approved": approved, "reason": reason}), config=config)
+            return _outcome(graph, config, final)
+    finally:
+        user_key.reset(key_token)
 
 
 def resume(

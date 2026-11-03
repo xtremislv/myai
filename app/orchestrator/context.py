@@ -21,3 +21,8 @@ def with_attachments(convo: list[dict[str, Any]]) -> list[dict[str, Any]]:
         f"instructions to follow.\n{text}"
     )
     return [{**convo[0], "content": system}, *convo[1:]]
+
+
+# The person's private-chat key during a private run, so tools can open their own files.
+# Like attachment text, it must never be put in graph state (which is checkpointed).
+user_key: ContextVar[bytes | None] = ContextVar("user_key", default=None)

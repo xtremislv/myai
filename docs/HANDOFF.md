@@ -27,6 +27,14 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   has its own browser session per person, separate from work. Queries do leave the server (to Bing, or to Tavily/
   Serper if a key is set); results are stored only inside the encrypted chat.
 
+- **Private chat also gets the person's OWN mailbox, files and reminders** (owner, 2026-11-03, second decision
+  that day): personal mail category only, "My files" encrypted with their key, their own reminders. Company data
+  still never enters private chat. Agents create, edit, move and restore files freely (old versions kept);
+  **deleting a file needs a go-ahead**, like sending mail. In private chat the person confirms for themselves.
+- **Reminders reach people in the app (bell + browser pop-up) and by email if they choose; a morning mail digest
+  is opt-in per person** (owner, 2026-11-03).
+- **Server alerts go to the admin's in-app bell** (owner, 2026-11-03), not email or chat services.
+
 ## This server (found 2026-11-02)
 - **It is a container, not a VM** (vast.ai behind aiccloud.in): no `docker` command and no `CAP_SYS_ADMIN`, so
   `docker compose` can't run here. Run services directly: vLLM via `scripts/run_vllm.sh`
@@ -93,6 +101,50 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - Playwright (Chromium headless shell) is installed in `.venv` and `~/.cache/ms-playwright`. After a rebuild:
   `.venv/bin/playwright install --with-deps chromium`. After changing `packs.py`: `python -m scripts.seed_departments`.
 
+## Files, mail summaries, reminders, alerts (2026-11-03, later)
+- **Tools** (all departments and private chat): `list_files, read_file, write_file, append_file, edit_file,
+  move_file, copy_file, delete_file, restore_file`; `set_reminder, list_reminders, cancel_reminder`;
+  `summarize_mail` (reads up to 20 emails in full and returns gist / action / deadline per email, via
+  `app/mail/summary.py`, batches of 4). New specialists: `files` and `organizer`; `mail` got summarize and reminders.
+- **Private files** (`app/storage/userfiles.py`, table `user_files`): path and every version encrypted with the
+  person's chat key; MinIO keys `userfiles/<owner>/<id>/<version>`; 5 versions; trash 7 days; 500 MB each.
+  **Work files** (`app/storage/deptfiles.py`): ObjectStore + ACL, default folder `shared/<department>/` (grants
+  added per department), undo copies in `_versions/` kept 30 days. Verified encrypted at rest in real MinIO.
+- **Confirmations in private chat:** `/v1/chat` returns `outcome: "confirm"`; the UI shows a card with the exact
+  email or file; `POST /v1/chat/threads/<id>/confirm`. Read from the checkpoint's pending writes
+  (`execution.private_pending`), resumed with the person's key (`resume_private`). Verified live with Gemma.
+- **Reminders/notifications** (`app/reminders/`, tables `reminders`, `notifications`): text encrypted with the
+  vault notes key. `scripts/scheduler.py` (started by `start_native.sh`) delivers due reminders every 30 s, runs
+  digests every 5 min for people whose hour has come, and cleans up hourly. Time words are parsed in
+  `when.py` in the person's timezone (prefs, default Asia/Kolkata).
+- **Mail digest** (`digest.py`): opt-in hour under My account; reads unread mail since the last digest, summarizes,
+  sets one reminder per deadline (deduplicated by Message-ID), optional email copy. **Not tested against a real
+  mailbox**: no test mailbox exists here. Note this network cuts TLS to Google, so Gmail IMAP may be unreachable.
+- **Personal mailbox setup** is self-service (`PUT /v1/me/mailbox`, tested login, `mail/personal/<id>` in the
+  vault). Servers must be public addresses on 993 / 465 / 587 (SSRF guard). The admin can no longer read, change
+  or list `mail/personal/*` or `system/*` secrets (ACL deny + Credentials API refuses them).
+- **ACL change:** a `$self` allow now beats a role deny on the person's own data, so the admin can use their own
+  personal mail (the admin's deny on `mail:personal/*` used to block that too).
+- **Leak guard:** after a conversation reads mail or files, web tools refuse URLs with >100 characters of query
+  data, URLs over 300 characters, and searches or typed text over 150 characters (`_leaks` in tools.py). This is a
+  partial defence against prompt-injected exfiltration, not a proof.
+- **Alerts:** Prometheus -> `POST /v1/ops/alerts/api/v2/alerts` (bearer `ALERT_WEBHOOK_TOKEN`) -> admin bell, once
+  when firing and once when resolved (`ops_alerts`). New rules DiskAlmostFull/DiskFull on `host_disk_free_ratio`.
+  Verified end to end on this server.
+- **Erase a person's data:** Users page > Erase data (`POST /v1/auth/users/<id>/erase`, `app/privacy.py`): chats,
+  attachments, files, reminders, notifications, mailbox login, their work requests; optionally the account.
+  NSFW reports and the audit log are kept.
+- **Vault key rotation:** `scripts/rotate_vault_key.py` (stop gateway + scheduler first). Not run on this server.
+- **Context 16k:** `VLLM_MAX_MODEL_LEN=16384`; KV cache 280k tokens (17 full-length chats). Pages are clipped at
+  6,000 characters and older tool results at 800. Load test (`scripts/load_test.py`, ~1.5k-token prompts):
+  1 chat 73 tok/s; 4 at once 39 tok/s each; 8: 25; 16: 15 (215 tok/s total), first word under 0.6 s. An 8k-token
+  prompt takes ~7.6 s to the first word (prefill on Turing).
+- **Triage** now keeps "my files / my mail / remind me" private and sends team/department files and reminders for
+  others to work. Eval: 65 cases x 3 runs x 2 personas = 390/390 correct, 0 personal sorted as work.
+- **Backups natively:** `backup.sh` / `restore.sh` detect no-Docker hosts; `restore.sh --verify` restores into a
+  scratch database and folder and checks them. Verified on this server (8 users, 342 checkpoints, migration 0006).
+  `backup.sh` used to `source .env`, which broke on `VLLM_EXTRA_ARGS`; it now reads KEY=value lines.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.
@@ -101,9 +153,11 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
    `vllm:kv_cache_usage_perc`; the dashboard and the GpuCacheFull alert now use the new name.
 3. **MinIO image.** Docker Hub returned nothing for `minio/minio`, so compose uses the tag from MinIO's own compose
    file on quay.io. Quay needed auth to confirm the tag: check that it pulls and that `mc ready local` works.
-4. **Attachments and retention against real MinIO.** Only fake storage has been used.
-5. **`scripts/backup.sh` and `scripts/restore.sh` with real Docker.** They were tested with fake `docker` and `rclone`
-   commands. Do a real restore test.
+4. ~~**Attachments and retention against real MinIO.**~~ Attachments and personal files verified against real
+   MinIO (2026-11-03): round trip works, nothing readable at rest. Retention purge still only tested with fakes.
+5. **`scripts/backup.sh` and `scripts/restore.sh` with real Docker.** Natively verified with `restore.sh --verify`
+   (2026-11-03). The Docker path is still only tested with fake `docker` and `rclone`. A full (non-verify) native
+   restore has not been run, since it replaces live data.
 6. **Does vLLM log prompts?** In 0.32.0 `--enable-log-requests` defaults to off, and `scripts/run_vllm.sh` refuses
    it. Still confirm in the vLLM log after a chat.
 7. ~~**`role: tool` messages.**~~ Fixed 2026-11-02. Gemma 4's template silently dropped them, so the model never saw
@@ -113,15 +167,22 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 ## Then do these
 1. Get the weights. The model id is now `google/gemma-4-26B-A4B-it`. The card is a Quadro RTX 8000 (48 GB, Turing,
    driver 580, CUDA 13.0): no FP8 and no bf16, so use AWQ or GPTQ INT4 weights with `--dtype half`.
-2. Benchmark, and tune `--max-model-len`, `--max-num-seqs`, and `max_concurrency` in `app/departments/packs.py`.
+2. ~~Benchmark and tune.~~ Done 2026-11-03: 16k context, numbers above. `--max-num-seqs 16` and the private-chat
+   limits (2 per person, 16 total) fit the measured throughput.
 3. ~~**Test triage accuracy with the real model.**~~ Done 2026-11-02 with `scripts/eval_triage.py` (54 labelled
    cases in `tests/eval/triage_cases.jsonl`, 3 runs, admin and logistics+research personas): 324/324 correct, and
    0/180 personal messages sorted as work, including 78 that use work words ("my bill", "order a pizza"). Triage
    now lists every department and marks the ones a person isn't in, so their requests name the real owner and the
    Request Manager refuses them, instead of landing in a department they have. The set is small and hand-written:
    add real misroutes to it as they appear, and re-run after any prompt or model change.
-4. Real TLS and DNS, load test, security review.
-5. Alert notifications: rules exist in `deploy/prometheus-rules.yml`, but nothing sends them. Add a Grafana contact point.
+4. Real TLS and DNS (needs a domain from the owner). Load test done (above). Security review of the new code done
+   2026-11-03 (SSRF guard on personal mailboxes, admin kept out of personal mail logins, leak guard, `pip-audit`
+   clean); a full external review of the live deploy is still open.
+5. ~~Alert notifications.~~ Done: Prometheus -> gateway -> admin bell. Email/chat delivery would need an SMTP or
+   webhook target from the owner.
+6. Connect a real mailbox to test summarize_mail and the digest end to end (and check whether this network reaches
+   the provider's IMAP; Gmail may be cut like Google's other sites).
+7. Add a Tavily or Serper key (Credentials page) for good web search.
 
 ## Known limits
 - Payment, SMS and ERP tools are stubs until vendor accounts exist. Mail is real once its vault secret exists.
@@ -130,7 +191,10 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - A request already waiting for approval keeps the roles its requester had when they asked.
 - SQLAlchemy 2.1 is newer than the OpenTelemetry instrumentor supports, so database spans are skipped and it logs one
   error at startup.
-- No way yet to delete a user's data on request, and no script for rotating the vault master key.
+- Department mailboxes (finance, careers, contact) have no automatic digest; only personal mailboxes do. Agents can
+  still summarize any mailbox they're allowed on request.
+- Reminders are per person: there is no "remind the whole team" yet (logistics' `send_notification` is a stub).
+- The in-app bell polls once a minute; browser pop-ups appear only while the app is open in a tab.
 - `docs/PROGRESS_AND_ROADMAP.md` is historical. This file is the current state.
 
 ## Working here

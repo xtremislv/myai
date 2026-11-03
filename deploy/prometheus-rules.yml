@@ -1,5 +1,6 @@
-# Alerts show in Prometheus (Alerts tab) and in Grafana. Nothing sends them anywhere yet:
-# to get email or chat notifications, add a contact point in Grafana.
+# Alerts show in Prometheus (Alerts tab) and in Grafana. Natively, Prometheus also sends them to
+# the gateway (deploy/native/prometheus.yml, `alerting`), which shows them under the admin's bell
+# in the web UI. GatewayDown can't reach the admin that way: check Grafana for it.
 groups:
   - name: availability
     rules:
@@ -48,6 +49,21 @@ groups:
           severity: warning
         annotations:
           summary: 'The {{ $labels.department }} department keeps hitting its request limit.'
+
+      - alert: DiskAlmostFull
+        expr: min(host_disk_free_ratio) < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Less than 10% of the disk is free. Clear caches or old logs before it fills up.
+      - alert: DiskFull
+        expr: min(host_disk_free_ratio) < 0.03
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The disk is about to fill up. Uploads, the database and logging will start failing.
 
   - name: security
     rules:

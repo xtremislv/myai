@@ -136,11 +136,14 @@ def test_departments_get_the_right_specialists():
     def team(dept):
         return set(specialists.available({"scratchpad": {"department": dept}}))
 
-    assert team("researcher") == {"research", "browser"}
-    assert team("account") >= {"research", "browser", "mail", "booking", "operations"}
+    everyone = {"files", "organizer"}  # every department has files and reminders
+    assert team("researcher") == {"research", "browser"} | everyone
+    assert team("account") >= {"research", "browser", "mail", "booking", "operations"} | everyone
     assert "browser_commit" not in tools_mod.tools_for("researcher")
-    assert team("hr") == {"mail", "operations"}
-    assert team("logistics") == {"research", "operations"}
+    assert team("hr") == {"mail", "operations"} | everyone
+    assert team("logistics") == {"research", "operations"} | everyone
+    # Private chat: web, the person's own mail, files and reminders; nothing that books.
+    assert team(None) == {"research", "browser", "mail"} | everyone
 
 
 def test_old_tool_results_are_shortened_but_the_latest_round_is_whole():
@@ -152,7 +155,7 @@ def test_old_tool_results_are_shortened_but_the_latest_round_is_whole():
         {"role": "tool", "content": long},
     ]
     out = nodes.compact_tool_results(msgs)
-    assert len(out[1]["content"]) < 500 and out[3]["content"] == long
+    assert len(out[1]["content"]) < nodes.OLD_RESULT_CHARS + 50 and out[3]["content"] == long
 
 
 # ---- the graph ----

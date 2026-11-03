@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # Bing market for search and news, e.g. en-IN, en-US.
     search_market: str = "en-IN"
     # Most characters of one page or tool result handed to the model (the context is small).
-    web_max_chars: int = 3500
+    web_max_chars: int = 6000
     # Headless Chromium sessions: one per person, closed after this many idle seconds.
     browser_max_sessions: int = 6
     browser_idle_seconds: int = 600
@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     # A separate port that is never published, so metrics can't be reached from the internet.
     metrics_port: int = 9100
+
+    # --- Ops alerts: Prometheus posts to /v1/ops/alerts/api/v2/alerts with this bearer token ---
+    alert_webhook_token: str = ""
 
     # --- GPU fairness: private chat replies in progress ---
     private_max_per_user: int = 2

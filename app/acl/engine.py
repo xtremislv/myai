@@ -2,7 +2,8 @@
 
 Rules:
   * deny-by-default
-  * explicit DENY overrides any ALLOW
+  * explicit DENY overrides any ALLOW, except that an owner ($self) allow on the subject's own
+    data beats a role's deny
   * a policy matches when subject ∈ principals, action matches (exact or '*'),
     and resource matches (exact or glob prefix 'type:prefix*')
 Every decision is audit-logged and traced.
@@ -55,6 +56,13 @@ class ACLEngine:
             ]
             denied = [r for r in matched if r.effect == Effect.DENY.value]
             allowed = [r for r in matched if r.effect == Effect.ALLOW.value]
+            # A person's own data ($self allow, e.g. mail:personal/<their id>/...) stays theirs
+            # even when a role denies that kind of data: the admin's deny on personal mail keeps
+            # the admin out of everyone else's mail, not their own. A $self deny still wins.
+            if denied and any(r.subject == "$self" for r in allowed) and not any(
+                r.subject == "$self" for r in denied
+            ):
+                denied = []
 
             if denied:
                 decision = Decision(False, f"explicit deny by policy {denied[0].id}")

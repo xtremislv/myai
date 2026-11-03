@@ -44,6 +44,7 @@ status() {
   up vllm "curl -sf http://127.0.0.1:8001/v1/models"
   up gateway "curl -sf http://127.0.0.1:8000/healthz"
   up retention "alive retention"
+  up scheduler "alive scheduler"
   up loki "curl -sf http://127.0.0.1:3100/ready"
   up alloy "curl -sf http://127.0.0.1:12345/-/ready"
   up prometheus "curl -sf http://127.0.0.1:9090/-/ready"
@@ -74,6 +75,8 @@ fi
 
 # Monitoring first, so the gateway's logs have somewhere to go from its first line.
 mkdir -p /var/lib/loki /var/lib/prometheus/native /var/lib/alloy
+# Prometheus sends alerts to the gateway with this token (deploy/native/prometheus.yml).
+( umask 077; printf '%s' "$(env_value ALERT_WEBHOOK_TOKEN)" > /var/lib/prometheus/alert-token )
 start_bg loki loki -config.file="$ROOT/deploy/native/loki.yaml"
 start_bg alloy alloy run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/alloy \
   --disable-reporting "$ROOT/deploy/native/alloy.alloy"
@@ -100,6 +103,9 @@ fi
 
 # Deletes chat attachments after 3 days, hourly, like the compose "retention" service.
 PY="$PY" start_bg retention bash -c 'while true; do "$PY" -m scripts.purge_history || echo purge failed; sleep 3600; done'
+
+# Reminders, morning mail digests, and cleanup of trash and undo copies (scripts/scheduler.py).
+start_bg scheduler "$PY" -m scripts.scheduler
 
 # Public access through Cloudflare quick tunnels: no domain or account, outbound only, no open
 # ports. Each address is random and changes when its tunnel restarts (see `status`).

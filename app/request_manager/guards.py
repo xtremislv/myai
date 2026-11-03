@@ -81,18 +81,23 @@ TRIAGE_PROMPT = (
     'Otherwise "none", including asking about laws, reporting or discussing a crime, news, '
     "and medical or educational questions.\n\n"
     'route: "work" only if it clearly asks to use or change company data or systems: look up '
-    "or update company records, orders, bills, inventory, shipments, company mail or research "
+    "or update company records, orders, bills, inventory, shipments, a company or department "
+    "mailbox (finance, careers, contact), research files, or the team's or department's shared "
     "files, or research, browse websites or book something on the company's behalf. "
     'Otherwise "private": questions, writing help, advice, personal matters, general '
-    'knowledge. If you are unsure, choose "private".\n\n'
+    "knowledge, and the person's OWN things: their own files, notes and lists, their own "
+    "email inbox, and reminders for themselves (\"remind me...\", \"my files\", \"my mail\", "
+    "\"save a note\", \"create a file\" with no team or department named are all private). "
+    "Reminders or notifications for a team, the warehouse, staff or other people are work. "
+    'If you are unsure, choose "private".\n\n'
     "department: for work, the department that owns that data or system, from this list, otherwise "
     "null. Choose the owner even if it is marked not available to this person: never substitute "
     "a different department.\n{departments}\n\n"
     'action: "order" to buy or order products, "service" to book or subscribe to a service, '
     '"bill" to pay or record a bill or invoice, otherwise "none". Asking how these work is '
     '"none".\n\n'
-    'steps: "many" if it needs planning, several sources, using websites, booking, or working through '
-    'a mailbox, otherwise "one".\n\n'
+    'steps: "many" if it needs planning, several sources, using websites, booking, working through '
+    'a mailbox, or several file changes, otherwise "one".\n\n'
     'Reply with ONLY JSON: {{"safety": "...", "route": "...", "department": "...", '
     '"action": "...", "steps": "..."}}'
 )

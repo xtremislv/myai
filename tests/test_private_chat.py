@@ -144,7 +144,7 @@ def test_department_work_cannot_load_a_private_conversation(client, prompts):
     assert "DEPARTMENT NOTE" not in _sent(prompts[-1])
 
 
-def test_chat_has_no_tools_even_for_admin(client, prompts, monkeypatch):
+def test_private_chat_has_no_company_tools_even_for_admin(client, prompts, monkeypatch):
     prompts.replies = [json.dumps({"tool": "get_secret", "args": {"name": "x"}}), "ok"]
     monkeypatch.setitem(tools.TOOLS, "get_secret", lambda state, name: pytest.fail("tool ran"))
     assert _chat(client, "show the secret", headers=ADMIN).json()["reply"] == "ok"

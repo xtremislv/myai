@@ -15,7 +15,15 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from app import health
-from app.api import routes_admin, routes_auth, routes_chat, routes_dashboard, routes_request
+from app.api import (
+    routes_admin,
+    routes_auth,
+    routes_chat,
+    routes_dashboard,
+    routes_me,
+    routes_ops,
+    routes_request,
+)
 from app.config import get_settings, validate_secrets
 from app.db.session import engine, init_db
 from app.observability import setup_log_export, setup_logging, setup_tracing, start_metrics_server
@@ -60,6 +68,8 @@ app.include_router(routes_chat.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_request.router)
 app.include_router(routes_dashboard.router)
+app.include_router(routes_me.router)
+app.include_router(routes_ops.router)
 app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="ui")
 
 

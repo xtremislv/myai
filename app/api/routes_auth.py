@@ -294,3 +294,25 @@ def reset_password(
     user.chat_key_salt = user.chat_key_nonce = user.wrapped_chat_key = None
     session.commit()
     return _user_out(user)
+
+
+class EraseIn(BaseModel):
+    delete_account: bool = False
+    confirm_username: str  # typed by the admin, so a slip can't erase the wrong person
+
+
+@router.post("/users/{user_id}/erase")
+def erase_user_data(
+    user_id: str,
+    body: EraseIn,
+    session: Session = Depends(get_session),
+    admin: Subject = Depends(require_admin),
+) -> dict:
+    """Delete everything stored for a person, on their request (see app/privacy.py). This
+    cannot be undone. NSFW reports and the audit log are kept."""
+    from app.privacy import erase_user
+
+    user = _other_user(session, user_id, admin)
+    if body.confirm_username != user.username:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "type the user's exact username to confirm")
+    return erase_user(session, user_id, delete_account=body.delete_account)

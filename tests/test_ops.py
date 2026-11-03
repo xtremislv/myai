@@ -207,7 +207,7 @@ def test_alert_rules_only_use_metrics_that_exist():
     for alert in alerts:
         assert alert["annotations"]["summary"], alert["alert"]
         used = set(re.findall(r"(?<![\w:])([a-z_]+(?::[a-z_]+)?)(?=[\[{\s)]|$)", alert["expr"]))
-        used = {u for u in used if u.endswith(("_total", "_bucket")) or ":" in u or u == "up"}
+        used = {u for u in used if u.endswith(("_total", "_bucket", "_ratio")) or ":" in u or u == "up"}
         assert used and used <= known | external, (alert["alert"], used - known - external)
 
 

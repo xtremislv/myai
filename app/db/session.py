@@ -56,6 +56,9 @@ class User(Base):
     recovery_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     recovery_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     wrapped_recovery_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Personal settings: timezone, email address, daily mail digest hour, email copies.
+    prefs: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    last_digest_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -186,6 +189,79 @@ class ChatThread(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class UserFile(Base):
+    """A file in a person's own "My files" area.
+
+    The path is encrypted with the owner's chat key, and so is every stored version of the
+    content (MinIO key userfiles/<owner>/<id>/<version>), so only the owner can open them.
+    `versions` lists the kept versions, newest last: [{"v", "size", "at"}]. A deleted file
+    stays in the trash (deleted_at) for a while so it can be restored.
+    """
+
+    __tablename__ = "user_files"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    encrypted_path: Mapped[str] = mapped_column(Text)
+    content_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(default=0)
+    version: Mapped[int] = mapped_column(default=1)
+    versions: Mapped[list] = mapped_column(JSON, default=list)
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Reminder(Base):
+    """A reminder for one person. The text is encrypted with the server's notes key
+    (app/vault/notes.py): it must be readable when it falls due, without the person's key."""
+
+    __tablename__ = "reminders"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    encrypted_text: Mapped[str] = mapped_column(Text)
+    due_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    repeat: Mapped[str] = mapped_column(String(16), default="none")  # none|daily|weekdays|weekly|monthly
+    email: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
+    source: Mapped[str] = mapped_column(String(16), default="chat")  # chat|mail|app
+    # For reminders made from an email: a hash of its Message-ID, so a digest never adds it twice.
+    source_ref: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    state: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|sent|cancelled
+    sent_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Notification(Base):
+    """Something to show a person under the bell: a due reminder, a mail digest, an alert.
+    Title and body are encrypted with the server's notes key."""
+
+    __tablename__ = "notifications"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # reminder|digest|alert|mail
+    encrypted_title: Mapped[str] = mapped_column(Text)
+    encrypted_body: Mapped[str] = mapped_column(Text, default="")
+    read_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class OpsAlert(Base):
+    """A Prometheus alert as last reported, so each one notifies the admin once when it
+    starts and once when it resolves, however often Prometheus resends it."""
+
+    __tablename__ = "ops_alerts"
+    fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    severity: Mapped[str] = mapped_column(String(32), default="")
+    summary: Mapped[str] = mapped_column(String(512), default="")
+    state: Mapped[str] = mapped_column(String(16), default="firing")  # firing|resolved
+    started_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AuditLog(Base):

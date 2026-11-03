@@ -40,10 +40,22 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   no third-party assets. The token stays in JS memory because it can open private chats.
 - `tests/test_postgres.py` runs only with `POSTGRES_INTEGRATION=1` and a throwaway `POSTGRES_DSN`.
 - `/v1/chat` is the one chat box. `guards.triage` sorts each message, defaulting to private. Private messages
-  have read-only web tools only (`PRIVATE_TOOLS`), no logging or audit of content; only content flagged as explicit or illegal leaves them,
+  have `PRIVATE_TOOLS`: read-only web, plus the person's OWN mailbox (personal category only), files and
+  reminders; no logging or audit of content; only content flagged as explicit or illegal leaves them,
   reported to hr + admin. Work runs through the Request Manager, apart from the encrypted chat because an
   approver must resume it without the user's key. There is one admin, whose finance activity as work is
   reported to accounts (`guards.notify_accounts`). A user's `roles` can hold several departments.
+- Personal files (`app/storage/userfiles.py`) are encrypted with the person's chat key, which tools get from
+  the `user_key` context var (`app/orchestrator/context.py`) during a private run, never from state. Work file
+  tools use `app/storage/deptfiles.py` (ACL-checked, `shared/<department>/` by default, undo copies in `_versions/`).
+- `ALWAYS_CRITICAL` in `packs.py` (`send_mail`, `delete_file`, `browser_commit`) pauses in every department and
+  in private chat. In private chat the person confirms for themselves (`/v1/chat/threads/<id>/confirm`,
+  `execution.resume_private`); a new message instead of confirming declines it.
+- Reminders and notifications (`app/reminders/`) are encrypted with the notes key in the vault
+  (`app/vault/notes.py`), because the scheduler (`scripts/scheduler.py`) must read them while the owner is away.
+- Mailboxes a person configures are `guarded`: public addresses on mail ports only (`connector.check_servers`).
+- Once a conversation has read mail or files, web tools refuse long URLs/queries (`_leaks` in `tools.py`).
+- After changing the triage prompt, run `scripts/eval_triage.py` (cases in `tests/eval/triage_cases.jsonl`).
 
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing

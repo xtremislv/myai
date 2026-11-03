@@ -19,6 +19,10 @@ Resource type conventions (urn = "type:id"):
   web:commit                 browser buttons that book/pay/send -> account (every call needs approval)
   mail:<category>/* write    send mail / mark read    -> the box's department; personal: owner
   notification:* / reminder:*  notifications/reminders -> logistics
+  reminder:<owner>/*         a person's own reminders  -> owner ($self)
+  files:<owner>/*            a person's own files      -> owner ($self); encrypted with their key
+  shared:<department>/*      a department's shared files -> that department (delete needs approval)
+  secret:mail/personal/*, secret:system/*  -> never the admin (people's mail logins, server keys)
   report:nsfw/*              NSFW reports             -> hr, admin
 
 Owner-based access is modeled with the special subject "$self" and a "{owner}"
@@ -29,15 +33,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-MAIL_TOOLS = ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail")
+MAIL_TOOLS = ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail", "summarize_mail")
 LOOKUP_TOOLS = ("web_search", "news_search", "fetch_page", "scrape_page", "weather")
 BROWSE_TOOLS = (
     "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",
     "browser_scroll", "browser_back",
 )
-# Private chat (no department): read-only web access. Owner's decision, 2026-11-03. Nothing that
-# commits (no browser_commit), and no company data or mail.
-PRIVATE_TOOLS = (*LOOKUP_TOOLS, *BROWSE_TOOLS)
+# Files: in private chat the person's own encrypted "My files"; at work the department's shared
+# folder (shared/<department>/) and the data areas its grants reach. delete_file needs approval.
+FILE_TOOLS = (
+    "list_files", "read_file", "write_file", "append_file", "edit_file", "move_file", "copy_file",
+    "delete_file", "restore_file",
+)
+REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
+# Private chat (no department), owner's decisions of 2026-11-03: read-only web access, plus the
+# person's OWN mailbox (personal category only; sending needs their confirmation), their own
+# files and reminders. Nothing that commits on the web (no browser_commit), no company data.
+PRIVATE_TOOLS = (*LOOKUP_TOOLS, *BROWSE_TOOLS, *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS)
+# Tools that need a person's go-ahead in every department and in private chat (where the person
+# confirms for themselves).
+ALWAYS_CRITICAL = ("send_mail", "delete_file", "browser_commit")
 
 
 @dataclass(frozen=True)
@@ -73,11 +88,12 @@ ACCOUNT = DepartmentSpec(
         Grant("payment:*", ("read", "write", "list")),
         Grant("inventory:*", ("read", "list")),
         Grant("web:*", ("read", "write")),
+        Grant("shared:account/*", ("read", "write", "list", "delete")),
     ),
     tools=(
         "balance_lookup", *MAIL_TOOLS, "manage_order", "manage_bill",
         "initiate_payment", "book_service", "inventory_lookup",
-        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit",
+        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS,
     ),
     quota_per_min=60,
     max_concurrency=4,
@@ -100,8 +116,9 @@ HR = DepartmentSpec(
         Grant("mail:career/*", ("read", "list", "write")),
         Grant("report:nsfw/*", ("read", "list")),
         Grant("inventory:*", ("read", "list")),
+        Grant("shared:hr/*", ("read", "write", "list", "delete")),
     ),
-    tools=(*MAIL_TOOLS, "review_report"),
+    tools=(*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS),
 )
 
 LOGISTICS = DepartmentSpec(
@@ -114,10 +131,11 @@ LOGISTICS = DepartmentSpec(
         Grant("reminder:*", ("write",)),
         Grant("web:search", ("read",)),
         Grant("web:fetch", ("read",)),
+        Grant("shared:logistics/*", ("read", "write", "list", "delete")),
     ),
     tools=(
-        "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification", "set_reminder",
-        *LOOKUP_TOOLS,
+        "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification",
+        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS,
     ),
     quota_per_min=120,
     max_concurrency=6,
@@ -127,12 +145,15 @@ RESEARCHER = DepartmentSpec(
     name="researcher",
     description="Research: information gathering, synthesis, reports.",
     grants=(
-        Grant("research:*", ("read", "write", "list")),
+        Grant("research:*", ("read", "write", "list", "delete")),
         Grant("reports:*", ("read", "list")),
         Grant("web:*", ("read",)),
         Grant("inventory:*", ("read", "list")),
+        Grant("shared:researcher/*", ("read", "write", "list", "delete")),
     ),
-    tools=("read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize"),
+    tools=(
+        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS,
+    ),
     quota_per_min=120,
     max_concurrency=6,
 )
@@ -142,8 +163,9 @@ SUPERUSER = DepartmentSpec(
     description="Power user: manage inventory; read non-sensitive data.",
     grants=(
         Grant("inventory:*", ("read", "write", "list")),
+        Grant("shared:superuser/*", ("read", "write", "list", "delete")),
     ),
-    tools=("inventory_lookup", "inventory_adjust"),
+    tools=("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS),
     quota_per_min=120,
     max_concurrency=6,
 )
@@ -156,6 +178,8 @@ ADMIN = DepartmentSpec(
         Grant("chat_history:*", ("*",), effect="deny"),      # ...except history
         Grant("personal_info:*", ("*",), effect="deny"),     # ...and personal info
         Grant("mail:personal/*", ("*",), effect="deny"),     # ...and personal mail
+        Grant("secret:mail/personal/*", ("*",), effect="deny"),  # ...and people's mailbox logins
+        Grant("secret:system/*", ("*",), effect="deny"),     # ...and the server's own keys
     ),
     tools=("*",),
     quota_per_min=600,
@@ -184,6 +208,8 @@ SELF = DepartmentSpec(
         Grant("personal_info:{owner}/*", ("read", "write", "list"), subject="$self"),
         Grant("mail:personal/{owner}/*", ("read", "list", "write"), subject="$self"),
         Grant("chat_history:{owner}/*", ("read", "list", "delete"), subject="$self"),
+        Grant("files:{owner}/*", ("read", "write", "list", "delete"), subject="$self"),
+        Grant("reminder:{owner}/*", ("read", "write", "list", "delete"), subject="$self"),
     ),
     tools=(),
 )
@@ -204,7 +230,7 @@ def critical_tools() -> frozenset[str]:
         for spec in DEFAULT_DEPARTMENTS
         for c in spec.critical_resources
         if c.startswith(prefix)
-    )
+    ) | frozenset(ALWAYS_CRITICAL)
 
 
 # Tools whose use counts as finance activity. read_mail only counts for finance mail,
@@ -215,7 +241,7 @@ FINANCE_TOOLS = frozenset(
 
 
 def is_finance_call(tool: str, args: dict) -> bool:
-    if tool in ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail"):
+    if tool in MAIL_TOOLS:
         return args.get("category") == "finance"
     return tool in FINANCE_TOOLS
 

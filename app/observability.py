@@ -16,7 +16,7 @@ from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExp
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from prometheus_client import Counter, Histogram, start_http_server
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from pythonjsonlogger import jsonlogger
 
 from app.config import get_settings
@@ -36,6 +36,19 @@ rm_request_latency_seconds = Histogram("rm_request_latency_seconds", "RM end-to-
 rm_quota_rejections_total = Counter("rm_quota_rejections_total", "RM quota rejections", ["department"])
 rm_approvals_total = Counter("rm_approvals_total", "RM approvals by state", ["department", "state"])
 rm_critical_gated_total = Counter("rm_critical_gated_total", "RM critical requests gated", ["department"])
+
+# Free disk space, read at scrape time (the root disk here is small: weights, logs, MinIO).
+host_disk_free_ratio = Gauge("host_disk_free_ratio", "Fraction of the disk that is free", ["mount"])
+
+
+def _free_ratio(path: str) -> float:
+    import shutil
+
+    usage = shutil.disk_usage(path)
+    return usage.free / usage.total if usage.total else 0.0
+
+
+host_disk_free_ratio.labels(mount="/").set_function(lambda: _free_ratio("/"))
 
 tracer = trace.get_tracer(_settings.otel_service_name)
 

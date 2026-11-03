@@ -97,13 +97,18 @@ def real_acl(monkeypatch):
             return None if decision.allowed else f"ACCESS DENIED: {decision.reason}"
 
     monkeypatch.setattr(tools, "_enforce", _enforce)
+    monkeypatch.setattr(tools, "SessionLocal", Session)
 
 
 CALLS = [
     (tools.send_notification, ("warehouse", "hello"), "logistics"),
-    (tools.set_reminder, ("tomorrow", "check stock"), "logistics"),
     (tools.summarize, ("some text",), "researcher"),
 ]
+
+
+def test_everyone_may_set_their_own_reminders(real_acl):
+    for roles in ((), ("hr",), ("logistics",), ("admin",)):
+        assert tools.set_reminder(_state(*roles), "tomorrow 9am", "check stock").startswith("Reminder ")
 
 
 def _state(*roles):
@@ -139,9 +144,12 @@ def test_every_tool_has_an_acl_gate():
     import inspect
 
     # Shared helpers that run the ACL check for the tools that call them.
-    gates = ("_enforce(", "_subject(", "_mailbox(", "_browse(")
-    for helper in (tools._mailbox, tools._browse):
+    gates = ("_enforce(", "_subject(", "_mailbox(", "_browse(", "_my_files(", "_dept_files(", "_save(")
+    for helper in (tools._mailbox, tools._browse, tools._my_files):
         assert "_enforce(" in inspect.getsource(helper)
+    # Department files go through DeptFiles, which asks the ACL engine before every operation.
+    assert "ACLEngine(" in inspect.getsource(tools._dept_files)
+    assert "_my_files(" in inspect.getsource(tools._save) and "_dept_files(" in inspect.getsource(tools._save)
     for name, fn in tools.TOOLS.items():
         source = inspect.getsource(fn)
         assert any(g in source for g in gates), f"{name} has no ACL gate"

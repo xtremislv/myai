@@ -270,6 +270,20 @@ scripts/start_native.sh status     # prints both public addresses
 Dashboards: *AI Platform — LLM & ACL* and *AI Platform — Diagnostics & Logs*. Prometheus keeps 15 days (max 2 GB)
 and Loki 14 days of logs.
 
+**12. Background jobs, alerts, backups.** `start_native.sh` also runs `scripts/scheduler.py`: due reminders,
+morning mail digests, and cleanup of trashed files and undo copies. Prometheus sends its alerts to the gateway
+(`alerting` in `deploy/native/prometheus.yml`, token `ALERT_WEBHOOK_TOKEN` in `.env`), and they appear under
+the admin's *Notifications*. `GatewayDown` can't arrive that way: check Grafana for it.
+
+Backups work natively too: `scripts/backup.sh` dumps Postgres over `POSTGRES_DSN` and archives MinIO's folder.
+Prove a backup without touching live data with `scripts/restore.sh --verify <archive>` (restores into a scratch
+database and folder, checks them, deletes them). Set `BACKUP_DEST` to copy backups off the server.
+
+Rotate the vault master key with `scripts/rotate_vault_key.py` (stop the gateway and scheduler first; it
+explains itself with `--help`). Everyone is signed out; nothing stored is lost.
+
+`scripts/load_test.py` measures the model under 1-16 simultaneous chats.
+
 ### Browser for the agents
 The agents' headless browser needs Chromium and its system libraries:
 

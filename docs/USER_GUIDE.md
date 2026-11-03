@@ -116,7 +116,8 @@ You can belong to several departments, and the AI picks the one that fits each r
 
 This is a conversation between you and the AI. No user, department or admin has an API to read it,
 and it stays separate from your `/v1/request` conversations, even with the same `thread_id`. It has no
-access to department tools or data, so use `/v1/request` for work that needs them.
+access to department tools or data, so use `/v1/request` for work that needs them. It can use the web
+(read-only) and **your own** mailbox, files and reminders: see "Your mail, files and reminders" below.
 
 The text is encrypted in the database with a key only your password unlocks, and it is kept indefinitely.
 While a message is being answered, the server handles it unencrypted.
@@ -171,6 +172,45 @@ Continue the same conversation by reusing the `thread_id`:
 curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"thread_id":"alice-2026-10-31-1","mode":"team","message":"Now shorten that to five minutes."}'
 ```
+
+### Your mail, files and reminders
+
+In a private chat the assistant can work with things that are yours alone:
+
+- **Your mailbox.** Connect it under *My account > Mail and reminders* (IMAP on port 993, and SMTP on 465
+  or 587 to send; Gmail and Outlook need an app password). Then ask "what's new in my mail?", "anything I
+  need to reply to?", "summarize my unread email and remind me of deadlines". The assistant reads, searches
+  and marks mail, and drafts replies. **Sending always shows you the exact email with a Send button first.**
+  The login is stored in the vault; the admin can't see or change it.
+- **Your files** (*My files*). Upload files, or ask: "write a packing list to notes/trip.md", "add milk to my
+  groceries list", "rename it", "undo that change". Text, Markdown, CSV and JSON can be edited; PDFs can be
+  read. Files are encrypted with your key, so only you (and the assistant in your private chats) can open them.
+  Every change keeps the previous version (5 are kept), and `restore_file` / "undo" brings it back.
+  **Deleting asks you to confirm**, then the file sits in the trash for 7 days. Space: 500 MB per person.
+- **Reminders** (*Reminders*). "Remind me tomorrow at 9 to call the bank", "every weekday at 6pm remind me
+  to log my hours", "what reminders do I have?", "cancel the bank one". When one is due it appears under
+  *Notifications* (and as a browser pop-up if you allowed it), and by email if you asked for that.
+- **Morning mail digest.** Switch it on under *My account* and pick an hour. Each morning the assistant reads
+  your new mail, sends you a summary (urgent and actionable mail first, newsletters folded into one line),
+  and sets a reminder for each deadline it finds: the morning before a date, or an hour before a time.
+
+At work (`/v1/request`, or chat messages sorted as work) the same file tools act on your department's shared
+folder (`shared/<department>/`, plus areas like `research/` your department can reach), deleting needs an
+approver, and reminders you set go to you.
+
+Reminder and notification text is encrypted with a server key in the vault (not your personal key), because
+the server must read a reminder when it falls due while you're signed out.
+
+```bash
+curl -s $BASE/v1/reminders -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"when":"tomorrow 9am","text":"Call the bank","repeat":"none","email":false}'
+curl -s $BASE/v1/reminders -H "authorization: Bearer $TOKEN"                 # waiting reminders
+curl -s $BASE/v1/notifications?unread_only=true -H "authorization: Bearer $TOKEN"
+curl -s $BASE/v1/files -H "authorization: Bearer $TOKEN" -F folder=notes -F file=@todo.md   # upload
+```
+When a private reply needs your go-ahead, `/v1/chat` answers `"outcome":"confirm"` with a `confirm` object
+(the exact email or file). Answer with `POST /v1/chat/threads/<id>/confirm {"approve": true|false}`;
+`GET /v1/chat/threads/<id>/pending` shows it again. Sending a new message instead counts as "no".
 
 ### Python
 ```python

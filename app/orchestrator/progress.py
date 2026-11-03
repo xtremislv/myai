@@ -46,6 +46,18 @@ TOOL_STEPS = {
     "mark_mail": "Marking an email as {action}",
     "send_mail": "Sending an email to {to}",
     "summarize": "Summarizing",
+    "summarize_mail": "Reading and summarizing your {category} mail",
+    "list_reminders": "Checking your reminders",
+    "cancel_reminder": "Cancelling a reminder",
+    "list_files": "Listing files in {folder}",
+    "read_file": "Reading {path}",
+    "write_file": "Saving {path}",
+    "append_file": "Adding to {path}",
+    "edit_file": "Editing {path}",
+    "move_file": "Moving {path} to {new_path}",
+    "copy_file": "Copying {path} to {new_path}",
+    "delete_file": "Deleting {path}",
+    "restore_file": "Restoring {path}",
     "review_report": "Opening report {report_id}",
 }
 

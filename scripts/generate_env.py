@@ -38,7 +38,7 @@ LLM_BASE_URL=http://{host['vllm']}:8001/v1
 HUGGING_FACE_HUB_TOKEN={args.hf_token}
 # Local weights directory for scripts/run_vllm.sh (no Docker). Empty: download LLM_MODEL.
 VLLM_MODEL_PATH={model_path}
-VLLM_MAX_MODEL_LEN=8192
+VLLM_MAX_MODEL_LEN=16384
 VLLM_GPU_UTIL=0.90
 # Depends on the card and the weights. See docs/SERVER_SETUP.md, step 5. Turing cards
 # (Quadro RTX 8000) need --dtype half: vLLM refuses bfloat16 below compute capability 8.0.
@@ -52,6 +52,8 @@ GRAFANA_DOMAIN={args.grafana_domain}
 JWT_SECRET={secrets.token_urlsafe(48)}
 VAULT_MASTER_KEY={base64.b64encode(os.urandom(32)).decode()}
 GRAFANA_PASSWORD={_token()}
+# Prometheus sends alerts to the gateway with this token (shown under the admin's bell)
+ALERT_WEBHOOK_TOKEN={_token()}
 
 # Postgres
 POSTGRES_PASSWORD={postgres_password}

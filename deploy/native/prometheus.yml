@@ -3,6 +3,17 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Alerts go to the gateway, which shows them under the admin's bell (app/api/routes_ops.py).
+# start_native.sh writes ALERT_WEBHOOK_TOKEN from .env into the credentials file.
+alerting:
+  alertmanagers:
+    - api_version: v2
+      path_prefix: /v1/ops/alerts
+      static_configs:
+        - targets: ["127.0.0.1:8000"]
+      authorization:
+        credentials_file: /var/lib/prometheus/alert-token
+
 rule_files:
   - ../prometheus-rules.yml   # relative to this file
 

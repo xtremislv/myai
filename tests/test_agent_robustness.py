@@ -137,7 +137,7 @@ def real_acl(monkeypatch):
 
 
 def _read_mail(department, *args, subject="alice"):
-    state = {"subject_id": subject, "subject_roles": [department]}
+    state = {"subject_id": subject, "subject_roles": [department], "scratchpad": {"department": department}}
     return tools.read_mail(state, *args)
 
 
