@@ -93,6 +93,7 @@ _BLOCK_SIGNS = (
     "are you a robot", "captcha", "unusual traffic", "pardon our interruption", "bot detection",
     "enable javascript and cookies", "403 forbidden", "forbidden", "you don't have permission",
     "please complete the security check", "request unsuccessful", "incapsula", "cloudflare ray id",
+    "automated access to amazon data", "api-services-support@amazon.com", "robot check",
 )
 BLOCK_PAGE_MAX_CHARS = 1500
 
@@ -105,6 +106,8 @@ def block_reason(title: str, text: str) -> str | None:
     sign = next((s for s in _BLOCK_SIGNS if s in head), None)
     if sign:
         return sign
-    if title.strip().lower() in ("error", "") or title.lower().startswith(("error |", "error -", "403", "404")):
-        return f"an error page ('{title.strip() or 'no title'}')"
+    if title.strip().lower() == "error" or title.lower().startswith(("error |", "error -", "403", "404")):
+        return f"an error page ('{title.strip()}')"
+    if not title.strip() and len(text.strip()) < 150:
+        return "an empty page with no title"
     return None

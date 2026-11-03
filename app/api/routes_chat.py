@@ -43,6 +43,7 @@ from app.db.session import (
 )
 from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.orchestrator import execution
+from app.orchestrator.context import browser_request
 from app.orchestrator.execution import scoped_thread
 from app.orchestrator.progress import progress_sink, step
 from app.request_manager import approvals as approvals_store
@@ -91,7 +92,7 @@ class ConfirmIn(BaseModel):
 CONFIRM_TITLES = {
     "send_mail": "Send this email?",
     "delete_file": "Delete this file?",
-    "browser_commit": "Confirm this on the website?",
+    "browser_commit": "Go ahead on the website?",
 }
 
 
@@ -122,6 +123,8 @@ class ChatOut(BaseModel):
     task_id: str | None = None
     # A private action waiting on the person's own go-ahead (outcome "confirm").
     confirm: ConfirmOut | None = None
+    # The agent handed the browser to the person: {"scope", "reason"} (see routes_browser).
+    browser: dict | None = None
 
 
 class ThreadOut(BaseModel):
@@ -242,9 +245,11 @@ def chat(
     key: bytes = Depends(chat_key),
     session: Session = Depends(get_session),
 ) -> ChatOut:
+    handover: dict = {}
+    browser_request.set(handover)  # this request's context only
     mode, finished = _before_the_model(body, subject, key, session)
     if finished is not None:
-        return finished
+        return finished.model_copy(update={"browser": handover or None})
 
     context = attachments.context_for_thread(session, key, subject.id, body.thread_id)
     files = attachments.files_for_thread(session, key, subject.id, body.thread_id)
@@ -255,7 +260,7 @@ def chat(
         reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key,
                               attachments=context, files=files)
     _remember_thread(session, key, subject.id, body.thread_id, body.message)
-    return _private_reply(body.thread_id, mode, reply)
+    return _private_reply(body.thread_id, mode, reply).model_copy(update={"browser": handover or None})
 
 
 def _event(payload: dict) -> str:
@@ -283,6 +288,8 @@ def chat_stream(
     private reply arrive, then {"type":"done",...the ChatOut fields...} or {"type":"error",...}.
     Work replies arrive whole, after their steps."""
     # The request's own session closes once the response starts, so the work runs on its own.
+    handover: dict = {}
+    browser_request.set(handover)  # copied into the worker threads below, which fill it in
     bind = session.get_bind()
     release_connection(session)
     prepared: queue.Queue = queue.Queue()
@@ -312,12 +319,13 @@ def chat_stream(
             return
         mode, finished = event[1]
         if finished is not None:
-            yield _event({"type": "done", **finished.model_dump()})
+            yield _event({"type": "done", **finished.model_dump(), "browser": handover or None})
             return
 
         with Session(bind=bind) as own:
             context = attachments.context_for_thread(own, key, subject.id, body.thread_id)
             files = attachments.files_for_thread(own, key, subject.id, body.thread_id)
+        browser_request.set(handover)  # this generator may run in another thread's context
         with _private_slot(subject) as free:
             if not free:
                 yield _event({"type": "error", "detail": BUSY_MESSAGE})
@@ -337,7 +345,8 @@ def chat_stream(
                     reply = value
         with Session(bind=bind) as later:
             _remember_thread(later, key, subject.id, body.thread_id, body.message)
-        yield _event({"type": "done", **_private_reply(body.thread_id, mode, reply).model_dump()})
+        yield _event({"type": "done", **_private_reply(body.thread_id, mode, reply).model_dump(),
+                      "browser": handover or None})
 
     return _stream_response(events())
 
@@ -449,6 +458,8 @@ def thread_confirm(
     pending = execution.private_pending(subject, thread_id, key)
     if pending is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "nothing is waiting for your confirmation in this chat")
+    handover: dict = {}
+    browser_request.set(handover)
     with _private_slot(subject) as free:
         if not free:
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, BUSY_MESSAGE)
@@ -459,7 +470,8 @@ def thread_confirm(
             )
         except execution.StaleApproval as e:
             raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
-    return _private_reply(thread_id, pending["mode"], out)
+    reply = _private_reply(thread_id, pending["mode"], out)
+    return reply.model_copy(update={"browser": handover or None})
 
 
 @router.get("/threads/{thread_id}/requests", response_model=list[ChatRequestOut])

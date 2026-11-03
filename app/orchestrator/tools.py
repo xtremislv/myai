@@ -965,11 +965,13 @@ def web_search(state: dict[str, Any], query: str) -> str:
     return untrusted("web search results", _web_call(go))
 
 
-def news_search(state: dict[str, Any], query: str) -> str:
+def news_search(state: dict[str, Any], query: str, source: str = "") -> str:
     if (err := _enforce(state, "read", "web", "search")) is not None:
         return err
     if _leaks(state, text=query):
         return LEAK_REFUSAL
+    if source.strip():  # one outlet, e.g. moneycontrol.com
+        query = f"{query} site:{source.strip().removeprefix('https://').removeprefix('www.').split('/')[0]}"
     from app.browsing import search
 
     api = _search_api()
@@ -1070,6 +1072,50 @@ def scrape_page(state: dict[str, Any], url: str, what: str = "text", selector: s
     return untrusted(url, _web_call(go))
 
 
+def product_search(state: dict[str, Any], query: str, site: str = "") -> str:
+    """Products on shopping sites (Amazon, Flipkart; or site=croma / reliancedigital / all)."""
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    if _leaks(state, text=query):
+        return LEAK_REFUSAL
+    from app.browsing import products
+
+    wanted = site.strip().lower().replace(".in", "").replace(".com", "").replace("www.", "")
+    sites = tuple(products.SITES) if wanted == "all" else (wanted,) if wanted else products.DEFAULT_SITES
+
+    def go() -> str:
+        found, problems = products.search(query, sites)
+        lines = [f"{i}. {p.line()}" + (" (sponsored)" if p.extra.get("sponsored") else "") for i, p in enumerate(found, 1)]
+        note = ("\nNot available: " + "; ".join(problems)) if problems else ""
+        return ("\n".join(lines) or "No products found.") + note + (
+            "\nPrices and stock change: open a product with product_page before relying on it." if lines else "")
+
+    return untrusted("shopping search results", _web_call(go))
+
+
+def product_page(state: dict[str, Any], url: str) -> str:
+    """The facts of one product page: title, price, rating, availability, seller, key features."""
+    if (err := _enforce(state, "read", "web", "fetch")) is not None:
+        return err
+    if _leaks(state, url=url):
+        return LEAK_REFUSAL
+    from app.browsing import products
+    from app.browsing.netguard import check_url
+
+    def go() -> str:
+        check_url(url)
+        try:
+            facts = products.details(url)
+        except ValueError as e:
+            return f"ERROR: {e}"
+        lines = [f"{k}: {v}" for k, v in facts.items() if k != "features"]
+        if facts.get("features"):
+            lines.append("features:\n" + "\n".join(f"- {f}" for f in facts["features"]))
+        return "\n".join(lines)
+
+    return untrusted(url, _web_call(go))
+
+
 def scholar_search(state: dict[str, Any], query: str) -> str:
     """Research papers (arXiv, Crossref, PubMed): titles, authors, year, link and abstract."""
     if (err := _enforce(state, "read", "web", "search")) is not None:
@@ -1082,16 +1128,51 @@ def scholar_search(state: dict[str, Any], query: str) -> str:
 
 
 # ---- interactive browser: one isolated session per person ----
+def _browser_scope(state: dict[str, Any]) -> tuple[str, bytes | None]:
+    """(scope, key for saved logins): the department, or "private" with the person's own key.
+    Private chat gets its own browser session, so cookies never cross between private and work."""
+    from app.orchestrator.context import user_key
+
+    dept = (state.get("scratchpad") or {}).get("department")
+    return (dept, None) if dept else ("private", user_key.get())
+
+
 def _browse(state: dict[str, Any], action: str, method: str, *args) -> str:
-    if (err := _enforce(state, action, "web", "browse" if action == "read" else "commit")) is not None:
+    commit_resource = "commit" if (state.get("scratchpad") or {}).get("department") else "commit-private"
+    if (err := _enforce(state, action, "web", "browse" if action == "read" else commit_resource)) is not None:
         return err
+    from app.browsing import logins
     from app.browsing.browser import browser
 
     b = browser()
-    # Private chat gets its own browser session, so cookies never cross between private and work.
-    dept = (state.get("scratchpad") or {}).get("department")
-    key = f"{_subject(state).id}:{dept or 'private'}"
-    return untrusted("a web page", _web_call(lambda: b.call(getattr(b, method), key, *args)))
+    scope, key_for_logins = _browser_scope(state)
+    owner = _subject(state).id
+
+    def go() -> str:
+        key = logins.open_session(owner, scope, key_for_logins)  # with the person's saved logins
+        result = b.call(getattr(b, method), key, *args)
+        logins.persist(owner, scope, key_for_logins, force=action == "write")
+        return result
+
+    return untrusted("a web page", _web_call(go))
+
+
+def ask_person_to_browse(state: dict[str, Any], reason: str) -> str:
+    """Hand the browser to the person: they see it live in the chat and do what agents never do
+    (sign in, enter an OTP, card or UPI details, pick a payment method)."""
+    from app.orchestrator.context import browser_request
+
+    if (err := _enforce(state, "read", "web", "browse")) is not None:
+        return err
+    holder = browser_request.get()
+    scope, _ = _browser_scope(state)
+    if holder is None:
+        return ("Nobody is watching this run live, so the browser can't be handed over now. Stop and tell the "
+                "person what is needed: they can open the Browser panel in a chat to do it, then ask again.")
+    holder.update({"scope": scope, "reason": reason[:300]})
+    return ("The person now sees the live browser in the chat, with your note. Stop here: tell them in one or two "
+            "sentences what to do in it (for example sign in, enter the OTP, or choose how to pay) and to reply "
+            "'done' when finished. Don't call more browser tools in this turn.")
 
 
 def browser_open(state: dict[str, Any], url: str) -> str:
@@ -1187,6 +1268,9 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "fetch_page": fetch_page,
     "scrape_page": scrape_page,
     "scholar_search": scholar_search,
+    "product_search": product_search,
+    "product_page": product_page,
+    "ask_person_to_browse": ask_person_to_browse,
     "browser_open": browser_open,
     "browser_read": browser_read,
     "browser_click": browser_click,
@@ -1279,7 +1363,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                     "change.",
     "web_search": "Search the web. Returns titles, links and snippets: open the best links with "
                   "fetch_page before relying on a fact.",
-    "news_search": "Search recent news articles, newest first, with dates. Use it for anything current.",
+    "news_search": "Search recent news and media coverage, newest first, with dates. Use it for anything "
+                   "current. source: one outlet's site, e.g. moneycontrol.com.",
+    "product_search": "Search shopping sites for products: title, price, rating, reviews, link. site: amazon, "
+                      "flipkart, croma, reliancedigital or all (default amazon + flipkart).",
+    "product_page": "Read one product page: price, rating, reviews, availability, seller, delivery, key "
+                    "features. Use it before recommending or ordering.",
+    "ask_person_to_browse": "Hand the live browser to the person for what agents never do: sign in, OTPs, "
+                            "card/UPI details, choosing how to pay. Then stop and tell them what to do.",
     "fetch_page": "Read the text of a web page, PDF or text file by URL.",
     "scholar_search": "Search research papers (arXiv, Crossref, PubMed): title, authors, year, link and "
                       "abstract. Use it for scientific, technical or medical research.",
@@ -1296,8 +1387,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "browser_select": "Choose an option in dropdown [ref] by its visible text.",
     "browser_scroll": "Scroll the page: direction 'down' or 'up'.",
     "browser_back": "Go back to the previous page.",
-    "browser_commit": "Click a button that books, pays, sends or submits ([ref] with its exact label), "
-                      "with a one-line summary of what it commits. Always needs an approver.",
+    "browser_commit": "Click a button that books, pays, orders, sends or submits ([ref] with its exact label), "
+                      "with a one-line summary of what it commits (item, quantity, total price, delivery "
+                      "address). The person (or an approver at work) confirms it before it is clicked.",
     "summarize": "Summarize a long text.",
     "review_report": "Open a content report by id.",
 }

@@ -331,7 +331,8 @@ def test_no_verdict_stays_private_and_keywords_still_flag(monkeypatch):
         ({"route": "private", "department": "logistics"}, "private", None, None),
         ({"route": "work", "department": None}, "private", None, None),
         ({"route": "work", "department": "logistics"}, "work", "logistics", None),
-        ({"route": "private", "action": "bill"}, "work", None, "bill"),
+        ({"route": "private", "action": "bill"}, "private", None, None),  # personal: stays private
+        ({"route": "work", "action": "bill"}, "work", None, "bill"),
         ({"route": "work", "department": "logistics", "action": "weird"}, "work", "logistics", None),
     ],
 )

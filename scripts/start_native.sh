@@ -49,6 +49,7 @@ status() {
   up alloy "curl -sf http://127.0.0.1:12345/-/ready"
   up prometheus "curl -sf http://127.0.0.1:9090/-/ready"
   up grafana "curl -sf http://127.0.0.1:3000/api/health"
+  [[ -n "$(env_value PROXY_SSH)" ]] && up proxy-tunnel "timeout 8 curl -s -o /dev/null --socks5-hostname 127.0.0.1:1080 https://www.bing.com/"
   up app-tunnel "alive app-tunnel"
   up grafana-tunnel "alive grafana-tunnel"
   echo
@@ -89,6 +90,20 @@ GF_SECURITY_ADMIN_PASSWORD="$(env_value GRAFANA_PASSWORD)" GF_USERS_ALLOW_SIGN_U
 GF_ANALYTICS_REPORTING_ENABLED=false GF_ANALYTICS_CHECK_FOR_UPDATES=false \
 GF_PATHS_PROVISIONING="$ROOT/deploy/native/grafana" GF_PATHS_DATA=/var/lib/grafana GF_PATHS_LOGS="$LOG_DIR" \
   start_bg grafana grafana server --homepath /usr/share/grafana --config /etc/grafana/grafana.ini
+
+# Outbound proxy over SSH (docs/SERVER_SETUP.md, "Outbound proxy"): PROXY_SSH=user@host in .env opens a
+# SOCKS proxy on 127.0.0.1:1080 through that server; set OUTBOUND_PROXY=socks5h://127.0.0.1:1080 to use it.
+# The hop is encrypted, so the network here sees only an SSH connection. Restarted if it drops.
+if [[ -n "$(env_value PROXY_SSH)" ]]; then
+  PROXY_SSH="$(env_value PROXY_SSH)" PROXY_SSH_PORT="$(env_value PROXY_SSH_PORT)" PROXY_SSH_KEY="$(env_value PROXY_SSH_KEY)" \
+  start_bg proxy-tunnel bash -c 'while true; do
+    ssh -N -D 127.0.0.1:1080 -p "${PROXY_SSH_PORT:-22}" -i "${PROXY_SSH_KEY:-/root/.ssh/proxy_vps}" \
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+      -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$PROXY_SSH"
+    echo "proxy tunnel dropped; reconnecting in 5s"; sleep 5
+  done'
+  sleep 3
+fi
 
 # The model can take minutes to load; the gateway doesn't wait for it (/readyz reports it).
 # SKIP_VLLM=1 starts everything else, e.g. while the weights are still downloading.

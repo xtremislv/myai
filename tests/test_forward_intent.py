@@ -135,8 +135,13 @@ def test_everyone_may_search_the_web_but_not_commit(real_acl, monkeypatch):
     monkeypatch.setattr(tools, "_search_api", lambda: None)
     for roles in ((), ("hr",), ("logistics",)):
         assert "x.example" in tools.web_search(_state(*roles), "market trends")
-    assert tools.browser_commit(_state("researcher"), 1, "Book", "x").startswith("ACCESS DENIED")
-    assert tools.browser_commit(_state(), 1, "Book", "x").startswith("ACCESS DENIED")
+    work = {**_state("researcher"), "scratchpad": {"department": "researcher"}}
+    assert tools.browser_commit(work, 1, "Book", "x").startswith("ACCESS DENIED")
+    # Private chat may commit for the person themselves (owner, 2026-11-03); the graph still
+    # pauses every browser_commit for their confirmation (ALWAYS_CRITICAL).
+    from app.departments.packs import critical_tools
+
+    assert "browser_commit" in critical_tools()
 
 
 def test_every_tool_has_an_acl_gate():

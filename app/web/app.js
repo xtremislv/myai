@@ -64,6 +64,7 @@ const ICONS = {
   spark: "M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
   lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z",
   bell: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0",
+  globe: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z",
 };
 
 // ---- small DOM helpers ----
@@ -142,6 +143,135 @@ function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+
+// ---- Markdown, rendered safely ----
+// Replies come from the model and from web pages it read, so they are never put into innerHTML:
+// this builds elements directly. Links open only http(s) and mailto, in a new tab.
+const MD_BLOCK_START = /^\s*(```|~~~|#{1,6}\s|>|([-*+]|\d+[.)])\s+)/;
+const MD_LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+const MD_INLINE = /(`+)([^`]+?)\1|\*\*([^*]+?)\*\*|__([^_]+?)__|\*([^*\s][^*]*?)\*|(?<![\w])_([^_\s][^_]*?)_(?![\w])|~~([^~]+?)~~|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
+
+function mdLink(href, label) {
+  if (!/^(https?:|mailto:)/i.test(href)) return label;
+  return h("a", { href, target: "_blank", rel: "noopener noreferrer nofollow" }, label);
+}
+
+function mdInline(text) {
+  const frag = document.createDocumentFragment();
+  const re = new RegExp(MD_INLINE.source, "g");
+  let last = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) frag.append(text.slice(last, m.index));
+    if (m[2] !== undefined) frag.append(h("code", null, m[2]));
+    else if (m[3] !== undefined || m[4] !== undefined) frag.append(h("strong", null, mdInline(m[3] ?? m[4])));
+    else if (m[5] !== undefined || m[6] !== undefined) frag.append(h("em", null, mdInline(m[5] ?? m[6])));
+    else if (m[7] !== undefined) frag.append(h("del", null, mdInline(m[7])));
+    else if (m[8] !== undefined) frag.append(mdLink(m[9], mdInline(m[8])));
+    else if (m[10] !== undefined) frag.append(mdLink(m[10], m[10]));
+    last = re.lastIndex;
+  }
+  if (last < text.length) frag.append(text.slice(last));
+  return frag;
+}
+
+function mdList(lines, start) {
+  const first = lines[start].match(MD_LIST_ITEM);
+  const indent = first[1].length;
+  const ordered = /\d/.test(first[2]);
+  const el = h(ordered ? "ol" : "ul");
+  if (ordered && parseInt(first[2], 10) !== 1) el.start = parseInt(first[2], 10);
+  let i = start;
+  let li = null;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) {
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim()) j++;
+      const next = j < lines.length && lines[j].match(MD_LIST_ITEM);
+      if (next && next[1].length >= indent) { i = j; continue; }
+      break;
+    }
+    const m = line.match(MD_LIST_ITEM);
+    const lead = line.match(/^\s*/)[0].length;
+    if (m && m[1].length === indent) {
+      li = h("li", null, mdInline(m[3]));
+      el.append(li);
+      i++;
+    } else if (m && m[1].length > indent && li) {
+      const [sub, next] = mdList(lines, i);
+      li.append(sub);
+      i = next;
+    } else if (!m && lead > indent && li) {
+      li.append(h("br"), mdInline(line.trim()));
+      i++;
+    } else {
+      break;
+    }
+  }
+  return [el, i];
+}
+
+function md(source) {
+  const out = document.createDocumentFragment();
+  const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
+  const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    let m = line.match(/^\s*(```|~~~)\s*([\w+-]*)\s*$/);
+    if (m) {
+      const code = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(m[1])) code.push(lines[i++]);
+      i++;
+      out.append(h("pre", { class: "md-code" }, h("code", null, code.join("\n"))));
+      continue;
+    }
+    m = line.match(/^\s*(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (m) {
+      out.append(h(["h3", "h4", "h5", "h5", "h6", "h6"][m[1].length - 1], null, mdInline(m[2])));
+      i++;
+      continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.append(h("hr")); i++; continue; }
+    if (/^\s*>/.test(line)) {
+      const quote = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.append(h("blockquote", null, md(quote.join("\n"))));
+      continue;
+    }
+    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+      const head = cells(line);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
+      out.append(h("div", { class: "table-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, head.map((c) => h("th", null, mdInline(c))))),
+        h("tbody", null, rows.map((r) => h("tr", null, r.map((c) => h("td", null, mdInline(c)))))),
+      )));
+      continue;
+    }
+    if (MD_LIST_ITEM.test(line)) {
+      const [list, next] = mdList(lines, i);
+      out.append(list);
+      i = next;
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && (!para.length || !MD_BLOCK_START.test(lines[i]))) para.push(lines[i++]);
+    const p = h("p");
+    para.forEach((l, k) => { if (k) p.append(h("br")); p.append(mdInline(l.trim())); });
+    out.append(p);
+  }
+  return out;
+}
+
+function mdBlock(text, extraClass = "") {
+  return h("div", { class: `md ${extraClass}` }, md(text));
 }
 
 // ---- API ----
@@ -533,7 +663,7 @@ async function chatView(thread, { reloadThreads, paint }) {
   const setEmpty = (empty) => content.classList.toggle("is-empty", empty);
 
   const bubble = (role, text, handledBy) => {
-    const node = h("div", { class: `msg ${role}` }, text,
+    const node = h("div", { class: `msg ${role} ${role === "assistant" ? "md" : ""}` }, role === "assistant" ? md(text) : text,
       role === "assistant" && handledBy && h("span", { class: "handled" }, `Handled as work by ${departmentName(handledBy)}`));
     messages.append(node);
     toBottom();
@@ -574,7 +704,7 @@ async function chatView(thread, { reloadThreads, paint }) {
           h("span", null, `${REQUEST_LABELS[item.label] || item.label} (${departmentName(item.department)})`),
           h("span", { class: `pill ${kind}` }, text),
         ),
-        item.result && h("div", { class: "pre" }, item.result),
+        item.result && mdBlock(item.result),
       );
     }));
     return items.some((item) => !FINISHED.has(item.state));
@@ -596,7 +726,9 @@ async function chatView(thread, { reloadThreads, paint }) {
         card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
       }
     };
-    const LABELS = { to: "To", subject: "Subject", body: "Message", path: "File", category: "Mailbox", in_reply_to: "In reply to" };
+    const LABELS = { to: "To", subject: "Subject", body: "Message", path: "File", category: "Mailbox", in_reply_to: "In reply to",
+      summary: "What happens", label: "Button" };
+    delete pending.details.ref;
     fill(card,
       h("strong", null, pending.title),
       h("dl", { class: "facts" }, Object.entries(pending.details).flatMap(([k, v]) => [
@@ -604,7 +736,8 @@ async function chatView(thread, { reloadThreads, paint }) {
       ])),
       error,
       h("div", { class: "row" },
-        h("button", { class: "primary", type: "button", onclick: decide(true) }, pending.tool === "send_mail" ? "Send" : "Yes, go ahead"),
+        h("button", { class: "primary", type: "button", onclick: decide(true) },
+          pending.tool === "send_mail" ? "Send" : pending.tool === "browser_commit" ? "Yes, place it" : "Yes, go ahead"),
         h("button", { type: "button", onclick: decide(false) }, "No"),
       ),
     );
@@ -612,9 +745,18 @@ async function chatView(thread, { reloadThreads, paint }) {
     toBottom();
   };
 
+  const say = (text) => { input.value = text; grow(); composer.requestSubmit(); };
+  const openBrowser = (scope, reason) => {
+    content.querySelectorAll(".live").forEach((el) => el.remove());
+    messages.append(browserPanel(scope, reason, { onDone: () => say("Done, please carry on.") }));
+    setEmpty(false);
+    toBottom();
+  };
+
   const showResult = (result) => {
     if (result.outcome === "confirm") confirmCard(result.confirm);
     else if (result.reply) bubble("assistant", result.reply);
+    if (result.browser) openBrowser(result.browser.scope, result.browser.reason);
   };
 
   const watchRequests = async () => {
@@ -679,14 +821,19 @@ async function chatView(thread, { reloadThreads, paint }) {
       };
       try {
         let started = false;
+        let streamed = "";
+        let drawing = false;
         const result = await streamChat({ message: text, thread_id: thread }, (piece) => {
           if (!started) {
             started = true;
             thinking.classList.remove("thinking");
-            thinking.textContent = "";
+            thinking.classList.add("md");
           }
-          thinking.append(piece);
-          toBottom();
+          streamed += piece;
+          if (!drawing) {  // at most one redraw per frame
+            drawing = true;
+            requestAnimationFrame(() => { drawing = false; thinking.replaceChildren(md(streamed)); toBottom(); });
+          }
         }, onStep);
         thinking.remove();
         if (result.outcome === "flagged_nsfw") {
@@ -697,6 +844,7 @@ async function chatView(thread, { reloadThreads, paint }) {
           await reloadThreads();
         } else {
           bubble("assistant", result.reply, result.route === "work" ? result.department : null);
+          if (result.browser) openBrowser(result.browser.scope, result.browser.reason);
           await reloadThreads();
           if (result.route === "work") await watchRequests();
           toBottom();
@@ -717,6 +865,7 @@ async function chatView(thread, { reloadThreads, paint }) {
     input,
     h("div", { class: "composer-actions" },
       h("button", { type: "button", class: "round", "aria-label": "Attach a file", title: "Attach a file", onclick: () => picker.click() }, icon("plus")),
+      h("button", { type: "button", class: "round", "aria-label": "Open the live browser", title: "Live browser (sign in to shops, see what the assistant sees)", onclick: () => openBrowser("private", "") }, icon("globe")),
       picker,
       send,
     ),
@@ -769,6 +918,90 @@ async function chatView(thread, { reloadThreads, paint }) {
   await paintFiles();
   setTimeout(() => { input.focus(); toBottom(); }, 0);
   return content;
+}
+
+
+// ---- the live browser: the person takes over for sign-in, OTPs and payment ----
+// The page is drawn on a canvas from screenshots (the CSP allows no other image sources). What
+// the person types goes straight to the page; the agent never sees it.
+function browserPanel(scope, reason, { onDone } = {}) {
+  const VIEW = { w: 1280, h: 900 };
+  const canvas = h("canvas", { width: VIEW.w, height: VIEW.h, class: "live-screen", tabIndex: 0, "aria-label": "Live browser view: click to interact" });
+  const ctx = canvas.getContext("2d");
+  const url = h("input", { placeholder: "Open a site, e.g. amazon.in", "aria-label": "Address" });
+  const typed = h("input", { type: "password", autocomplete: "off", "aria-label": "Text to type into the page", placeholder: "Type here, then Send (goes to the selected field)" });
+  const reveal = h("input", { type: "checkbox", onchange: () => { typed.type = reveal.checked ? "text" : "password"; } });
+  const status = h("span", { class: "small muted live-url" }, "Loading...");
+  const error = errorBox();
+  let timer = null;
+  let busy = false;
+  const base = `/v1/browser/${encodeURIComponent(scope)}`;
+
+  const draw = async () => {
+    if (busy || !panel.isConnected) return;
+    busy = true;
+    try {
+      const blob = await api(`${base}/screen`, { raw: true });
+      const bitmap = await createImageBitmap(blob);
+      ctx.drawImage(bitmap, 0, 0, VIEW.w, VIEW.h);
+      const info = await api(base);
+      status.textContent = info.open ? `${info.title || ""} — ${info.url}` : "No page open";
+    } catch (err) {
+      status.textContent = /no browser/i.test(err.message) ? "No page open yet: enter an address above." : err.message;
+    }
+    busy = false;
+  };
+  const act = async (body) => {
+    error.clear();
+    try {
+      await api(`${base}/act`, { method: "POST", body });
+    } catch (err) {
+      error.fail(err);
+    }
+    setTimeout(draw, 300);
+  };
+  canvas.addEventListener("click", (event) => {
+    const box = canvas.getBoundingClientRect();
+    act({ action: "click", x: Math.round(((event.clientX - box.left) / box.width) * VIEW.w), y: Math.round(((event.clientY - box.top) / box.height) * VIEW.h) });
+  });
+  canvas.addEventListener("wheel", (event) => { event.preventDefault(); act({ action: "scroll", y: Math.round(event.deltaY) }); }, { passive: false });
+  const sendText = () => { if (typed.value) { act({ action: "type", text: typed.value }); typed.value = ""; } };
+  typed.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); sendText(); } });
+  url.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); act({ action: "open", url: url.value }); } });
+  const close = async (forget) => {
+    clearInterval(timer);
+    try { await api(`${base}/close`, { method: "POST", body: { forget } }); } catch { /* already closed */ }
+    panel.remove();
+  };
+
+  const panel = h("div", { class: "card live" },
+    h("div", { class: "row spread" },
+      h("strong", null, icon("globe"), " Live browser", scope !== "private" ? ` (${departmentName(scope)})` : ""),
+      h("div", { class: "row" },
+        h("button", { type: "button", onclick: () => act({ action: "back" }) }, "Back"),
+        h("button", { type: "button", onclick: () => close(false) }, "Close"),
+        h("button", { type: "button", class: "danger", title: "Close and forget saved sign-ins", onclick: () => close(true) }, "Sign out & close"),
+      ),
+    ),
+    reason && h("div", { class: "notice" }, reason),
+    h("div", { class: "row" }, url, h("button", { type: "button", onclick: () => act({ action: "open", url: url.value }) }, "Go")),
+    status,
+    canvas,
+    error,
+    h("div", { class: "row wrap" },
+      h("label", { class: "grow" }, "Type into the page", typed),
+      h("button", { type: "button", class: "primary", onclick: sendText }, "Send"),
+      ["Enter", "Tab", "Backspace"].map((k) => h("button", { type: "button", onclick: () => act({ action: "key", text: k }) }, k)),
+    ),
+    h("label", { class: "check small" }, reveal, h("span", null, "Show what I type")),
+    h("p", { class: "small muted" }, "Click the page to select a field, then type. Passwords, OTPs and card details you type go only to "
+      + "the site: the assistant never sees them. Your sign-ins are kept"
+      + (scope === "private" ? ", encrypted with your key," : "") + " so you don't have to sign in every time."),
+    onDone && h("button", { type: "button", class: "primary", onclick: () => onDone() }, "Done, carry on"),
+  );
+  timer = setInterval(() => { if (!panel.isConnected) clearInterval(timer); else if (!document.hidden) draw(); }, 1500);
+  setTimeout(draw, 50);
+  return panel;
 }
 
 // ---- overview ----
@@ -857,7 +1090,7 @@ function resultNotice(result) {
   const text = result.outcome === "pending_approval"
     ? "The agent went on to another action that needs its own approval."
     : result.reply || result.reason || "Done.";
-  return h("div", { class: `notice ${result.outcome === "error" ? "error" : "good"} pre` }, text);
+  return h("div", { class: `notice ${result.outcome === "error" ? "error" : "good"}` }, mdBlock(text));
 }
 
 async function approvalsView(refresh) {
@@ -1351,7 +1584,7 @@ async function notificationsView(refresh) {
             h("span", { class: "row" }, h("span", { class: `pill ${kind}` }, label), h("strong", null, n.title)),
             h("span", { class: "small muted" }, new Date(n.created_at).toLocaleString()),
           ),
-          n.body && h("div", { class: "pre note-body" }, n.body),
+          n.body && mdBlock(n.body, "note-body"),
         );
         card.addEventListener("click", open(n, card));
         return card;
@@ -1394,6 +1627,15 @@ async function filesView(refresh, { trash = false } = {}) {
     error.clear();
     try { await fn(); redraw({ trash }); } catch (err) { error.fail(err); }
   };
+  const preview = h("div");
+  const view = (f) => async () => {
+    const text = await (await api(`/v1/files/${f.id}`, { raw: true })).text();
+    preview.replaceChildren(h("div", { class: "card" },
+      h("div", { class: "row spread" }, h("strong", { class: "mono" }, f.path), h("button", { type: "button", onclick: () => preview.replaceChildren() }, "Close")),
+      /\.md$/i.test(f.path) ? mdBlock(text) : h("pre", { class: "md-code" }, text),
+    ));
+    preview.scrollIntoView({ behavior: "smooth" });
+  };
   page.append(
     heading(trash ? "Trash" : "My files", trash
       ? "Deleted files are kept for 7 days, then removed for good."
@@ -1416,12 +1658,14 @@ async function filesView(refresh, { trash = false } = {}) {
         h("div", { class: "row" }, trash
           ? h("button", { type: "button", onclick: act(() => api(`/v1/files/${f.id}/restore`, { method: "POST" })) }, "Restore")
           : [
+            /\.(md|txt|csv|json|html?)$/i.test(f.path) && h("button", { type: "button", onclick: view(f) }, "View"),
             h("button", { type: "button", onclick: download(f) }, "Download"),
             h("button", { type: "button", class: "danger", "aria-label": `Delete ${f.path}`, onclick: act(() => api(`/v1/files/${f.id}`, { method: "DELETE" })) }, "Delete"),
           ]),
       ]),
       trash ? "The trash is empty." : "No files yet. Upload some, or ask the assistant to write one.",
     )),
+    preview,
   );
   return page;
 }
@@ -1534,7 +1778,7 @@ async function mailSettingsCard() {
     prefsNote.replaceChildren(h("div", { class: "notice" }, "Reading your mail..."));
     try {
       const { text } = await api("/v1/me/digest", { method: "POST" });
-      prefsNote.replaceChildren(h("div", { class: "notice good pre" }, text || "No new mail."));
+      prefsNote.replaceChildren(h("div", { class: "notice good" }, mdBlock(text || "No new mail.")));
     } catch (err) {
       prefsNote.replaceChildren();
       prefsError.fail(err);

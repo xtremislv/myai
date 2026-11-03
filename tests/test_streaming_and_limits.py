@@ -385,8 +385,8 @@ def test_department_tool_schemas_match_the_allow_list():
 
     names = [t["function"]["name"] for t in tool_schemas("researcher")]
     assert names == list(tools_for("researcher")) and "read_document" in names
-    private = [t["function"]["name"] for t in tool_schemas(None)]  # private chat: web only
-    assert "web_search" in private and "browser_commit" not in private and "read_document" not in private
+    private = [t["function"]["name"] for t in tool_schemas(None)]  # private chat: no company data
+    assert "web_search" in private and "read_document" not in private and "balance_lookup" not in private
 
 
 def test_steps_reach_the_reader_while_the_work_is_still_running(api, monkeypatch):

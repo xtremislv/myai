@@ -69,3 +69,7 @@
 {"id": "w64", "msg": "Create invoices from the accounts invoice template for these orders", "route": "work", "dept": ["account"]}
 {"id": "p70", "msg": "Using the attached offer letter template, make an offer letter for Ravi Kumar, Software Engineer, joining 1 December", "route": "private"}
 {"id": "p71", "msg": "Make an invoice like the one I attached for my freelance client, 3 hours at 2000/hour", "route": "private"}
+{"id": "p72", "msg": "Find wireless earbuds under 1500 rupees on Flipkart and compare the top 3 in a table", "route": "private"}
+{"id": "p73", "msg": "Order me a phone cover for my Pixel 9 on Amazon, under 500", "route": "private"}
+{"id": "p74", "msg": "Which running shoes have the best reviews right now?", "route": "private"}
+{"id": "w65", "msg": "Buy 5 office chairs for the new team from Amazon", "route": "work", "action": "order"}

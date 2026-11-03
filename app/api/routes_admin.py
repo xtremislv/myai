@@ -54,7 +54,7 @@ class SecretIn(BaseModel):
 
 # The server's own keys, and the mailbox logins people connect themselves (My account), are not
 # the admin's to read, change or remove.
-PROTECTED_PREFIXES = ("system/", "mail/personal/")
+PROTECTED_PREFIXES = ("system/", "mail/personal/", "browser/")
 
 
 def _not_protected(name: str) -> None:

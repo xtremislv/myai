@@ -178,6 +178,33 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   files. `write_file`/`append_file`/`edit_file` now refuse .docx/.pdf/.xlsx and other binary formats.
 - Triage eval: 71 cases x 3 x 2 personas = 426/426, 0 personal as work (adds attached-template and how-to cases).
 
+## Shopping, live browser, Markdown, proxy (2026-11-03, night)
+- **Owner decisions:** personal orders from private chat (the person confirms each order on a card), and
+  company orders through Accounts with an approver. Sign-in, OTP and payment happen in a **live browser panel**
+  in the chat, by the person; agents never type them.
+- **Tools:** `product_search` (Amazon, Flipkart, Croma, Reliance Digital; JSON-LD, Amazon layout, generic price
+  cards), `product_page`, `ask_person_to_browse` (hands the browser over; the chat shows the panel), and
+  `browser_commit` now in private chat (resource `web:commit-private`, granted to everyone for themselves; always
+  confirmed). A `shopping` specialist. "Add to cart", "Proceed to checkout" and "Use this address" are ordinary
+  clicks; "Buy now", "Place your order", "Pay", and any other form submit still need `browser_commit`.
+- **Live view** (`app/api/routes_browser.py`): JPEG screenshots on a canvas (CSP: no image sources), clicks,
+  typing, keys, scroll, back, open. Typed text isn't logged; the agent's snapshot hides values of password, card,
+  OTP and UPI fields. **Saved logins** (`app/browsing/logins.py`): private ones encrypted with the person's key in
+  MinIO (`browserstate/<id>`), work ones in the vault (`browser/<dept>/<id>`, denied to the admin, hidden on the
+  Credentials page). Erased with the person's data.
+- **Reality check (tested 15:00 UTC):** Flipkart search works; Amazon serves its automated-access block page to
+  this server, and Croma and Reliance Digital refuse too. Whether signing in via the panel or the VPS proxy changes
+  that is untested. Ordering end to end has **not** been run against a real shop.
+- **Triage:** personal shopping is private; a purchase for the company is forwarded to Accounts. The code now drops
+  an "order" action on a private message (it used to forward a personal order to Accounts). Eval 450/450.
+- **Markdown in the UI:** replies (also while streaming), request results, notifications and .md previews in My
+  files are rendered by `md()` in app.js, which builds elements (no innerHTML); links only http(s)/mailto.
+- **Outbound proxy:** `OUTBOUND_PROXY` routes agents' pages, search APIs and Chromium through a proxy; the network
+  guard re-checks names through DNS-over-HTTPS via the proxy when local DNS is poisoned. `PROXY_SSH` makes
+  `start_native.sh` keep an SSH SOCKS tunnel (127.0.0.1:1080) to the owner's VPS (148.113.20.33 port 20005, user
+  `tunnel`, key /root/.ssh/proxy_vps, restricted to port forwarding). Waiting on the owner to add the key; then
+  set `OUTBOUND_PROXY=socks5h://127.0.0.1:1080` and restart the gateway.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

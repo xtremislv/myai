@@ -285,6 +285,20 @@ explains itself with `--help`). Everyone is signed out; nothing stored is lost.
 `scripts/load_test.py` measures the model under 1-16 simultaneous chats. `scripts/check_connectivity.py` shows
 which sites the agents can reach from this network (search, news, reference, government, APIs).
 
+### Outbound proxy (when this network blocks sites)
+Agents' web traffic can leave through another server, over SSH, so this network only sees one encrypted
+connection. On the other server (any small VPS), create a user that may only forward connections:
+```bash
+adduser --disabled-password --gecos "" tunnel && mkdir -p /home/tunnel/.ssh
+echo 'restrict,port-forwarding,command="/bin/false" <contents of /root/.ssh/proxy_vps.pub>' > /home/tunnel/.ssh/authorized_keys
+chown -R tunnel:tunnel /home/tunnel/.ssh && chmod 700 /home/tunnel/.ssh && chmod 600 /home/tunnel/.ssh/authorized_keys
+```
+Here: `ssh-keygen -t ed25519 -N "" -f /root/.ssh/proxy_vps`, then in `.env`:
+`PROXY_SSH=tunnel@<vps>`, `PROXY_SSH_PORT=<ssh port>`, `OUTBOUND_PROXY=socks5h://127.0.0.1:1080`, and rerun
+`scripts/start_native.sh` (restart the gateway if it was running). `start_native.sh status` shows `proxy-tunnel`,
+and `scripts/check_connectivity.py` shows the difference. Don't set `HTTP_PROXY`/`HTTPS_PROXY` globally: the model
+server, MinIO and the tunnels must stay direct.
+
 ### Browser for the agents
 The agents' headless browser needs Chromium and its system libraries:
 

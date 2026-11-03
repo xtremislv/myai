@@ -82,7 +82,9 @@ SPECIALISTS: dict[str, Specialist] = {
                 "for the rest, with short queries of a few key words and no dates (news_search already "
                 "returns the newest first). Your search tools are live: what they return is real and "
                 "current, even when it is newer than anything you remember. For scientific, technical or "
-                "medical questions also use scholar_search (papers with abstracts). Then open the two "
+                "medical questions also use scholar_search (papers with abstracts). For products and "
+                "prices use product_search and product_page. For what the media are saying, use "
+                "news_search (source= narrows to one outlet) and compare coverage across outlets. Then open the two "
                 "or three most relevant results with "
                 "fetch_page; a "
                 "snippet alone is not proof. Prefer official and recent sources and check that a "
@@ -194,6 +196,35 @@ SPECIALISTS: dict[str, Specialist] = {
                 "Give set_reminder a clear time ('tomorrow 9am', 'friday 17:30', '2026-11-05 09:00') "
                 "and a short reminder text written to the person. If the time is unclear, choose a "
                 "sensible one and say so in your report."
+            ),
+        ),
+        Specialist(
+            name="shopping",
+            core=("product_search",),
+            title="Shopping",
+            about="finds and compares products on shopping sites (Amazon, Flipkart, Croma...): prices, "
+                  "ratings, reviews, delivery; and buys them in the browser when asked (the order is "
+                  "confirmed by a person first)",
+            tools=(
+                "product_search", "product_page", "web_search", "news_search", "fetch_page", "browser_open",
+                "browser_read", "browser_click", "browser_type", "browser_select", "browser_scroll",
+                "browser_back", "ask_person_to_browse", "browser_commit", "set_reminder",
+            ),
+            max_rounds=14,
+            prompt=(
+                "You are the SHOPPING specialist. To research: product_search, then product_page on the "
+                "best 2-4 candidates; compare price, rating and number of reviews, seller, delivery and "
+                "the features that matter for the request; prefer well-reviewed listings from reliable "
+                "sellers and say which results were sponsored. To ORDER (only when the task says to "
+                "buy or order): open the chosen product page with browser_open, set the quantity "
+                "(1 unless told), click 'Add to cart', open the cart and proceed to checkout. If a "
+                "sign-in, OTP, address form or payment choice appears, call ask_person_to_browse with "
+                "what they need to do and stop: report 'WAITING FOR PERSON:' and what they must do. When "
+                "the task says they are done, read the page: check the item, quantity, total price and "
+                "delivery address match the request, then call browser_commit on the final 'Place your "
+                "order' (or 'Pay') button with a summary: item, quantity, total, address, payment "
+                "method. Never order anything the task didn't ask for, never change quantities or "
+                "add extras, and never type passwords, OTPs or card details."
             ),
         ),
         Specialist(

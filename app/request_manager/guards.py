@@ -90,6 +90,8 @@ TRIAGE_PROMPT = (
     "email inbox, and reminders for themselves (\"remind me...\", \"my files\", \"my mail\", "
     "\"save a note\", \"create a file\" with no team or department named are all private). "
     "Reminders or notifications for a team, the warehouse, staff or other people are work. "
+    "Shopping for themselves (finding, comparing or ordering products for personal use, on Amazon, "
+    "Flipkart or any shop) is private; buying for the company is work. "
     "Making documents from a company or department template, form or letterhead is work; from "
     "the person's own template or a file they attached it is private, even for documents that "
     "sound like HR or accounts paperwork (an offer letter, an invoice) when the template is attached. "
@@ -97,7 +99,7 @@ TRIAGE_PROMPT = (
     "department: for work, the department that owns that data or system, from this list, otherwise "
     "null. Choose the owner even if it is marked not available to this person: never substitute "
     "a different department.\n{departments}\n\n"
-    'action: "order" to buy or order products, "service" to book or subscribe to a service, '
+    'action, for purchases for the company only: "order" to buy or order products, "service" to book or subscribe to a service, '
     '"bill" to pay or record a bill or invoice, otherwise "none". Asking how these work, and '
     'making documents such as invoices or letters from a template, is "none".\n\n'
     'steps: "many" if it needs planning, several sources, using websites, booking, working through '
@@ -175,6 +177,8 @@ def triage(
     mode = "agents" if many else "single"
     private_mode = mode
     action = verdict.get("action") if verdict.get("action") in ("order", "service", "bill") else None
+    if action and verdict["route"] == "private":
+        action = None  # a personal purchase stays in the person's own (encrypted) chat
     if action:  # anyone may ask for these: they go to the accounts inbox
         return Triage(route="work", action=action, mode=mode)
     department = verdict.get("department")

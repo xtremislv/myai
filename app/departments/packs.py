@@ -17,6 +17,7 @@ Resource type conventions (urn = "type:id"):
   research:* / reports:*     research data/reports    -> researcher
   web:search|fetch|browse    web search, pages, browser -> researcher, account, logistics (browse: not logistics)
   web:commit                 browser buttons that book/pay/send -> account (every call needs approval)
+  web:commit-private         the same in private chat -> everyone, for themselves (they confirm each one)
   mail:<category>/* write    send mail / mark read    -> the box's department; personal: owner
   notification:* / reminder:*  notifications/reminders -> logistics
   reminder:<owner>/*         a person's own reminders  -> owner ($self)
@@ -36,10 +37,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 MAIL_TOOLS = ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail", "summarize_mail")
-LOOKUP_TOOLS = ("web_search", "news_search", "scholar_search", "fetch_page", "scrape_page", "weather")
+LOOKUP_TOOLS = (
+    "web_search", "news_search", "scholar_search", "product_search", "product_page", "fetch_page", "scrape_page",
+    "weather",
+)
 BROWSE_TOOLS = (
     "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",
-    "browser_scroll", "browser_back",
+    "browser_scroll", "browser_back", "ask_person_to_browse",
 )
 # Files: in private chat the person's own encrypted "My files"; at work the department's shared
 # folder (shared/<department>/) and the data areas its grants reach. delete_file needs approval.
@@ -51,10 +55,12 @@ REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
 # Documents from templates: company templates (database) at work; in private chat the person's
 # own templates (My files, templates/) and files attached to the chat.
 TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "save_template")
-# Private chat (no department), owner's decisions of 2026-11-03: read-only web access, plus the
-# person's OWN mailbox (personal category only; sending needs their confirmation), their own
-# files and reminders. Nothing that commits on the web (no browser_commit), no company data.
-PRIVATE_TOOLS = (*LOOKUP_TOOLS, *BROWSE_TOOLS, *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS)
+# Private chat (no department), owner's decisions of 2026-11-03: web access, plus the person's OWN
+# mailbox (personal category only), files, reminders and templates, and personal shopping:
+# browser_commit places an order only after the person confirms it themselves. No company data.
+PRIVATE_TOOLS = (
+    *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+)
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
 ALWAYS_CRITICAL = ("send_mail", "delete_file", "browser_commit")
@@ -190,6 +196,7 @@ ADMIN = DepartmentSpec(
         Grant("mail:personal/*", ("*",), effect="deny"),     # ...and personal mail
         Grant("secret:mail/personal/*", ("*",), effect="deny"),  # ...and people's mailbox logins
         Grant("secret:system/*", ("*",), effect="deny"),     # ...and the server's own keys
+        Grant("secret:browser/*", ("*",), effect="deny"),    # ...and people's saved website logins
     ),
     tools=("*",),
     quota_per_min=600,
@@ -207,6 +214,8 @@ GLOBAL = DepartmentSpec(
         Grant("web:fetch", ("read",), subject="*"),
         Grant("web:browse", ("read",), subject="*"),
         Grant("template:global/*", ("read", "list"), subject="*"),  # company-wide templates
+        # Personal shopping in private chat: commits only after the person's own confirmation.
+        Grant("web:commit-private", ("write",), subject="*"),
     ),
     tools=(),
 )

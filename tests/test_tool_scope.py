@@ -30,5 +30,7 @@ def test_admin_and_superuser():
 
 def test_unknown_department_has_no_tools():
     assert tools_for("nope") == {}
-    # Private chat: read-only web tools only.
-    assert set(tools_for(None)) == set(PRIVATE_TOOLS) and "browser_commit" not in tools_for(None)
+    # Private chat: the person's own things and the web; never company systems.
+    private = tools_for(None)
+    assert set(private) == set(PRIVATE_TOOLS)
+    assert not {"get_secret", "balance_lookup", "initiate_payment", "manage_order", "read_document"} & set(private)

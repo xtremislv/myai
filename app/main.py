@@ -18,6 +18,7 @@ from app import health
 from app.api import (
     routes_admin,
     routes_auth,
+    routes_browser,
     routes_chat,
     routes_dashboard,
     routes_me,
@@ -72,6 +73,7 @@ app.include_router(routes_dashboard.router)
 app.include_router(routes_me.router)
 app.include_router(routes_ops.router)
 app.include_router(routes_templates.router)
+app.include_router(routes_browser.router)
 app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="ui")
 
 

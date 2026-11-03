@@ -30,12 +30,15 @@ from app.browsing.netguard import Blocked, check_url
 from app.config import get_settings
 
 NAV_TIMEOUT_MS = 30_000
+VIEWPORT = {"width": 1280, "height": 900}
+HUMAN_KEYS = {"Enter", "Tab", "Backspace", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Delete"}
 CALL_TIMEOUT_S = 75
 MAX_ELEMENTS = 60
 PAGE_TEXT_CHARS = 2200
 
 _MARK_JS = r"""
 (maxCount) => {
+  const SENSITIVE = /(password|passwd|card|cc-|cvv|cvc|security code|expiry|exp-|iban|account.?number|routing|otp|one-time|pin\b|ssn|aadhaar|pan\b|upi)/i;
   const sel = 'a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=tab],' +
               '[role=checkbox],[role=radio],[role=option],[role=menuitem],[role=combobox],[contenteditable=true]';
   document.querySelectorAll('[data-ai-ref]').forEach(e => e.removeAttribute('data-ai-ref'));
@@ -51,7 +54,11 @@ _MARK_JS = r"""
                    (tag === 'input' && ['submit','button'].includes(el.type) ? el.value : '') || '')
                    .trim().replace(/\s+/g, ' ').slice(0, 80);
     let value = '';
-    if ((tag === 'input' || tag === 'textarea') && el.type !== 'password') value = (el.value || '').slice(0, 40);
+    const ident = [el.name, el.id, el.getAttribute('autocomplete'), el.getAttribute('placeholder'),
+                   el.getAttribute('aria-label')].filter(Boolean).join(' ');
+    const secret = el.type === 'password' || SENSITIVE.test(ident);
+    if ((tag === 'input' || tag === 'textarea') && !secret) value = (el.value || '').slice(0, 40);
+    if (secret && el.value) value = '(filled in by the person)';
     if (tag === 'select') value = (el.options[el.selectedIndex] || {}).text || '';
     const options = tag === 'select' ? Array.from(el.options).slice(0, 12).map(o => o.text.trim()) : [];
     out.push({ref: i, tag, kind: el.getAttribute('type') || el.getAttribute('role') || '', label, value, options,
@@ -85,8 +92,15 @@ _INFO_JS = r"""
 }
 """
 
+# Steps that move toward a purchase without making it: the agent may click these; the final
+# "Place your order" / "Pay" still needs browser_commit and a person's go-ahead.
+SAFE_CLICK = re.compile(
+    r"^\s*(add to (?:cart|bag|basket)|go to (?:cart|bag|basket)|view (?:cart|bag|basket)|cart|"
+    r"proceed to checkout|(?:secure )?checkout|check out|deliver to this address|use this address)\b",
+    re.IGNORECASE,
+)
 COMMIT_WORDS = re.compile(
-    r"\b(book|booking|pay|payment|purchase|buy|checkout|check out|place order|order now|confirm|"
+    r"\b(book|booking|pay|payment|purchase|buy|place order|place your order|order now|confirm|"
     r"reserve|subscribe|send|submit|sign up|register|delete|transfer|donate|proceed to pay|"
     r"cancel (?:booking|order|subscription|reservation)|complete (?:booking|purchase|order))\b",
     re.IGNORECASE,
@@ -101,7 +115,10 @@ SEARCH_FIELD = re.compile(r"(search|query|\bq\b|keyword|find|destination|from|to
 
 def commit_reason(info: dict[str, Any]) -> str | None:
     """Why clicking this element would commit something, or None if it looks safe to click."""
-    match = COMMIT_WORDS.search(info.get("text", ""))
+    text = info.get("text", "")
+    if SAFE_CLICK.match(text) and not re.search(r"\b(pay|place|buy now|order now|purchase)\b", text, re.IGNORECASE):
+        return None
+    match = COMMIT_WORDS.search(text)
     if match:
         return f"its label says '{match.group(0)}'"
     if info.get("submits") and not info.get("searchForm"):
@@ -207,11 +224,12 @@ class Browser:
 
             self._pw = self._pw or await async_playwright().start()
             self._chromium = await self._pw.chromium.launch(
-                args=["--disable-dev-shm-usage", "--no-first-run", "--disable-background-networking"]
+                args=["--disable-dev-shm-usage", "--no-first-run", "--disable-background-networking"],
+                proxy=_chromium_proxy(),
             )
         return self._chromium
 
-    async def _session(self, key: str, create: bool = True) -> _Session:
+    async def _session(self, key: str, create: bool = True, storage_state: dict | None = None) -> _Session:
         s = self._sessions.get(key)
         if s is not None:
             s.last_used = time.monotonic()
@@ -224,8 +242,8 @@ class Browser:
         settings = get_settings()
         context = await (await self._browser()).new_context(
             user_agent=USER_AGENT, locale="en-IN", timezone_id=settings.timezone,
-            viewport={"width": 1280, "height": 900}, accept_downloads=False,
-            service_workers="block", java_script_enabled=True,
+            viewport=VIEWPORT, accept_downloads=False,
+            service_workers="block", java_script_enabled=True, storage_state=storage_state,
         )
         await context.route("**/*", _guard_request)
         await context.route_web_socket("**/*", _guard_websocket)
@@ -393,6 +411,58 @@ class Browser:
             await self._settle(s.page)
             return await self._snapshot(s.page, "Went back.")
 
+    # ---- saved logins and the person's live view (app/api/routes_browser.py) ----
+    def has(self, key: str) -> bool:
+        return key in self._sessions
+
+    async def ensure(self, key: str, storage_state: dict | None) -> bool:
+        """Open the session with a saved login (cookies) if it isn't open. True if it was created."""
+        if key in self._sessions:
+            return False
+        await self._session(key, storage_state=storage_state)
+        return True
+
+    async def state_of(self, key: str) -> dict | None:
+        """Cookies and local storage of an open session, to save its logins."""
+        s = self._sessions.get(key)
+        return None if s is None else await s.context.storage_state()
+
+    async def screen(self, key: str) -> tuple[bytes, str, str]:
+        """(JPEG of the visible page, url, title), for the person watching."""
+        s = await self._session(key, create=False)
+        async with s.lock:
+            return await s.page.screenshot(type="jpeg", quality=60), s.page.url, await s.page.title()
+
+    async def human(self, key: str, action: str, x: int = 0, y: int = 0, text: str = "", url: str = "") -> str:
+        """An action by the person in the live view. Nothing they type is logged or returned."""
+        s = await self._session(key, create=action == "open")
+        async with s.lock:
+            page = s.page
+            if action == "open":
+                if not url.startswith(("http://", "https://")):
+                    url = "https://" + url
+                check_url(url)
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+                except Exception as e:  # noqa: BLE001
+                    raise BrowserError(f"could not open {url}: {_short(e)}") from None
+            elif action == "click":
+                await page.mouse.click(max(0, min(x, VIEWPORT["width"])), max(0, min(y, VIEWPORT["height"])))
+            elif action == "type":
+                await page.keyboard.type(text[:500], delay=15)
+            elif action == "key":
+                if text not in HUMAN_KEYS:
+                    raise BrowserError("that key isn't available")
+                await page.keyboard.press(text)
+            elif action == "scroll":
+                await page.mouse.wheel(0, max(-3000, min(y, 3000)))
+            elif action == "back":
+                await page.go_back(timeout=NAV_TIMEOUT_MS)
+            else:
+                raise BrowserError("unknown action")
+            await asyncio.sleep(0.6)
+            return page.url
+
     async def html_of(self, url: str) -> str:
         """The rendered HTML of a public page, in a throwaway session (used by search)."""
         check_url(url)
@@ -409,6 +479,25 @@ class Browser:
     async def close(self, key: str) -> str:
         await self._close(key)
         return "Browser closed."
+
+
+def _chromium_proxy() -> dict | None:
+    """OUTBOUND_PROXY in Playwright's form (credentials separate from the server)."""
+    from urllib.parse import urlsplit
+
+    from app.browsing.netguard import proxy_url
+
+    raw = proxy_url()
+    if not raw:
+        return None
+    parts = urlsplit(raw)
+    scheme = "socks5" if parts.scheme.startswith("socks5") else parts.scheme or "http"
+    out: dict = {"server": f"{scheme}://{parts.hostname}:{parts.port or (1080 if scheme == 'socks5' else 3128)}"}
+    if parts.username:
+        from urllib.parse import unquote
+
+        out["username"], out["password"] = unquote(parts.username), unquote(parts.password or "")
+    return out
 
 
 async def _guard_request(route) -> None:

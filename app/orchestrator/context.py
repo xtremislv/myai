@@ -31,3 +31,8 @@ user_key: ContextVar[bytes | None] = ContextVar("user_key", default=None)
 # This turn's chat attachments as files ({"name", "content_type", "data"}), for tools that need
 # the file itself, e.g. a Word template. Same lifetime rule as attachment_text.
 attachment_files: ContextVar[list[dict] | None] = ContextVar("attachment_files", default=None)
+
+
+# Set by the chat route for a run someone is watching live: a tool fills it in to ask the person
+# to take over the browser (log in, enter an OTP, choose a payment method). None = nobody watching.
+browser_request: ContextVar[dict | None] = ContextVar("browser_request", default=None)

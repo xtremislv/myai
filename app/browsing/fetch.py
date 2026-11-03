@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 
 import httpx
 
-from app.browsing.netguard import Blocked, GuardedBackend, check_url
+from app.browsing.netguard import Blocked, GuardedBackend, check_url, proxy_url
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -31,12 +31,14 @@ class Fetched:
 
 
 def _client() -> httpx.Client:
+    headers = {"User-Agent": USER_AGENT, "Accept-Language": "en-IN,en;q=0.9"}
+    proxy = proxy_url()
+    if proxy:
+        # The proxy dials; every URL and redirect is checked with check_url before it goes out.
+        return httpx.Client(proxy=proxy, timeout=TIMEOUT, follow_redirects=False, trust_env=False, headers=headers)
     transport = httpx.HTTPTransport(retries=1)
     transport._pool._network_backend = GuardedBackend()  # httpx has no public hook for this
-    return httpx.Client(
-        transport=transport, timeout=TIMEOUT, follow_redirects=False, trust_env=False,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "en-IN,en;q=0.9"},
-    )
+    return httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=False, trust_env=False, headers=headers)
 
 
 def _pdf_text(data: bytes) -> str:

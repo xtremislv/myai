@@ -8,6 +8,12 @@ For httpx the check runs at connect time on the address actually dialled (Guarde
 which also covers redirects and DNS rebinding. Chromium resolves names itself, so the browser
 checks each request before it is sent (see browser.py); a rebinding attack between that check
 and Chromium's own lookup is a known gap.
+
+With OUTBOUND_PROXY set, the proxy dials and resolves names, so every URL (and every redirect)
+is checked before it is handed to the proxy. This server's own DNS is poisoned for many sites,
+so a name that doesn't resolve to public addresses here is looked up again with DNS-over-HTTPS
+through the proxy, and must resolve to public addresses there. The same rebinding gap applies
+between that lookup and the proxy's own.
 """
 from __future__ import annotations
 
@@ -39,6 +45,34 @@ def _public(ip: str) -> bool:
     return addr.is_global and not addr.is_multicast
 
 
+def proxy_url() -> str:
+    from app.config import get_settings
+
+    return get_settings().outbound_proxy.strip()
+
+
+def _literal_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.split("%", 1)[0])
+        return True
+    except ValueError:
+        return False
+
+
+def _doh(host: str) -> list[str]:
+    """The host's addresses from DNS-over-HTTPS, fetched through the outbound proxy."""
+    import httpx
+
+    ips: list[str] = []
+    with httpx.Client(proxy=proxy_url(), timeout=10, trust_env=False) as client:
+        for rtype in ("A", "AAAA"):
+            resp = client.get("https://cloudflare-dns.com/dns-query", params={"name": host, "type": rtype},
+                              headers={"accept": "application/dns-json"})
+            resp.raise_for_status()
+            ips += [a["data"] for a in resp.json().get("Answer", []) if a.get("type") in (1, 28)]
+    return sorted(set(ips))
+
+
 def resolve_public(host: str, port: int) -> list[str]:
     """The host's addresses, if every one of them is public. Raises Blocked otherwise."""
     host = host.strip("[]").lower().rstrip(".")
@@ -50,14 +84,19 @@ def resolve_public(host: str, port: int) -> list[str]:
         return hit[1]
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        ips = sorted({info[4][0] for info in infos})
     except (socket.gaierror, UnicodeError):
-        raise Blocked(f"{host} could not be found") from None
-    ips = sorted({info[4][0] for info in infos})
-    if not ips:
-        raise Blocked(f"{host} could not be found")
-    if not all(_public(ip) for ip in ips):
-        # Also what a DNS-poisoned name looks like from this server (e.g. 2001::1).
-        raise Blocked(f"{host} does not resolve to a public internet address from this server")
+        ips = []
+    if not ips or not all(_public(ip) for ip in ips):
+        # Unresolvable, or private: also what a DNS-poisoned name looks like here (e.g. 2001::1).
+        if not proxy_url() or _literal_ip(host):
+            raise Blocked(f"{host} does not resolve to a public internet address from this server")
+        try:
+            ips = _doh(host)
+        except Exception:  # noqa: BLE001
+            raise Blocked(f"{host} could not be looked up through the proxy") from None
+        if not ips or not all(_public(ip) for ip in ips):
+            raise Blocked(f"{host} does not resolve to a public internet address")
     _cache[key] = (time.monotonic() + _CACHE_SECONDS, ips)
     return ips
 

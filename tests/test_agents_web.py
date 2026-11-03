@@ -137,13 +137,13 @@ def test_departments_get_the_right_specialists():
         return set(specialists.available({"scratchpad": {"department": dept}}))
 
     everyone = {"files", "organizer", "documents"}  # every department has files, reminders, templates
-    assert team("researcher") == {"research", "browser"} | everyone
-    assert team("account") >= {"research", "browser", "mail", "booking", "operations"} | everyone
+    assert team("researcher") == {"research", "browser", "shopping"} | everyone
+    assert team("account") >= {"research", "browser", "mail", "booking", "operations", "shopping"} | everyone
     assert "browser_commit" not in tools_mod.tools_for("researcher")
     assert team("hr") == {"mail", "operations"} | everyone
-    assert team("logistics") == {"research", "operations"} | everyone
-    # Private chat: web, the person's own mail, files and reminders; nothing that books.
-    assert team(None) == {"research", "browser", "mail"} | everyone
+    assert team("logistics") == {"research", "operations", "shopping"} | everyone
+    # Private chat: web, shopping (orders confirmed by the person), their own mail, files, reminders.
+    assert team(None) == {"research", "browser", "mail", "shopping", "booking"} | everyone
 
 
 def test_old_tool_results_are_shortened_but_the_latest_round_is_whole():

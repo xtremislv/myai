@@ -59,6 +59,11 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Templates (`app/documents/`): fill with the sandboxed Jinja env in `engine.py` only (never a plain
   `jinja2.Template`: templates come from users). Company templates are work-only; private chat uses the
   person's own templates and attachments (`attachment_files` context var).
+- The UI renders model text with `md()` (app.js), which builds DOM nodes; never use innerHTML for model or page text.
+- Personal purchases stay private (`guards.triage` drops an action on a private route); `browser_commit` in private
+  chat uses `web:commit-private` and is always confirmed by the person. Sign-in/OTP/payment are the person's, via
+  the live view (`routes_browser.py`); snapshots hide sensitive field values (`_MARK_JS`).
+- `OUTBOUND_PROXY` is for agents' web traffic only (fetch, search APIs, Chromium); keep internal traffic direct.
 - Web tools must never pass a block/CAPTCHA page off as content (`extract.block_reason`, `tools._readable`).
   `scripts/check_connectivity.py` shows what this network lets through; it changes over time.
 

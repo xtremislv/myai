@@ -67,6 +67,9 @@ def erase_user(session: Session, user_id: str, *, delete_account: bool = False, 
     session.commit()
 
     counts["files"] = userfiles.erase_owner(session, user_id)
+    from app.browsing import logins
+
+    logins.erase_owner(session, user_id, remove_object)
     counts["reminders_and_notifications"] = reminders.erase_owner(session, user_id)
     AESGCMVault(session).delete(secret_name("personal", user_id))
 

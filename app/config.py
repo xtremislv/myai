@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     search_market: str = "en-IN"
     # Most characters of one page or tool result handed to the model (the context is small).
     web_max_chars: int = 6000
+    # Route the agents' web traffic (pages, search APIs, Chromium) through this proxy, e.g.
+    # http://user:pass@host:3128 or socks5h://host:1080. Empty = direct. The model server, mail and
+    # internal services never use it. The network guard still applies (see netguard).
+    outbound_proxy: str = ""
     # Headless Chromium sessions: one per person, closed after this many idle seconds.
     browser_max_sessions: int = 6
     browser_idle_seconds: int = 600

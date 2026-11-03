@@ -220,6 +220,16 @@ same format (Word stays Word):
   person from you, and marks anything it doesn't know as `[TO FILL: ...]`.
 - Many at once: give a list, or a CSV in your files ("one letter per row of people.csv, named by name").
 
+**Shopping.** Ask "compare earbuds under 1500 on Flipkart" or "order me a Pixel 9 cover on Amazon". The
+assistant searches shops, compares price, rating, reviews and delivery, and can fill the cart and go to checkout.
+When a shop asks you to sign in, enter an OTP or choose how to pay, a **live browser** appears in the chat: click
+and type there yourself (the assistant never sees what you type), then press "Done, carry on". Before anything
+is bought, you get a card with the exact order to confirm. Your sign-ins are kept, encrypted with your key; "Sign
+out & close" forgets them. The globe button next to the message box opens the live browser any time. Orders for
+the company go to Accounts, and an approver confirms each one.
+
+Replies are formatted (headings, lists, tables, links).
+
 When a private reply needs your go-ahead, `/v1/chat` answers `"outcome":"confirm"` with a `confirm` object
 (the exact email or file). Answer with `POST /v1/chat/threads/<id>/confirm {"approve": true|false}`;
 `GET /v1/chat/threads/<id>/pending` shows it again. Sending a new message instead counts as "no".
