@@ -30,6 +30,7 @@ TOOL_STEPS = {
     "set_reminder": "Setting a reminder for {when}",
     "web_search": "Searching the web for {query}",
     "news_search": "Checking the news on {query}",
+    "weather": "Checking the weather in {location}",
     "fetch_page": "Reading {url}",
     "scrape_page": "Extracting {what} from {url}",
     "browser_open": "Opening {url}",

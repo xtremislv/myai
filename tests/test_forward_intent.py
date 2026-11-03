@@ -102,7 +102,6 @@ def real_acl(monkeypatch):
 CALLS = [
     (tools.send_notification, ("warehouse", "hello"), "logistics"),
     (tools.set_reminder, ("tomorrow", "check stock"), "logistics"),
-    (tools.web_search, ("market trends",), "researcher"),
     (tools.summarize, ("some text",), "researcher"),
 ]
 
@@ -121,6 +120,18 @@ def test_tool_works_for_its_department_and_admin(real_acl, tool, args, departmen
 def test_tool_is_denied_to_other_departments(real_acl, tool, args, department):
     other = "hr"
     assert tool(_state(other), *args).startswith("ACCESS DENIED")
+
+
+def test_everyone_may_search_the_web_but_not_commit(real_acl, monkeypatch):
+    """Read-only web access is global (private chat included); committing is not."""
+    from app.browsing import search
+
+    monkeypatch.setattr(search, "web", lambda query, limit=8, api=None: [search.Result("T", "https://x.example", "s")])
+    monkeypatch.setattr(tools, "_search_api", lambda: None)
+    for roles in ((), ("hr",), ("logistics",)):
+        assert "x.example" in tools.web_search(_state(*roles), "market trends")
+    assert tools.browser_commit(_state("researcher"), 1, "Book", "x").startswith("ACCESS DENIED")
+    assert tools.browser_commit(_state(), 1, "Book", "x").startswith("ACCESS DENIED")
 
 
 def test_every_tool_has_an_acl_gate():

@@ -68,13 +68,19 @@ SPECIALISTS: dict[str, Specialist] = {
             title="Researching",
             about="finds current, factual information on the web and in company documents: news, "
                   "prices, facts, comparisons, anything that may have changed recently",
-            tools=("web_search", "news_search", "fetch_page", "scrape_page", "read_document", "list_documents"),
+            tools=(
+                "web_search", "news_search", "weather", "fetch_page", "scrape_page", "read_document",
+                "list_documents",
+            ),
             max_rounds=6,
             prompt=(
                 "You are the RESEARCH specialist. Your knowledge is out of date, so for anything that "
                 "can change (news, prices, schedules, people in office, versions, scores, weather) look "
                 "it up instead of relying on memory. Use news_search for current events and web_search "
-                "for the rest, then open the two or three most relevant results with fetch_page; a "
+                "for the rest, with short queries of a few key words and no dates (news_search already "
+                "returns the newest first). Your search tools are live: what they return is real and "
+                "current, even when it is newer than anything you remember. Then open the two or three most relevant results with "
+                "fetch_page; a "
                 "snippet alone is not proof. Prefer official and recent sources and check that a "
                 "page's date fits the question. Where sources disagree, say so. Run independent "
                 "searches in the same step."
@@ -179,11 +185,13 @@ def available(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
 # ---- supervisor ----
 SUPERVISOR_PROMPT = (
-    "You are the SUPERVISOR of a team of specialist agents working for a company. Decide what "
+    "You are the SUPERVISOR of a team of specialist agents. Decide what "
     "happens next for the person's request.\n\nSpecialists:\n{team}\n\n"
     "Give one specialist one clear task at a time, with every detail it needs (names, dates, "
     "places, links from earlier reports), because it does not see this conversation's history. "
-    "Use research for anything about the current world. When the reports so far answer the "
+    "Use research for anything about the current world. Don't write calendar dates into tasks: "
+    "say 'this week', 'today' or 'latest' instead. Never hand out a task that a report already "
+    "covers: if the reports answer the request, even partly, finish. When the reports so far answer the "
     "request, or a specialist needs information only the person can give, finish. "
     'Reply with ONLY JSON: {{"next": "<specialist>", "task": "<instructions>"}} or {{"next": "finish"}}'
 )
@@ -237,6 +245,11 @@ def supervisor(state: dict[str, Any]) -> dict[str, Any]:
     if decision is None or decision[0] == "finish":
         return {"next": "writer"}
     name, task = decision
+    # A specialist that already reported gets a new task only if it asks for something new.
+    if any(n.startswith(f"[{name}]") for n in state.get("research_notes", [])) and _same_task(
+        task, state.get("assignments", [])
+    ):
+        return {"next": "writer"}
     return {
         "active_agent": name,
         "assignments": [task],
@@ -245,6 +258,16 @@ def supervisor(state: dict[str, Any]) -> dict[str, Any]:
         "agent_start": len(state.get("messages", [])),
         "next": name,
     }
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 3}
+
+
+def _same_task(task: str, earlier: list[str]) -> bool:
+    """True if `task` is mostly the same words as a task already handed out."""
+    new = _words(task)
+    return any(new and len(new & _words(old)) / len(new) >= 0.6 for old in earlier)
 
 
 # ---- specialists ----

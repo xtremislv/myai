@@ -2,6 +2,7 @@
 department's tools."""
 from __future__ import annotations
 
+from app.departments.packs import PRIVATE_TOOLS
 from app.orchestrator.tools import DEPARTMENT_TOOLS, TOOLS, tools_for
 
 
@@ -29,4 +30,5 @@ def test_admin_and_superuser():
 
 def test_unknown_department_has_no_tools():
     assert tools_for("nope") == {}
-    assert tools_for(None) == {}
+    # Private chat: read-only web tools only.
+    assert set(tools_for(None)) == set(PRIVATE_TOOLS) and "browser_commit" not in tools_for(None)

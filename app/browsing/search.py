@@ -121,6 +121,21 @@ def relevant(query: str, results: list[Result]) -> list[Result]:
     ]
 
 
+_MONTH = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+)
+_DATE = rf"(?:{_MONTH}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+\d{{4}})?|\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH}(?:,?\s+\d{{4}})?|\d{{4}}-\d{{2}}-\d{{2}})"
+_DATES = re.compile(rf"(?:\b(?:from|between|on|for|since)\s+)?\b{_DATE}(?:\s*(?:to|-|–|and|until)\s*{_DATE})?\b", re.IGNORECASE)
+
+
+def clean_query(query: str) -> str:
+    """Drop calendar dates the model adds ("October 27 to November 3 2026"): search engines match
+    them as words and return worse results. News search already sorts newest first."""
+    cleaned = " ".join(_DATES.sub(" ", query).split())
+    return cleaned if len(cleaned) >= 3 else query
+
+
 def _dedupe(results: list[Result]) -> list[Result]:
     seen, out = set(), []
     for r in results:
@@ -176,6 +191,7 @@ PROVIDERS = {"tavily": _tavily, "serper": _serper}
 
 def web(query: str, limit: int = 8, api: tuple[str, str] | None = None) -> list[Result]:
     """api: (provider, key) from the vault, or None for keyless Bing."""
+    query = clean_query(query)
     if api is not None:
         try:
             return PROVIDERS[api[0]](api[1], query, limit, "general")[:limit]
@@ -185,6 +201,7 @@ def web(query: str, limit: int = 8, api: tuple[str, str] | None = None) -> list[
 
 
 def news(query: str, limit: int = 8, api: tuple[str, str] | None = None) -> list[Result]:
+    query = clean_query(query)
     if api is not None:
         try:
             return PROVIDERS[api[0]](api[1], query, limit, "news")[:limit]

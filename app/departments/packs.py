@@ -30,11 +30,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 MAIL_TOOLS = ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail")
-LOOKUP_TOOLS = ("web_search", "news_search", "fetch_page", "scrape_page")
+LOOKUP_TOOLS = ("web_search", "news_search", "fetch_page", "scrape_page", "weather")
 BROWSE_TOOLS = (
     "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",
     "browser_scroll", "browser_back",
 )
+# Private chat (no department): read-only web access. Owner's decision, 2026-11-03. Nothing that
+# commits (no browser_commit), and no company data or mail.
+PRIVATE_TOOLS = (*LOOKUP_TOOLS, *BROWSE_TOOLS)
 
 
 @dataclass(frozen=True)
@@ -165,6 +168,10 @@ GLOBAL = DepartmentSpec(
     description="Baseline access for every authenticated subject.",
     grants=(
         Grant("inventory:*", ("read", "list"), subject="*"),   # anyone may READ inventory
+        # Read-only web access for everyone, private chat included (owner's decision 2026-11-03).
+        Grant("web:search", ("read",), subject="*"),
+        Grant("web:fetch", ("read",), subject="*"),
+        Grant("web:browse", ("read",), subject="*"),
     ),
     tools=(),
 )

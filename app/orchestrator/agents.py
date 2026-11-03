@@ -136,7 +136,7 @@ def reflect(state: dict[str, Any]) -> dict[str, Any]:
             *_notes_as_messages(state),
             *_conversation(state),
         ]
-        verdict = _verdict(llm.chat(convo, temperature=0, max_tokens=120))
+        verdict = _verdict(llm.chat(with_attachments(convo), temperature=0, max_tokens=120))
     if verdict is None or verdict.get("enough", True) or not verdict.get("missing"):
         return {"next": "writer"}
     step("Looking for what's still missing")

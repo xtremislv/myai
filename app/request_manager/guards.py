@@ -107,7 +107,7 @@ class Triage:
     route: str = "private"  # private | work
     department: str | None = None
     action: str | None = None  # order | service | bill
-    mode: str = "single"  # single | agents for work; single | team for private
+    mode: str = "single"  # single | agents (team only when a caller asks for it)
 
 
 def triage_verdict(
@@ -162,9 +162,9 @@ def triage(
         return Triage(nsfw=True, why=f"classified as {verdict['safety']}")
 
     many = verdict.get("steps") == "many"
-    # Specialists need tools, which only work has: private multi-step answers use the team graph.
+    # Private chat has web tools too, so multi-step answers use the specialists either way.
     mode = "agents" if many else "single"
-    private_mode = "team" if many else "single"
+    private_mode = mode
     action = verdict.get("action") if verdict.get("action") in ("order", "service", "bill") else None
     if action:  # anyone may ask for these: they go to the accounts inbox
         return Triage(route="work", action=action, mode=mode)

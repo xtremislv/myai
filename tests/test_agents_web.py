@@ -286,3 +286,65 @@ def test_scrolled_snapshots_show_text_near_the_viewport():
     assert text_from(text, 0) == text
     lower = text_from(text, 0.8)
     assert lower.startswith("[…") and "line 1700" in lower[:PAGE_TEXT_CHARS]
+
+
+def test_weather_report_prefers_the_named_country(monkeypatch):
+    from app.browsing import weather
+
+    def fake(url):
+        if "geocoding" in url:
+            return {"results": [
+                {"name": "Hyderabad", "country": "Pakistan", "latitude": 25.4, "longitude": 68.4},
+                {"name": "Hyderabad", "admin1": "Telangana", "country": "India", "latitude": 17.4, "longitude": 78.5},
+            ]}
+        assert "latitude=17.4" in url
+        return {"current": {"time": "2026-11-03T12:00", "temperature_2m": 29, "apparent_temperature": 31,
+                            "relative_humidity_2m": 60, "precipitation": 0, "weather_code": 2, "wind_speed_10m": 9},
+                "daily": {"time": ["2026-11-03"], "weather_code": [3], "temperature_2m_min": [21],
+                          "temperature_2m_max": [30], "precipitation_probability_max": [10]}}
+
+    monkeypatch.setattr(weather, "_json", fake)
+    out = weather.report("Hyderabad, India")
+    assert "Telangana, India" in out and "partly cloudy, 29°C" in out and "2026-11-03: overcast" in out
+
+
+def test_streamed_tool_calls_are_assembled_and_thoughts_held_back():
+    from app.llm.client import _assembled, _ThoughtFilter
+
+    got = []
+    f = _ThoughtFilter(got.append)
+    for piece in ["<|chan", "nel>thought\n", "<channel|>Hel", "lo"]:
+        f.feed(piece)
+    f.flush()
+    assert "".join(got) == "Hello"
+    calls = _assembled({0: {"id": "a", "name": "web_search", "args": '{"query": "x"}'}, 1: {"id": "", "name": "", "args": ""}})
+    assert calls == [{"id": "a", "name": "web_search", "args": {"query": "x"}}]
+
+
+@pytest.mark.parametrize(
+    ("query", "cleaned"),
+    [
+        ("India economy news October 27 to November 3 2026", "India economy news"),
+        ("weather Mumbai today November 3, 2026", "weather Mumbai today"),
+        ("RBI policy on 2026-11-03", "RBI policy"),
+        ("2026 elections results", "2026 elections results"),
+        ("March Madness", "March Madness"),
+    ],
+)
+def test_dates_are_removed_from_search_queries(query, cleaned):
+    assert search.clean_query(query) == cleaned
+
+
+def test_supervisor_does_not_repeat_a_task_already_reported(monkeypatch, fake_web):
+    task = "Find this week's news on the Indian economy with sources"
+    replies = iter([
+        json.dumps({"next": "research", "task": task}),
+        "Report: three points.",
+        json.dumps({"next": "research", "task": task + " again"}),  # the same task: refused
+        "Answer.",
+    ])
+    monkeypatch.setattr(specialists.llm, "chat", lambda messages, **k: next(replies))
+    graph = build_agents_graph().compile(checkpointer=MemorySaver())
+    final = graph.invoke(_initial(), config={"configurable": {"thread_id": "t"}, "recursion_limit": 100})
+    assert final["research_notes"] == ["[research] Report: three points."]
+    assert final["messages"][-1]["content"] == "Answer."

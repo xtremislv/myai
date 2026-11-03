@@ -39,6 +39,50 @@ def strip_thoughts(text: str) -> str:
     return _THOUGHT.sub("", text) if "<|channel>" in text else text
 
 
+class _ThoughtFilter:
+    """Passes streamed words on, holding back a leading thought-channel block until it ends."""
+
+    def __init__(self, sink: Callable[[str], None]) -> None:
+        self._sink = sink
+        self._held = ""
+        self._open = True  # still at the start, where a thought block can appear
+
+    def feed(self, text: str) -> None:
+        if not self._open:
+            self._sink(text)
+            return
+        self._held += text
+        if "<|channel>" in self._held:
+            if "<channel|>" not in self._held:
+                return
+            self._held = strip_thoughts(self._held)
+        elif len(self._held) < len("<|channel>") and "<|channel>".startswith(self._held.lstrip()):
+            return
+        self._open = False
+        if self._held:
+            self._sink(self._held)
+        self._held = ""
+
+    def flush(self) -> None:
+        if self._held:
+            self._sink(strip_thoughts(self._held))
+            self._held = ""
+
+
+def _assembled(streamed: dict[int, dict[str, str]]) -> list[dict[str, Any]]:
+    calls = []
+    for index in sorted(streamed):
+        slot = streamed[index]
+        if not slot["name"]:
+            continue
+        try:
+            args: Any = json.loads(slot["args"] or "{}")
+        except json.JSONDecodeError:
+            args = slot["args"]
+        calls.append({"id": slot["id"] or f"call_{index}", "name": slot["name"], "args": args})
+    return calls
+
+
 class Reply(str):
     """The model's text. With tools offered, `tool_calls` holds the calls it asked for, each
     {"id", "name", "args"}; args is a dict, or the raw string if it wasn't valid JSON."""
@@ -96,10 +140,11 @@ def chat(
     returned either way, so the graph behaves the same.
 
     tools offers native function calling (vLLM needs --enable-auto-tool-choice and a
-    --tool-call-parser); the calls come back on Reply.tool_calls. Calls with tools are not
-    streamed: the words of a turn that ends in tool calls aren't an answer.
+    --tool-call-parser); the calls come back on Reply.tool_calls. With tools and stream=True
+    (private chat), words still stream; if the turn ends in tool calls, those words were only
+    a preamble, and the chat replaces everything streamed with the final reply when it's done.
     """
-    sink = token_sink.get() if stream and not tools else None
+    sink = token_sink.get() if stream else None
     model = model or _settings.llm_model
     params = {
         "model": model,
@@ -119,15 +164,26 @@ def chat(
             else:
                 parts = []
                 usage = None
+                streamed_calls: dict[int, dict[str, str]] = {}
+                out = _ThoughtFilter(sink)
                 chunks = _client.chat.completions.create(
                     **params, stream=True, stream_options={"include_usage": True}
                 )
                 for chunk in chunks:
                     usage = getattr(chunk, "usage", None) or usage
-                    text = chunk.choices[0].delta.content if chunk.choices else None
-                    if text:
-                        parts.append(text)
-                        sink(text)
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        parts.append(delta.content)
+                        out.feed(delta.content)
+                    for tc in getattr(delta, "tool_calls", None) or []:
+                        slot = streamed_calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                        slot["id"] = tc.id or slot["id"]
+                        if tc.function is not None:
+                            slot["name"] += tc.function.name or ""
+                            slot["args"] += tc.function.arguments or ""
+                out.flush()
             llm_requests_total.labels(model=model, status="ok").inc()
         except Exception:
             llm_requests_total.labels(model=model, status="error").inc()
@@ -137,7 +193,7 @@ def chat(
 
         if sink is not None:
             _record_usage(model, usage)
-            return Reply("".join(parts))
+            return Reply(strip_thoughts("".join(parts)), _assembled(streamed_calls))
         _record_usage(model, resp.usage)
         message = resp.choices[0].message
         span.set_attribute("llm.tool_calls", len(getattr(message, "tool_calls", None) or []))

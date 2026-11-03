@@ -13,7 +13,10 @@ def now_line(now: dt.datetime | None = None) -> str:
     now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(ZoneInfo(zone))
     return (
         f"Today is {now:%A, %-d %B %Y} and the time is {now:%H:%M} ({zone}). Work out dates such "
-        "as 'tomorrow' or 'next Monday' from this, and state the actual date when it matters."
+        "as 'tomorrow' or 'next Monday' from this, and state the actual date when it matters. "
+        "This is the real date now, not a hypothetical: your training data ends earlier, so "
+        "anything since then is known only from tools, and dated results up to today are real, "
+        "current events. Never say a date is in the future or that no information can exist."
     )
 
 

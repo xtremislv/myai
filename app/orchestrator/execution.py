@@ -21,6 +21,7 @@ from langgraph.types import Command
 from app.acl.models import Subject
 from app.llm.client import token_sink
 from app.orchestrator.context import attachment_text
+from app.orchestrator.progress import progress_sink
 from app.vault import user_keys
 
 
@@ -51,6 +52,15 @@ def private_thread(subject_id: str, thread_id: str) -> str:
 RECURSION_LIMIT = 50
 # The agents graph: up to 4 hand-offs, each up to 12 tool rounds (2 steps per round).
 AGENTS_RECURSION_LIMIT = 150
+
+
+def builder(mode: str):
+    """The uncompiled graph for a mode: single, team or agents."""
+    from app.orchestrator.agents_graph import build_agents_graph
+    from app.orchestrator.graph import build_graph
+    from app.orchestrator.multi_graph import build_team_graph
+
+    return {"agents": build_agents_graph, "team": build_team_graph}.get(mode, build_graph)()
 
 
 def _graph_cm(mode: str, serde=None):
@@ -137,13 +147,15 @@ def _missing(graph, config, context: list[dict[str, Any]]) -> list[dict[str, Any
 def stream_private(
     subject: Subject, message: str, thread_id: str, mode: str, chat_key: bytes, attachments: str | None
 ) -> Iterator[tuple[str, Any]]:
-    """Run a private reply, yielding ("delta", text) as words arrive and then either
+    """Run a private reply, yielding ("step", text) for what the agents are doing (searching,
+    opening a page), ("delta", text) as words arrive, and then either
     ("final", full_reply) or ("error", exception). The run finishes and is saved even if
     the reader goes away."""
     events: queue.Queue = queue.Queue()
 
     def work() -> None:
         token_sink.set(lambda text: events.put(("delta", text)))
+        progress_sink.set(lambda text: events.put(("step", text)))
         try:
             events.put(("final", run(subject, message, thread_id, mode, None, chat_key=chat_key, attachments=attachments)))
         except Exception as e:  # noqa: BLE001 - reported to the reader
@@ -153,7 +165,7 @@ def stream_private(
     while True:
         event = events.get()
         yield event
-        if event[0] != "delta":
+        if event[0] not in ("delta", "step"):
             return
 
 

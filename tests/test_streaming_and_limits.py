@@ -20,8 +20,6 @@ from app.departments.registry import seed_departments
 from app.llm import client as llm
 from app.main import app
 from app.orchestrator import execution, tools
-from app.orchestrator.graph import build_graph
-from app.orchestrator.multi_graph import build_team_graph
 from app.request_manager import concurrency, guards, quota, router
 from app.request_manager.concurrency import ConcurrencyLimiter, InMemorySlots, RedisSlots
 from app.request_manager.router import RMRequest, handle_request
@@ -74,7 +72,7 @@ def api(monkeypatch):
     @contextmanager
     def _cm(mode, serde=None):
         saver.serde = serde or plain
-        builder = build_team_graph() if mode == "team" else build_graph()
+        builder = execution.builder(mode)
         yield builder.compile(checkpointer=saver)
 
     monkeypatch.setattr(execution, "_graph_cm", _cm)
@@ -129,12 +127,12 @@ def test_stream_uses_the_same_encryption_as_plain_chat(api):
     assert "SENSITIVE" not in row.encrypted_title
 
 
-def test_team_mode_streams_only_the_final_answer(api, monkeypatch):
+def test_agents_mode_streams_only_the_final_answer(api, monkeypatch):
     _sorted_as(monkeypatch, steps="many")
     events = _events(_stream(api))
-    assert events[-1]["mode"] == "team"
+    assert events[-1]["mode"] == "agents"
     streamed = [call for call in api.model.calls if call.get("stream")]
-    assert len(streamed) == 1 and "WRITER" in streamed[0]["messages"][0]["content"]
+    assert len(streamed) == 1 and "answering the person" in streamed[0]["messages"][0]["content"]
     assert [e["text"] for e in events if e["type"] == "delta"] == WORDS
 
 
@@ -387,7 +385,8 @@ def test_department_tool_schemas_match_the_allow_list():
 
     names = [t["function"]["name"] for t in tool_schemas("researcher")]
     assert names == list(tools_for("researcher")) and "read_document" in names
-    assert tool_schemas(None) == []  # private chat offers no tools
+    private = [t["function"]["name"] for t in tool_schemas(None)]  # private chat: web only
+    assert "web_search" in private and "browser_commit" not in private and "read_document" not in private
 
 
 def test_steps_reach_the_reader_while_the_work_is_still_running(api, monkeypatch):

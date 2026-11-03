@@ -22,7 +22,7 @@ from typing import Any, Callable
 from app.acl.engine import ACLEngine
 from app.acl.models import Action, Resource, Subject
 from app.db.session import SessionLocal
-from app.departments.packs import BROWSE_TOOLS, LOOKUP_TOOLS, MAIL_TOOLS
+from app.departments.packs import BROWSE_TOOLS, LOOKUP_TOOLS, MAIL_TOOLS, PRIVATE_TOOLS
 from app.storage.objects import ObjectStore
 from app.vault.aesgcm_vault import AESGCMVault
 
@@ -281,6 +281,22 @@ def news_search(state: dict[str, Any], query: str) -> str:
     return untrusted("news search results", _web_call(lambda: search.render(search.news(query, api=api))))
 
 
+def weather(state: dict[str, Any], location: str) -> str:
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    from app.browsing.weather import report
+
+    return _web_call(report, location)
+
+
+def _rendered(url: str) -> str:
+    """The page as real Chromium sees it: gets past many bot challenges plain HTTP can't."""
+    from app.browsing.browser import browser
+
+    b = browser()
+    return b.call(b.html_of, url)
+
+
 def fetch_page(state: dict[str, Any], url: str) -> str:
     if (err := _enforce(state, "read", "web", "fetch")) is not None:
         return err
@@ -289,8 +305,18 @@ def fetch_page(state: dict[str, Any], url: str) -> str:
 
     def go() -> str:
         page = fetch(url)
-        if page.status >= 400:
-            return f"ERROR: {page.url} answered HTTP {page.status}"
+        body = page.body
+        challenged = page.status in (403, 429, 503) or "Just a moment" in body[:3000]
+        if challenged or (page.is_html and len(extract.page_text(body)[1]) < 200):
+            try:
+                body = _rendered(page.url)
+            except Exception:  # noqa: BLE001 - report the original status below
+                pass
+            else:
+                challenged = "Just a moment" in body[:3000]
+                page = type(page)(page.url, 200, "text/html", body)
+        if challenged or page.status >= 400:
+            return f"ERROR: {page.url} answered HTTP {page.status} or blocked automated access. Try another site."
         if page.is_html:
             title, text = extract.page_text(page.body)
             if len(text) < 200:
@@ -333,7 +359,9 @@ def _browse(state: dict[str, Any], action: str, method: str, *args) -> str:
     from app.browsing.browser import browser
 
     b = browser()
-    key = _subject(state).id
+    # Private chat gets its own browser session, so cookies never cross between private and work.
+    dept = (state.get("scratchpad") or {}).get("department")
+    key = f"{_subject(state).id}:{dept or 'private'}"
     return untrusted("a web page", _web_call(lambda: b.call(getattr(b, method), key, *args)))
 
 
@@ -406,6 +434,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "set_reminder": set_reminder,
     "web_search": web_search,
     "news_search": news_search,
+    "weather": weather,
     "fetch_page": fetch_page,
     "scrape_page": scrape_page,
     "browser_open": browser_open,
@@ -465,6 +494,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                   "fetch_page before relying on a fact.",
     "news_search": "Search recent news articles, newest first, with dates. Use it for anything current.",
     "fetch_page": "Read the text of a web page, PDF or text file by URL.",
+    "weather": "Current weather and the next 3 days for a place, e.g. 'Mumbai' or 'Hyderabad, India'.",
     "scrape_page": "Extract from a web page by URL: what='text', 'links' or 'tables', or the text of "
                    "elements matching a CSS selector.",
     "browser_open": "Open a URL in a real browser (runs JavaScript, keeps cookies for this task). "
@@ -559,7 +589,7 @@ def tool_signatures(department: str | None) -> list[str]:
 
 def tools_for(department: str | None) -> dict[str, Callable[..., Any]]:
     """The tool subset an agent in `department` may call (ACL still applies)."""
-    names = DEPARTMENT_TOOLS.get(department or "", ())
+    names = DEPARTMENT_TOOLS.get(department, ()) if department else PRIVATE_TOOLS
     if names == ("*",):
         return dict(TOOLS)
     return {n: TOOLS[n] for n in names if n in TOOLS}

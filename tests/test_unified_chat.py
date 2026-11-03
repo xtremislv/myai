@@ -19,8 +19,6 @@ from app.departments.registry import seed_departments
 from app.llm import client as llm
 from app.main import app
 from app.orchestrator import execution, nodes, tools
-from app.orchestrator.graph import build_graph
-from app.orchestrator.multi_graph import build_team_graph
 from app.request_manager import guards, quota, router
 from app.request_manager.guards import (
     triage_verdict,  # the real one; conftest patches the attribute
@@ -57,7 +55,7 @@ def api(monkeypatch):
     @contextmanager
     def _cm(mode, serde=None):
         saver.serde = serde or plain
-        builder = build_team_graph() if mode == "team" else build_graph()
+        builder = execution.builder(mode)
         yield builder.compile(checkpointer=saver)
 
     monkeypatch.setattr(execution, "_graph_cm", _cm)
@@ -345,9 +343,9 @@ def test_triage_decisions(monkeypatch, verdict, route, department, action):
     assert (result.route, result.department, result.action) == (route, department, action)
 
 
-def test_many_steps_choose_team_mode_unless_the_caller_set_one(api, monkeypatch):
+def test_many_steps_choose_agents_mode_unless_the_caller_set_one(api, monkeypatch):
     _sorted_as(monkeypatch, steps="many")
-    assert _send(api, LEE)["mode"] == "team"
+    assert _send(api, LEE)["mode"] == "agents"
     assert _send(api, LEE, thread="u", mode="single")["mode"] == "single"
 
 

@@ -287,6 +287,8 @@ def chat_stream(
             ):
                 if kind == "delta":
                     yield _event({"type": "delta", "text": value})
+                elif kind == "step":
+                    yield _event({"type": "step", "text": value})
                 elif kind == "error":
                     logger.error("chat stream failed: %s", type(value).__name__)
                     yield _event({"type": "error", "detail": "That reply failed on the server. Try again."})
