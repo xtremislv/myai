@@ -6,7 +6,8 @@ You are Claude Code running on the rented GPU server. The code was built and tes
 
 ## What this is
 A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sorts each message:
-- **Private:** no tools, no audit, encrypted with a per-user key that only their password or recovery code unlocks.
+- **Private:** read-only web tools only (search, news, weather, pages, browser; nothing that books, buys or sends),
+  no audit, encrypted with a per-user key that only their password or recovery code unlocks.
 - **Work:** runs in a department through the Request Manager, with tools, quotas, audit and approvals. It is stored
   apart from the encrypted chat because an approver must resume it without the user's key, then copied into the chat.
 - **Orders, bookings, bills:** go to the accounts inbox.
@@ -21,6 +22,10 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - **No limit on failed logins.** The owner declined it.
 - A person can hold several departments. Roles are read from the database on every request.
 - Grafana runs on the server only.
+- **Private chat gets read-only web access** (owner, 2026-11-03): `PRIVATE_TOOLS` in `packs.py`, granted to everyone
+  (`*`) as `web:search|fetch|browse` read. No company data, mail or `browser_commit` in private chat. Private chat
+  has its own browser session per person, separate from work. Queries do leave the server (to Bing, or to Tavily/
+  Serper if a key is set); results are stored only inside the encrypted chat.
 
 ## This server (found 2026-11-02)
 - **It is a container, not a VM** (vast.ai behind aiccloud.in): no `docker` command and no `CAP_SYS_ADMIN`, so
@@ -60,7 +65,7 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   specialists (research, browser, mail, booking, operations) and a writer answers from their reports. Each
   specialist's tools are narrowed to the department's tools, and the ACL still checks every call. A specialist is
   offered only if the department has one of its core tools (researchers get no booking agent). Triage now sends
-  multi-step **work** here (`steps: many`); private multi-step chat still uses `team`. Bounds: 4 hand-offs, 6-12
+  multi-step messages here (`steps: many`), private ones included; `team` runs only when a caller asks for it. Bounds: 4 hand-offs, 6-12
   tool rounds per specialist, recursion limit 150.
 - **Web tools** (`app/browsing/`): `web_search`, `news_search`, `fetch_page` (HTML, PDF, text), `scrape_page` (text,
   links, tables or a CSS selector), and an interactive headless Chromium (`browser_open/read/click/type/select/
@@ -79,6 +84,10 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - **Mail** (`app/mail/connector.py`): real IMAP/SMTP once a vault secret exists: `mail/<finance|career|contact>`, or
   `mail/personal/<user id>`, holding JSON `{imap_host, imap_port, smtp_host, smtp_port, username, password, from}`.
   Until then the mail tools answer `[stub]`. Departments can now send from their own box (write grants added).
+- `weather` uses Open-Meteo (free, no key). `fetch_page` retries pages that show a bot challenge in real Chromium.
+  Search queries have calendar dates stripped (`search.clean_query`), and agents are told the date is real: Gemma
+  otherwise decides 2026 is "in the future" and refuses to report news. Private chat streams even with tools
+  (`llm.chat(stream=True, tools=...)`); the UI replaces streamed text with the final reply.
 - **Context:** vLLM runs with `--max-model-len 8192`. Older tool results are cut to 400 characters before going back
   to the model, and a page is at most 3,500 characters. Raising it to 16-32k would let agents read more per step.
 - Playwright (Chromium headless shell) is installed in `.venv` and `~/.cache/ms-playwright`. After a rebuild:
