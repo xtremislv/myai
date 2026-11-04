@@ -248,7 +248,7 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   code errors on the way.
 
 ## UI redesign (2026-11-04)
-- The web UI follows the owner's designs in `/root/stitch_tw_ai_ui_redesign/` (light "Executive Slate", dark
+- The web UI follows the owner's example designs (since deleted; they were a guide only) (light "Executive Slate", dark
   "Executive Dark Slate"): TW-ai brand, serif display headings (Newsreader), Geist body, mono labels, a top bar
   with search (pages and chats, Ctrl/⌘K), theme toggle, bell and settings, and redesigned sign-in, chat,
   Overview and Users screens; every other page picks up the same styles.
