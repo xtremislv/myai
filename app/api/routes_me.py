@@ -90,32 +90,55 @@ class MailboxOut(BaseModel):
     imap_host: str = ""
     smtp_host: str = ""
     username: str = ""
+    method: str = ""  # "password", "google sign-in" or "microsoft sign-in"
+    # Which "Sign in with ..." buttons work on this server (the admin added the app's client).
+    sign_in: dict[str, bool] = Field(default_factory=dict)
 
 
 def _secret(subject: Subject) -> str:
     return connector.secret_name("personal", subject.id)
 
 
+def _out(cfg: connector.MailConfig) -> MailboxOut:
+    from app.mail import oauth
+
+    return MailboxOut(connected=True, imap_host=cfg.imap_host, smtp_host=cfg.smtp_host, username=cfg.username,
+                      method=cfg.method, sign_in=oauth.configured())
+
+
 @router.get("/me/mailbox", response_model=MailboxOut)
 def get_mailbox(subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> MailboxOut:
+    from app.mail import oauth
+
     raw = AESGCMVault(session).get(_secret(subject))
     if raw is None:
-        return MailboxOut(connected=False)
+        return MailboxOut(connected=False, sign_in=oauth.configured())
     try:
         cfg = connector.MailConfig.from_secret(raw)
     except (ValueError, KeyError):
-        return MailboxOut(connected=False)
-    return MailboxOut(connected=True, imap_host=cfg.imap_host, smtp_host=cfg.smtp_host, username=cfg.username)
+        return MailboxOut(connected=False, sign_in=oauth.configured())
+    return _out(cfg)
 
 
 def _config_for(body: MailboxIn, imap: str, smtp: str, smtp_port: int):
     user = (body.username or body.address).strip()
     raw = json.dumps({
         "imap_host": imap, "imap_port": body.imap_port, "smtp_host": smtp, "smtp_port": smtp_port,
-        "username": user, "password": body.password.replace(" ", "") if "gmail" in imap else body.password,
+        "username": user, "password": "".join(body.password.split()) if "gmail" in imap else body.password.strip(),
         "from": body.sender.strip() or body.address.strip() or user,
     })
     return raw, connector.MailConfig.from_secret(raw, guarded=True)
+
+
+def _refused(provider, error: Exception) -> str:
+    import smtplib
+
+    from app.mail import providers
+
+    said = " ".join((str(error) or type(error).__name__).strip("b'\"").split())
+    if isinstance(error, OSError) and not isinstance(error, smtplib.SMTPException):
+        return f"couldn't reach {provider.imap_host if provider else 'the mail server'} ({type(error).__name__}); try again"
+    return providers.explain(provider, said) if provider else f"the mail server refused the sign-in ({said[:160]})"
 
 
 @router.put("/me/mailbox", response_model=MailboxOut)
@@ -145,12 +168,124 @@ def put_mailbox(body: MailboxIn, subject: Subject = Depends(current_subject), se
             try:
                 connector.check_login(cfg)
             except Exception as e:  # noqa: BLE001 - the provider's own words help the person fix it
-                said = str(e) if str(e) else type(e).__name__
-                problems.append(providers.explain(provider, said) if provider else f"the mail server refused the sign-in ({said[:160]})")
+                problems.append(_refused(provider, e))
                 continue
         AESGCMVault(session).put(_secret(subject), raw)
-        return MailboxOut(connected=True, imap_host=cfg.imap_host, smtp_host=cfg.smtp_host, username=cfg.username)
+        return _out(cfg)
     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, " ".join(dict.fromkeys(problems)) or "couldn't connect")
+
+
+# ---- signing in with Google or Microsoft (OAuth, app/mail/oauth.py) ----
+class GoogleStartIn(BaseModel):
+    address: str = Field(default="", max_length=255)
+
+
+class GoogleStartOut(BaseModel):
+    url: str
+    paste: bool  # the person pastes the address the browser ends on back here
+
+
+class GoogleFinishIn(BaseModel):
+    url: str = Field(min_length=1, max_length=4000)  # the address the browser ended on (or the code)
+
+
+class MicrosoftStartOut(BaseModel):
+    user_code: str
+    verification_uri: str
+    interval: int
+    expires_in: int
+
+
+class MicrosoftPollOut(BaseModel):
+    done: bool
+    mailbox: MailboxOut | None = None
+
+
+def _save_signed_in(session: Session, subject_id: str, data: dict) -> MailboxOut:
+    """Check the new tokens actually open the mailbox, then keep them."""
+    name = connector.secret_name("personal", subject_id)
+    raw = json.dumps(data)
+    cfg = connector.MailConfig.from_secret(raw, guarded=True, name=name)
+    release_connection(session)
+    try:
+        connector.check_login(cfg)
+    except Exception as e:  # noqa: BLE001
+        said = " ".join((str(e) or type(e).__name__).strip("b'\"").split())[:200]
+        hint = (" In Gmail, check that IMAP is on (Settings > Forwarding and POP/IMAP)."
+                if data.get("provider") == "google" else
+                " For a work or school account, your organisation may have to allow IMAP for it.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Signed in, but the mailbox refused the connection ({said}).{hint}") from None
+    AESGCMVault(session).put(name, raw)
+    return _out(cfg)
+
+
+def _oauth_call(fn, *args):
+    from app.mail.oauth import OAuthError
+
+    try:
+        return fn(*args)
+    except OAuthError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from None
+
+
+@router.post("/me/mailbox/oauth/google/start", response_model=GoogleStartOut)
+def google_start(body: GoogleStartIn, subject: Subject = Depends(current_subject)) -> GoogleStartOut:
+    from app.mail import oauth
+
+    return GoogleStartOut(**_oauth_call(oauth.google_start, subject.id, body.address.strip()))
+
+
+@router.post("/me/mailbox/oauth/google/finish", response_model=MailboxOut)
+def google_finish(body: GoogleFinishIn, subject: Subject = Depends(current_subject),
+                  session: Session = Depends(get_session)) -> MailboxOut:
+    from app.mail import oauth
+
+    code, state = _oauth_call(oauth.code_from, body.url)
+    data = _oauth_call(oauth.google_finish, subject.id, code, state)
+    return _save_signed_in(session, subject.id, data)
+
+
+@router.get("/me/mailbox/oauth/google/callback", include_in_schema=False)
+def google_callback(state: str = "", code: str = "", error: str = "",
+                    session: Session = Depends(get_session)) -> Response:
+    """Where Google sends the browser when the app has a stable redirect_uri (see oauth.py).
+    No sign-in token comes with a redirect, so the person is found by the sign-in's state."""
+    from app.mail import oauth
+
+    def page(text: str, code_: int = 200) -> Response:
+        return Response(text, status_code=code_, media_type="text/plain; charset=utf-8")
+
+    owner = oauth.owner_of_state(state) if state else None
+    if owner is None:
+        return page("This sign-in has expired. Go back to the app and start it again.", 400)
+    if error:
+        return page(f"Google said: {error}. Go back to the app and try again.", 400)
+    try:
+        data = oauth.google_finish(owner, code, state)
+        _save_signed_in(session, owner, data)
+    except oauth.OAuthError as e:
+        return page(f"{e}. Go back to the app and try again.", 400)
+    except HTTPException as e:
+        return page(f"{e.detail} Go back to the app and try again.", 400)
+    return page("Your Gmail is connected. You can close this tab and go back to the app.")
+
+
+@router.post("/me/mailbox/oauth/microsoft/start", response_model=MicrosoftStartOut)
+def microsoft_start(subject: Subject = Depends(current_subject)) -> MicrosoftStartOut:
+    from app.mail import oauth
+
+    return MicrosoftStartOut(**_oauth_call(oauth.microsoft_start, subject.id))
+
+
+@router.post("/me/mailbox/oauth/microsoft/poll", response_model=MicrosoftPollOut)
+def microsoft_poll(subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> MicrosoftPollOut:
+    from app.mail import oauth
+
+    data = _oauth_call(oauth.microsoft_poll, subject.id)
+    if data is None:
+        return MicrosoftPollOut(done=False)
+    return MicrosoftPollOut(done=True, mailbox=_save_signed_in(session, subject.id, data))
 
 
 @router.delete("/me/mailbox", status_code=status.HTTP_204_NO_CONTENT)

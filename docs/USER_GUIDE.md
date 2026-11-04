@@ -177,8 +177,9 @@ curl -s $BASE/v1/chat -H "authorization: Bearer $TOKEN" -H 'content-type: applic
 
 In a private chat the assistant can work with things that are yours alone:
 
-- **Your mailbox.** Connect it under *My account > Mail and reminders* (IMAP on port 993, and SMTP on 465
-  or 587 to send; Gmail and Outlook need an app password). Then ask "what's new in my mail?", "anything I
+- **Your mailbox.** Connect it under *My account > Mail and reminders*: **Sign in with Google** (Gmail,
+  Google Workspace) or **Sign in with Microsoft** (Outlook, Hotmail, Microsoft 365), or an app password for
+  Gmail and other providers. Then ask "what's new in my mail?", "anything I
   need to reply to?", "summarize my unread email and remind me of deadlines". The assistant reads, searches
   and marks mail, and drafts replies. **Sending always shows you the exact email with a Send button first.**
   The login is stored in the vault; the admin can't see or change it.
@@ -230,10 +231,27 @@ goes straight to the shop's page and isn't kept. Before anything is bought you g
 the buttons "Personal: place it" or "Work: send to Accounts". For CAPTCHAs or app approvals, a live browser
 appears where you click and type yourself.
 
-**Mail.** Under My account, enter your email address and an app password (Gmail: turn on 2-Step Verification,
-then create one at myaccount.google.com/apppasswords). Outlook and Hotmail can't be connected with a password. Your sign-ins are kept, encrypted with your key; "Sign
-out & close" forgets them. The globe button next to the message box opens the live browser any time. Orders for
-the company go to Accounts, and an approver confirms each one.
+Shop sign-ins made in the live browser are kept, encrypted with your key; "Sign out & close" forgets them. The
+globe button next to the message box opens the live browser any time. Orders for the company go to Accounts, and
+an approver confirms each one.
+
+**Mail.** Under My account, choose one:
+- **Sign in with Google**: a Google page opens; choose your account and allow mail access. Google then sends
+  you to a page that doesn't load (`http://127.0.0.1:8765/...`). That's expected: copy the whole address from
+  the address bar and paste it into the box in the app.
+- **Sign in with Microsoft**: the app shows a short code; open microsoft.com/devicelogin, type it and sign in.
+  The app notices by itself.
+- **App password** (Gmail without sign-in, Yahoo, Zoho, iCloud): your address and an app password (Gmail: turn
+  on 2-Step Verification, create one at myaccount.google.com/apppasswords, and turn IMAP on in Gmail settings).
+  Outlook can't use a password.
+
+**Data and dashboards.** Attach a CSV (or point to one in your files) and ask "analyse this: revenue by region
+and month, which is growing fastest?". The assistant works the numbers out with Python (pandas) and shows a
+**dashboard** under its reply: headline numbers, charts (hover for values; "Show the numbers" for the table),
+tables with *Download CSV*, and a few takeaways. It works with numbers from mail, the web or earlier replies too
+("make a dashboard of these prices"). Dashboards stay with the chat (encrypted like it) and go when the chat is
+deleted; ask it to save the results to a file if you want to keep them elsewhere. The code runs with no internet
+and sees only copies of the files you name.
 
 Replies are formatted (headings, lists, tables, links).
 

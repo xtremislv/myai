@@ -1,4 +1,4 @@
-# Session wrap-up: state of the platform at end of 2026-11-03
+# Session wrap-up: state of the platform at end of 2026-11-04
 
 Read this first in the next session. It is the short, current picture. `docs/HANDOFF.md` has the detailed
 history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.md` the setup steps.
@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **503 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **529 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -56,7 +56,8 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Reminders | In-app bell + browser pop-up, optional email, opt-in morning mail digest. |
 | Alerts | Server alerts go to the admin's in-app bell. |
 | Ordering | Every order asks **"personal or work?"** (agent asks first; the order card enforces it with "Personal: place it" / "Work: send to Accounts"). Personal orders use the person's **saved details** (logins, cards, UPI, addresses), encrypted with their key; only they can view them (after re-entering their password). The agent fills them into pages without seeing them, and only on the right site. Secrets that aren't saved, CVVs and OTPs are asked through a **secure box** in the chat (typed straight into the page). Work orders go to Accounts with company details. CVVs are never stored. |
-| Mail setup | Address + app password only; Gmail first, then the provider named by the domain. Outlook can't work with passwords (Microsoft blocks it). |
+| Mail setup | "Sign in with Google / Microsoft" (OAuth; the company's app clients are the vault secrets `oauth/google`, `oauth/microsoft`), or address + app password (Gmail first, then the provider named by the domain). Outlook only via Microsoft sign-in. |
+| Data | Agents may run Python (pandas/numpy) in a sandbox and show **temporary dashboards** under replies (owner, 2026-11-04). |
 | Network | The owner rents a VPS in Mumbai and asked for the agents' web traffic to go through it (done). |
 | Infra | Grafana on the server only. No Docker on this host (it's a container). |
 
@@ -69,8 +70,9 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Host | vast.ai container behind aiccloud.in. Quadro RTX 8000 48 GB (Turing, CC 7.5). No Docker, no systemd. Disk 40 GB, **~7 GB free** (watch it). |
 | Model | `google/gemma-4-26B-A4B-it`, AWQ/compressed-tensors INT4 (`cyankiwi/...qat-AWQ-INT4` in `/root/models/gemma-4-26b`), vLLM 0.32.0 in `/root/vllm-env`, `--dtype half`, Turing patch applied, **16k context**, KV cache 280k tokens, `--max-num-seqs 16`, tool parser `gemma4`. |
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
+| Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
 | Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**: all started by `scripts/start_native.sh`. |
-| Database | Postgres 16, migration **0007** (head). |
+| Database | Postgres 16, migration **0008** (head). |
 | Network | Agents' web traffic goes through the owner's VPS (see §5.6). Without it this network poisons DNS and cuts many sites. |
 | Backups | `scripts/backup.sh` works natively and was verified with `restore.sh --verify`; **no off-server destination set** (`BACKUP_DEST` empty), no schedule on this host. |
 
@@ -102,10 +104,12 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - My account > **Saved details**: add/delete logins, cards, UPI IDs, addresses; "Show" needs the account password.
 
 **Mail** (real IMAP/SMTP once a mailbox is connected)
-- People connect their own mailbox under My account with just the address and an **app password** (Gmail:
-  2-Step Verification + myaccount.google.com/apppasswords, IMAP enabled); the provider is chosen from the address
-  (`app/mail/providers.py`). Gmail answers a normal password with AUTHENTICATIONFAILED; Outlook refuses passwords
-  entirely (needs OAuth, not built).
+- People connect their own mailbox under My account: **Sign in with Google** (paste back the 127.0.0.1 address
+  the browser ends on) or **Sign in with Microsoft** (device code), logging in with XOAUTH2 and refreshing
+  tokens automatically (`app/mail/oauth.py`); or address + **app password** (provider chosen from the address,
+  `app/mail/providers.py`). The sign-in buttons stay grey until the admin adds `oauth/google` / `oauth/microsoft`
+  (docs/SERVER_SETUP.md "Mail sign-in"). Gmail answers a normal password with AUTHENTICATIONFAILED (explained to
+  the person); Outlook refuses passwords entirely.
 - `summarize_mail` (gist, action, deadline per email), read, search, open, mark, send (confirmed).
 - Opt-in morning digest that also sets reminders for deadlines found in mail.
 
@@ -114,6 +118,13 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - Work: department folder `shared/<dept>/` (+ data areas like `research/`), undo copies kept 30 days.
 - Templates: `{{ placeholders }}` filled exactly (text and Word, line-item table rows), or an example document
   imitated (Word layout kept); batches from a JSON list or CSV. Company templates on the Templates page.
+
+**Data and dashboards**
+- `run_python`: pandas/numpy code in a sandbox (`app/sandbox.py`: user `nobody`, no network, rlimits, 60 s, audit
+  hook), with copies of chosen files (attachments, My files, department files) in `input/`; `output/` files can
+  be saved. `make_dashboard`: KPIs, bar/hbar/line charts, tables, notes (`app/dashboards.py`), drawn under the
+  reply by `renderDashboard` (hover tooltips, data tables, CSV download, light/dark). Dashboards are stored on the
+  final assistant message (encrypted with private chats). An `analyst` specialist uses both.
 
 **Reminders and notifications**
 - Natural times ("tomorrow 9am", "every weekday"), repeats, bell + pop-ups, optional email.
@@ -190,7 +201,8 @@ reply streamed (Markdown) → UI; work exchanges are also copied into the encryp
 | `app/departments/packs.py` | **source of truth** for departments, grants, tools, critical tools, `PRIVATE_TOOLS` |
 | `app/acl/engine.py` | deny-by-default PDP; `$self` owner rules; audit log |
 | `app/browsing/` | `netguard` (public addresses only; DoH via proxy), `fetch` (httpx, proxy-aware), `search` (DDG/Bing/APIs/scholarly), `extract` (text, block-page detection), `browser` (Chromium sessions, commit/sensitive rules, live view), `products`, `logins`, `weather` |
-| `app/mail/` | `connector` (IMAP/SMTP, guarded for self-configured boxes), `summary` (LLM reading of batches) |
+| `app/mail/` | `connector` (IMAP/SMTP, password or XOAUTH2, guarded for self-configured boxes), `oauth` (Google/Microsoft sign-in, token refresh), `providers`, `summary` (LLM reading of batches) |
+| `app/sandbox.py`, `app/dashboards.py` | code runner for agents; dashboard spec checking |
 | `app/storage/` | `objects` (MinIO + ACL), `attachments`, `userfiles` (My files), `deptfiles` |
 | `app/documents/` | `engine` (sandboxed Jinja, Word fill/imitate), `store` (company templates) |
 | `app/reminders/` | `when` (time parsing), `service` (reminders, notifications, delivery), `delivery` (email), `digest` |
@@ -242,6 +254,8 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 - A real order on any shop (product search works on Amazon/Flipkart/Reliance; checkout + live-panel sign-in +
   confirm path is built and unit-tested, not run against a real account).
 - Mail summaries and the digest against a real mailbox (no test mailbox exists).
+- Google/Microsoft sign-in with a real account (needs the owner's app registrations; flows unit-tested, and
+  both IMAP servers checked live to accept the XOAUTH2 handshake).
 - The Docker/compose path (no Docker here) and a full (non-verify) restore.
 
 **Stubs (need vendor accounts):** payment gateway, SMS, ERP/ledger (`balance_lookup`, `manage_order`,
@@ -255,6 +269,9 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
   agent; review the allowlist before adding sites.
 - The leak guard (refusing long URLs/queries after reading mail or files) is a partial defence against
   prompt-injected exfiltration, not a proof.
+- The code sandbox is user `nobody` + rlimits + an audit hook, not kernel isolation (no user namespaces,
+  seccomp or firewall rights in this container). Code that defeats the hook could reach 127.0.0.1 services as
+  `nobody`; Redis there has no password. A `requirepass` on Redis would close the easiest target.
 - Backups stay on this server (`BACKUP_DEST` empty), and nothing runs them on a schedule here.
 - `GatewayDown` can't reach the admin bell (it's delivered by the gateway). No email/chat alert channel.
 - The proxy depends on one VPS with a shared IP; if it's down, agents' web access fails (no automatic fallback
@@ -274,9 +291,12 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 
 ## 7. Next steps (suggested order)
 
+0. **Register the mail sign-in apps** (Google Cloud: Desktop OAuth client, Gmail API, publish the consent screen;
+   Entra: public client, IMAP.AccessAsUser.All + SMTP.Send) and add `oauth/google`, `oauth/microsoft` on the
+   Credentials page; then connect a real mailbox both ways.
 1. **Try a real personal order** (cheap item) via the globe button: sign in to Amazon in the live panel, ask
    the assistant to order, confirm the card. Fix whatever the real checkout throws up.
-2. **Connect a real mailbox** with a Gmail app password and check `summarize_mail` + the morning digest.
+2. **Connect a real mailbox** (sign-in or app password) and check `summarize_mail` + the morning digest.
 3. **Add a Tavily (free tier) key** on the Credentials page as `search/tavily`.
 4. **Off-server backups:** set `BACKUP_DEST` (rclone) and run `backup.sh` daily from the scheduler or
    `onstart.sh`.

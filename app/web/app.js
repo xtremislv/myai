@@ -662,10 +662,11 @@ async function chatView(thread, { reloadThreads, paint }) {
   const toBottom = () => { scroll.scrollTop = scroll.scrollHeight; };
   const setEmpty = (empty) => content.classList.toggle("is-empty", empty);
 
-  const bubble = (role, text, handledBy) => {
+  const bubble = (role, text, handledBy, dashboards) => {
     const node = h("div", { class: `msg ${role} ${role === "assistant" ? "md" : ""}` }, role === "assistant" ? md(text) : text,
       role === "assistant" && handledBy && h("span", { class: "handled" }, `Handled as work by ${departmentName(handledBy)}`));
     messages.append(node);
+    for (const dash of dashboards || []) messages.append(renderDashboard(dash));
     toBottom();
     return node;
   };
@@ -881,7 +882,7 @@ async function chatView(thread, { reloadThreads, paint }) {
           confirmCard(result.confirm);
           await reloadThreads();
         } else {
-          bubble("assistant", result.reply, result.route === "work" ? result.department : null);
+          bubble("assistant", result.reply, result.route === "work" ? result.department : null, result.dashboards);
           handover(result.browser);
           await reloadThreads();
           if (result.route === "work") await watchRequests();
@@ -947,7 +948,7 @@ async function chatView(thread, { reloadThreads, paint }) {
 
   if (known()) {
     const history = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/messages`);
-    history.forEach((m) => bubble(m.role, m.content, m.handled_by));
+    history.forEach((m) => bubble(m.role, m.content, m.handled_by, m.dashboards));
     if (history.length) setEmpty(false);
     const pending = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/pending`).catch(() => null);
     if (pending) confirmCard(pending);
@@ -1040,6 +1041,229 @@ function browserPanel(scope, reason, { onDone } = {}) {
   timer = setInterval(() => { if (!panel.isConnected) clearInterval(timer); else if (!document.hidden) draw(); }, 1500);
   setTimeout(draw, 50);
   return panel;
+}
+
+// ---- dashboards the assistant makes (app/dashboards.py) ----
+// Specs are data (they may quote web pages or mail), so every element is built here; nothing
+// from a spec becomes markup. Colours are the categorical slots --cat-1..8 (style.css), given
+// to series in a fixed order; values and labels stay in text colours.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svg(tag, attrs, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v !== undefined && v !== null) el.setAttribute(k, v);
+  for (const child of children.flat()) if (child) el.append(child.nodeType ? child : document.createTextNode(String(child)));
+  return el;
+}
+
+const NUMBER = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const COMPACT = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+const fmt = (value, unit) => (value === null || value === undefined ? "–" : NUMBER.format(value) + (unit ? ` ${unit}` : ""));
+
+function niceScale(lo, hi, ticks = 4) {
+  lo = Math.min(0, lo);
+  hi = Math.max(0, hi);
+  if (lo === hi) hi = lo + 1;
+  const raw = (hi - lo) / ticks;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((m) => m >= raw);
+  const min = Math.floor(lo / step) * step;
+  const max = Math.ceil(hi / step) * step;
+  const values = [];
+  for (let v = min; v <= max + step / 2; v += step) values.push(Number(v.toPrecision(12)));
+  return { min, max, values };
+}
+
+function seriesValues(chart) {
+  return chart.series.flatMap((s) => s.values).filter((v) => v !== null && v !== undefined);
+}
+
+function legend(chart) {
+  if (chart.series.length < 2) return null;
+  return h("div", { class: "dash-legend" }, chart.series.map((s, i) =>
+    h("span", null, h("i", { class: `swatch cat-${i + 1}`, "aria-hidden": "true" }), s.name)));
+}
+
+function chartTable(chart) {
+  const total = chart.pie ? chart.series[0].values.reduce((a, b) => a + (b || 0), 0) : 0;
+  return h("details", { class: "dash-data" }, h("summary", { class: "small" }, "Show the numbers"),
+    table(["", ...chart.series.map((s) => s.name), ...(chart.pie ? ["Share"] : [])],
+      chart.labels.map((label, i) => [label, ...chart.series.map((s) => s.values[i] ?? null),
+        ...(chart.pie ? [`${total ? ((chart.series[0].values[i] || 0) / total * 100).toFixed(1) : 0}%`] : [])]
+        .map((v) => (typeof v === "number" ? v : v ?? "–"))), "No data."));
+}
+
+function barChart(chart, W) {
+  const H = 260; const L = 52; const R = 12; const T = 12; const B = 46;
+  const scale = niceScale(Math.min(...seriesValues(chart)), Math.max(...seriesValues(chart)));
+  const y = (v) => T + (H - T - B) * (1 - (v - scale.min) / (scale.max - scale.min));
+  const n = chart.labels.length; const k = chart.series.length;
+  const band = (W - L - R) / n;
+  const groupW = Math.min(band * 0.72, 22 * k + 2 * (k - 1));
+  const barW = (groupW - 2 * (k - 1)) / k;
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "dash-svg", role: "img", "aria-label": chart.title || "Bar chart" });
+  for (const v of scale.values) {
+    root.append(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "axis" : "grid" }));
+    root.append(svg("text", { x: L - 8, y: y(v) + 4, class: "tick", "text-anchor": "end" }, COMPACT.format(v)));
+  }
+  const every = Math.ceil(n / Math.max(2, Math.floor((W - L) / 56)));
+  chart.labels.forEach((label, i) => {
+    const x0 = L + band * i + (band - groupW) / 2;
+    if (i % every === 0) {
+      root.append(svg("text", { x: L + band * i + band / 2, y: H - B + 18, class: "tick", "text-anchor": "middle" },
+        label.length > 12 ? `${label.slice(0, 11)}…` : label));
+    }
+    chart.series.forEach((s, j) => {
+      const v = s.values[i];
+      if (v === null || v === undefined) return;
+      const x = x0 + j * (barW + 2);
+      const top = y(Math.max(v, 0)); const bottom = y(Math.min(v, 0));
+      const hgt = Math.max(1, bottom - top); const r = Math.min(4, barW / 2, hgt);
+      // Rounded at the data end only, square on the baseline.
+      const d = v >= 0
+        ? `M${x},${bottom}V${top + r}Q${x},${top} ${x + r},${top}H${x + barW - r}Q${x + barW},${top} ${x + barW},${top + r}V${bottom}Z`
+        : `M${x},${top}V${bottom - r}Q${x},${bottom} ${x + r},${bottom}H${x + barW - r}Q${x + barW},${bottom} ${x + barW},${bottom - r}V${top}Z`;
+      const mark = svg("path", { d, class: `mark cat-${j + 1}`, tabindex: 0 });
+      bindTooltip(mark, `${label}${k > 1 ? ` · ${s.name}` : ""}: ${fmt(v, chart.unit)}`);
+      root.append(mark);
+    });
+  });
+  return root;
+}
+
+function hbarChart(chart, W) {
+  const s0 = chart.series;
+  let order = chart.labels.map((_, i) => i);
+  if (chart.pie || s0.length === 1) order.sort((a, b) => (s0[0].values[b] ?? -Infinity) - (s0[0].values[a] ?? -Infinity));
+  const total = chart.pie ? s0[0].values.reduce((a, b) => a + (b || 0), 0) : 0;
+  const k = s0.length; const rowH = 10 * k + 2 * (k - 1) + 14;
+  const L = Math.min(150, Math.round(W * 0.32)); const R = 44; const H = order.length * rowH + 8;
+  const scale = niceScale(Math.min(...seriesValues(chart)), Math.max(...seriesValues(chart)));
+  const x = (v) => L + (W - L - R) * ((v - scale.min) / (scale.max - scale.min));
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "dash-svg", role: "img", "aria-label": chart.title || "Bar chart" });
+  root.append(svg("line", { x1: x(0), x2: x(0), y1: 0, y2: H - 4, class: "axis" }));
+  order.forEach((i, row) => {
+    const label = chart.labels[i];
+    const top = 4 + row * rowH;
+    root.append(svg("text", { x: L - 10, y: top + (rowH - 14) / 2 + 5, class: "tick", "text-anchor": "end" },
+      label.length > L / 7 ? `${label.slice(0, Math.floor(L / 7) - 1)}…` : label));
+    s0.forEach((s, j) => {
+      const v = s.values[i];
+      if (v === null || v === undefined) return;
+      const y0 = top + j * 12; const a = x(Math.min(v, 0)); const b = x(Math.max(v, 0));
+      const w = Math.max(1, b - a); const r = Math.min(4, w, 5);
+      const d = v >= 0
+        ? `M${a},${y0}H${b - r}Q${b},${y0} ${b},${y0 + r}V${y0 + 10 - r}Q${b},${y0 + 10} ${b - r},${y0 + 10}H${a}Z`
+        : `M${b},${y0}H${a + r}Q${a},${y0} ${a},${y0 + r}V${y0 + 10 - r}Q${a},${y0 + 10} ${a + r},${y0 + 10}H${b}Z`;
+      const share = chart.pie && total ? ` (${(v / total * 100).toFixed(1)}%)` : "";
+      const mark = svg("path", { d, class: `mark cat-${j + 1}`, tabindex: 0 });
+      bindTooltip(mark, `${label}${k > 1 ? ` · ${s.name}` : ""}: ${fmt(v, chart.unit)}${share}`);
+      root.append(mark);
+      if (k === 1 && order.length <= 15) {
+        root.append(svg("text", { x: b + 6, y: y0 + 9, class: "value" }, chart.pie && total ? `${(v / total * 100).toFixed(0)}%` : COMPACT.format(v)));
+      }
+    });
+  });
+  return root;
+}
+
+function lineChart(chart, W) {
+  const H = 260; const L = 52; const R = 16; const T = 12; const B = 46;
+  const scale = niceScale(Math.min(...seriesValues(chart)), Math.max(...seriesValues(chart)));
+  const n = chart.labels.length;
+  const x = (i) => L + (n === 1 ? (W - L - R) / 2 : (W - L - R) * (i / (n - 1)));
+  const y = (v) => T + (H - T - B) * (1 - (v - scale.min) / (scale.max - scale.min));
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "dash-svg", role: "img", "aria-label": chart.title || "Line chart" });
+  for (const v of scale.values) {
+    root.append(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "axis" : "grid" }));
+    root.append(svg("text", { x: L - 8, y: y(v) + 4, class: "tick", "text-anchor": "end" }, COMPACT.format(v)));
+  }
+  const every = Math.ceil(n / Math.max(2, Math.floor((W - L) / 70)));
+  chart.labels.forEach((label, i) => {
+    if (i % every === 0 ? n - 1 - i >= every / 2 || i === n - 1 : i === n - 1) {
+      root.append(svg("text", { x: x(i), y: H - B + 18, class: "tick", "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" },
+        label.length > 12 ? `${label.slice(0, 11)}…` : label));
+    }
+  });
+  chart.series.forEach((s, j) => {
+    let d = ""; let pen = false;
+    s.values.forEach((v, i) => {
+      if (v === null || v === undefined) { pen = false; return; }
+      d += `${pen ? "L" : "M"}${x(i)},${y(v)}`; pen = true;
+    });
+    root.append(svg("path", { d, class: `line cat-${j + 1}` }));
+    if (n <= 24) s.values.forEach((v, i) => { if (v !== null && v !== undefined) root.append(svg("circle", { cx: x(i), cy: y(v), r: 4, class: `dot cat-${j + 1}` })); });
+  });
+  // Crosshair: one hover column per label, showing every series at that point.
+  const cross = svg("line", { y1: T, y2: H - B, class: "cross", visibility: "hidden" });
+  root.append(cross);
+  const colW = n === 1 ? W - L - R : (W - L - R) / (n - 1);
+  chart.labels.forEach((label, i) => {
+    const hit = svg("rect", { x: x(i) - colW / 2, y: T, width: colW, height: H - T - B, class: "hit", tabindex: 0 });
+    bindTooltip(hit, `${label}: ${chart.series.map((s) => `${chart.series.length > 1 ? `${s.name} ` : ""}${fmt(s.values[i], chart.unit)}`).join(" · ")}`);
+    const on = () => { cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible"); };
+    hit.addEventListener("pointerenter", on);
+    hit.addEventListener("focus", on);
+    hit.addEventListener("pointerleave", () => cross.setAttribute("visibility", "hidden"));
+    hit.addEventListener("blur", () => cross.setAttribute("visibility", "hidden"));
+    root.append(hit);
+  });
+  return root;
+}
+
+function csvOf(columns, rows) {
+  const cell = (v) => { const t = v === null || v === undefined ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  return [columns, ...rows].map((r) => r.map(cell).join(",")).join("\n");
+}
+
+function download(name, text, type) {
+  const link = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function renderDashboard(dash) {
+  const slug = (dash.title || "dashboard").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "dashboard";
+  const kpis = (dash.kpis || []).length && h("div", { class: "dash-kpis" }, dash.kpis.map((k) => h("div", { class: "dash-kpi" },
+    h("div", { class: "label" }, k.label),
+    h("div", { class: "value" }, k.value),
+    k.change && h("div", { class: `change ${k.trend}` },
+      k.trend === "up" ? "▲ " : k.trend === "down" ? "▼ " : k.trend === "flat" ? "▶ " : "", k.change),
+  )));
+  const draw = { bar: barChart, hbar: hbarChart, line: lineChart };
+  // Drawn at the width they get (so text stays 11px), and again when that changes.
+  const charts = (dash.charts || []).map((c) => {
+    const plot = h("div", { class: "dash-plot" });
+    let drawn = 0;
+    new ResizeObserver(() => {
+      const width = Math.max(280, Math.round(plot.clientWidth / 20) * 20);
+      if (!plot.clientWidth || width === drawn) return;
+      drawn = width;
+      plot.replaceChildren(draw[c.type](c, width));
+    }).observe(plot);
+    return h("figure", { class: "dash-chart" },
+      h("figcaption", null, c.title || "", c.unit && h("span", { class: "muted small" }, ` (${c.unit})`)),
+      legend(c), plot, chartTable(c));
+  });
+  const tables = (dash.tables || []).map((t) => h("div", { class: "dash-table" },
+    h("div", { class: "row spread" },
+      h("strong", null, t.title || "Table"),
+      h("button", { type: "button", class: "small", onclick: () => download(`${slug}.csv`, csvOf(t.columns, t.rows), "text/csv") }, "Download CSV"),
+    ),
+    table(t.columns, t.rows, "No rows."),
+    t.more > 0 && h("p", { class: "small muted" }, `${t.more} more rows not shown.`),
+  ));
+  return h("section", { class: "dash", "aria-label": `Dashboard: ${dash.title}` },
+    h("header", { class: "row spread" },
+      h("div", null, h("h3", null, icon("spark"), " ", dash.title), dash.subtitle && h("p", { class: "small muted" }, dash.subtitle)),
+      h("button", { type: "button", class: "small", title: "Save the dashboard's data",
+        onclick: () => download(`${slug}.json`, JSON.stringify(dash, null, 2), "application/json") }, "Download"),
+    ),
+    kpis,
+    charts.length && h("div", { class: "dash-charts" }, charts),
+    tables,
+    dash.notes && mdBlock(dash.notes, "dash-notes"),
+  );
 }
 
 // ---- overview ----
@@ -1877,11 +2101,11 @@ async function mailSettingsCard() {
       }
     },
   },
-    h("p", { class: "muted" }, "Connect your own mailbox so the assistant can read, summarize and answer your mail in your private chats. "
-      + "Sending always asks you first. The servers are chosen from your address (Gmail first)."),
+    h("h3", null, "Or connect with an app password"),
     h("p", { class: "small muted" }, "Gmail: your normal password won't work. Turn on 2-Step Verification, then create an app password at ",
       mdLink("https://myaccount.google.com/apppasswords", "myaccount.google.com/apppasswords"),
-      " and paste it here. Outlook/Hotmail can't connect with a password (Microsoft blocks it)."),
+      " (16 letters) and paste it here. Also turn on IMAP in Gmail: Settings > See all settings > Forwarding and POP/IMAP. "
+      + "Outlook/Hotmail can't use a password (Microsoft blocks it): use Sign in with Microsoft above."),
     error, note,
     h("div", { class: "row wrap" }, addressLabel, passwordLabel),
     other,
@@ -1905,13 +2129,16 @@ async function mailSettingsCard() {
 
   fill(card,
     h("h2", null, "Mail and reminders"),
+    h("p", { class: "muted" }, "Connect your own mailbox so the assistant can read, summarize and answer your mail in your private chats. "
+      + "Sending always asks you first."),
     box.connected && h("div", { class: "row spread" },
-      h("span", null, h("span", { class: "pill good" }, "Connected"), ` ${box.username} (${box.imap_host})`),
+      h("span", null, h("span", { class: "pill good" }, "Connected"), ` ${box.username} (${box.imap_host}, ${box.method || "password"})`),
       h("button", {
         type: "button", class: "danger",
         onclick: async () => { await api("/v1/me/mailbox", { method: "DELETE" }); card.replaceWith(await mailSettingsCard()); },
       }, "Disconnect"),
     ),
+    await signInBlock(box, address, async () => card.replaceWith(await mailSettingsCard())),
     connect,
     h("form", {
       class: "settings",
@@ -1952,6 +2179,101 @@ async function mailSettingsCard() {
     ),
   );
   return card;
+}
+
+// Sign in with Google (paste back the address the browser ends on) or Microsoft (a device code).
+async function signInBlock(box, address, done) {
+  const error = errorBox();
+  const step = h("div");
+  const ready = box.sign_in || {};
+  const notSetUp = "Not set up on this server yet: ask your administrator to add it (Credentials page).";
+  let polling = null;
+  const stop = () => { if (polling) clearTimeout(polling); polling = null; };
+
+  const google = h("button", { type: "button", class: "primary", disabled: !ready.google, title: ready.google ? "" : notSetUp });
+  google.append("Sign in with Google");
+  google.addEventListener("click", async () => {
+    error.clear(); stop();
+    try {
+      const start = await api("/v1/me/mailbox/oauth/google/start", { method: "POST", body: { address: address.value.trim() } });
+      const pasted = h("input", { required: true, placeholder: "http://127.0.0.1:8765/?state=...&code=...", "aria-label": "Address from the browser" });
+      const finish = h("form", {
+        class: "card sunk",
+        onsubmit: async (event) => {
+          event.preventDefault();
+          error.clear();
+          step.append(h("div", { class: "notice" }, "Checking your mailbox..."));
+          try {
+            await api("/v1/me/mailbox/oauth/google/finish", { method: "POST", body: { url: pasted.value } });
+            await done();
+          } catch (err) {
+            step.lastChild?.remove();
+            error.fail(err);
+          }
+        },
+      },
+        h("ol", { class: "small" },
+          h("li", null, mdLink(start.url, "Open the Google sign-in"), " and choose your account. Allow access to your mail."),
+          start.paste
+            ? h("li", null, "Google then sends you to a page that doesn't load (\"This site can't be reached\"). That's expected: copy the whole address from the address bar and paste it here.")
+            : h("li", null, "When Google says you're connected, come back here and press Done."),
+        ),
+        start.paste && h("label", null, "Address from the browser", pasted),
+        start.paste
+          ? h("button", { class: "primary", type: "submit" }, "Finish connecting")
+          : h("button", { class: "primary", type: "button", onclick: done }, "Done"),
+      );
+      fill(step, finish);
+      window.open(start.url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      error.fail(err);
+    }
+  });
+
+  const microsoft = h("button", { type: "button", class: "primary", disabled: !ready.microsoft, title: ready.microsoft ? "" : notSetUp });
+  microsoft.append("Sign in with Microsoft");
+  microsoft.addEventListener("click", async () => {
+    error.clear(); stop();
+    try {
+      const start = await api("/v1/me/mailbox/oauth/microsoft/start", { method: "POST" });
+      const status = h("div", { class: "notice" }, "Waiting for you to sign in...");
+      fill(step, h("div", { class: "card sunk" },
+        h("ol", { class: "small" },
+          h("li", null, "Open ", mdLink(start.verification_uri, start.verification_uri), "."),
+          h("li", null, "Enter this code: ", h("code", { class: "big-code" }, start.user_code)),
+          h("li", null, "Sign in with your Outlook, Hotmail or Microsoft 365 account and allow access to your mail."),
+        ),
+        status,
+      ));
+      const until = Date.now() + start.expires_in * 1000;
+      const poll = async () => {
+        if (!step.isConnected) return stop();
+        if (Date.now() > until) { status.textContent = "The code expired. Press Sign in with Microsoft again."; return stop(); }
+        try {
+          const result = await api("/v1/me/mailbox/oauth/microsoft/poll", { method: "POST" });
+          if (result.done) { stop(); await done(); return; }
+          polling = setTimeout(poll, Math.max(3, start.interval) * 1000);
+        } catch (err) {
+          stop();
+          status.remove();
+          error.fail(err);
+        }
+      };
+      polling = setTimeout(poll, Math.max(3, start.interval) * 1000);
+    } catch (err) {
+      error.fail(err);
+    }
+  });
+
+  return h("div", { class: "signin" },
+    h("h3", null, box.connected ? "Switch to signing in" : "Sign in (recommended)"),
+    h("p", { class: "small muted" }, "Sign in on Google's or Microsoft's own page: no app password needed, and your password never reaches this app. "
+      + "Google: Gmail and Google Workspace. Microsoft: Outlook.com, Hotmail, Live and Microsoft 365."),
+    h("div", { class: "row wrap" }, google, microsoft),
+    !(ready.google && ready.microsoft) && h("p", { class: "small muted" },
+      !ready.google && !ready.microsoft ? notSetUp : `${!ready.google ? "Google" : "Microsoft"} sign-in: ${notSetUp}`),
+    error, step,
+  );
 }
 
 // ---- document templates ----

@@ -224,6 +224,29 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - **Mail:** address + app password; Gmail first (`app/mail/providers.py`); errors quote the provider and say how to
   fix it. Outlook/365 answer "Basic authentication is disabled" (OAuth needed, not built).
 
+## Mail sign-in, data analysis and dashboards (2026-11-04)
+- **Why Gmail "didn't work":** nothing was broken on the server side: Gmail's IMAP/SMTP are reachable, and a
+  wrong app password gets Gmail's own `[AUTHENTICATIONFAILED]` explained back. No mailbox had ever been saved;
+  every attempt came back 422 (before 2026-11-03 16:05, the old form; none since). Likely causes: a normal
+  password instead of an app password, IMAP off, or an account that can't make app passwords.
+- **OAuth sign-in** (`app/mail/oauth.py`): Google (auth code + PKCE; Desktop client, loopback address pasted
+  back, or a web callback with a stable domain) and Microsoft (device code). Tokens live in the mailbox's vault
+  secret (`"auth": "oauth"`), refreshed and saved back when they expire (Microsoft rotates refresh tokens). IMAP
+  and SMTP log in with XOAUTH2 (`connector._imap`, `connector._smtp`). Both servers were checked live with a
+  bogus token (they reject the token, so the handshake works). Needs the admin's `oauth/google` and
+  `oauth/microsoft` secrets (SERVER_SETUP, "Mail sign-in"); **not yet tested with a real account**.
+- Mail tool errors now say what the server said and what to do; the login check runs the server check once.
+- **`run_python`** (`app/sandbox.py`): agent code runs as `nobody` in `/opt/agent-sandbox` (pandas, numpy)
+  with rlimits, a 60 s wall clock, a clean environment and an audit hook (no sockets, processes, ctypes, or
+  writes outside its folder). No user namespaces/seccomp here, so this is defence in depth, not a kernel
+  sandbox. Install: `scripts/setup_sandbox.sh`.
+- **`make_dashboard`** (`app/dashboards.py`): a JSON spec (kpis, bar/hbar/line charts, tables, notes), checked
+  and stored on the final assistant message (`context.with_dashboards`), so it is encrypted with the private chat
+  and returned in history. The UI draws it with DOM/SVG (`renderDashboard`), never innerHTML. New `analyst`
+  specialist; `DATA_TOOLS` for every department and private chat; ACL grants `compute:python|dashboard` to all.
+- Live run on Gemma: CSV -> run_python -> make_dashboard -> short reply, ~55-80 s, one or two self-corrected
+  code errors on the way.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

@@ -711,3 +711,69 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .live-screen { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; background: var(--sunk); }
 .live-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live .row > input { flex: 1 1 200px; }
+
+/* mail sign-in */
+.signin { margin: 4px 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.card.sunk { background: var(--sunk); box-shadow: none; margin-top: 10px; }
+.big-code { font-size: 1.25rem; letter-spacing: 0.12em; padding: 2px 8px; }
+
+/* ---- dashboards (renderDashboard in app.js). Categorical slots in a fixed order; the dark
+   steps are the same hues stepped for dark surfaces. ---- */
+:root {
+  --cat-1: #2a78d6; --cat-2: #eb6834; --cat-3: #1baf7a; --cat-4: #eda100;
+  --cat-5: #e87ba4; --cat-6: #008300; --cat-7: #6250d6; --cat-8: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cat-1: #3987e5; --cat-2: #d95926; --cat-3: #199e70; --cat-4: #c98500;
+    --cat-5: #d55181; --cat-6: #008300; --cat-7: #9085e9; --cat-8: #e66767;
+  }
+}
+.dash { align-self: stretch; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised);
+  padding: 16px; display: grid; gap: 16px; box-shadow: var(--shadow-sm); animation: fade 0.22s ease both; }
+.dash header h3 { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 1.05rem; }
+.dash header p { margin: 2px 0 0; }
+.dash-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.dash-kpi { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--page); }
+.dash-kpi .label { font-size: 12px; color: var(--ink-2); }
+.dash-kpi .value { font-size: 1.5rem; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.3; overflow-wrap: anywhere; }
+.dash-kpi .change { font-size: 12px; color: var(--ink-2); }
+.dash-kpi .change.up { color: var(--good); }
+.dash-kpi .change.down { color: var(--critical); }
+.dash-charts { display: grid; gap: 16px; }
+@media (min-width: 1100px) { .dash-charts { grid-template-columns: 1fr 1fr; } }
+.dash-plot { min-height: 60px; }
+.dash-chart { margin: 0; min-width: 0; }
+.dash-chart figcaption { font-weight: 600; margin-bottom: 6px; }
+.dash-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.dash-svg .grid { stroke: var(--line); stroke-width: 1; }
+.dash-svg .axis { stroke: var(--line-strong); stroke-width: 1; }
+.dash-svg .tick { fill: var(--ink-2); font-size: 11px; }
+.dash-svg .value { fill: var(--ink); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dash-svg .mark { stroke: var(--raised); stroke-width: 1; outline: none; }
+.dash-svg .mark:hover, .dash-svg .mark:focus-visible { opacity: 0.8; }
+.dash-svg .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.dash-svg .dot { stroke: var(--raised); stroke-width: 2; }
+.dash-svg .cross { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 3 3; }
+.dash-svg .hit { fill: transparent; outline: none; }
+.dash-svg .mark.cat-1, .dash-svg .dot.cat-1, .swatch.cat-1 { fill: var(--cat-1); background: var(--cat-1); }
+.dash-svg .mark.cat-2, .dash-svg .dot.cat-2, .swatch.cat-2 { fill: var(--cat-2); background: var(--cat-2); }
+.dash-svg .mark.cat-3, .dash-svg .dot.cat-3, .swatch.cat-3 { fill: var(--cat-3); background: var(--cat-3); }
+.dash-svg .mark.cat-4, .dash-svg .dot.cat-4, .swatch.cat-4 { fill: var(--cat-4); background: var(--cat-4); }
+.dash-svg .mark.cat-5, .dash-svg .dot.cat-5, .swatch.cat-5 { fill: var(--cat-5); background: var(--cat-5); }
+.dash-svg .mark.cat-6, .dash-svg .dot.cat-6, .swatch.cat-6 { fill: var(--cat-6); background: var(--cat-6); }
+.dash-svg .mark.cat-7, .dash-svg .dot.cat-7, .swatch.cat-7 { fill: var(--cat-7); background: var(--cat-7); }
+.dash-svg .mark.cat-8, .dash-svg .dot.cat-8, .swatch.cat-8 { fill: var(--cat-8); background: var(--cat-8); }
+.dash-svg .line.cat-1 { stroke: var(--cat-1); } .dash-svg .line.cat-2 { stroke: var(--cat-2); }
+.dash-svg .line.cat-3 { stroke: var(--cat-3); } .dash-svg .line.cat-4 { stroke: var(--cat-4); }
+.dash-svg .line.cat-5 { stroke: var(--cat-5); } .dash-svg .line.cat-6 { stroke: var(--cat-6); }
+.dash-svg .line.cat-7 { stroke: var(--cat-7); } .dash-svg .line.cat-8 { stroke: var(--cat-8); }
+.dash-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
+.dash-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.dash-data summary { cursor: pointer; color: var(--ink-2); margin-top: 4px; }
+.dash-table { display: grid; gap: 6px; min-width: 0; }
+.dash-notes { white-space: normal; }
+@media (forced-colors: active) {
+  .dash-svg .mark, .dash-svg .dot { fill: CanvasText; } .dash-svg .line { stroke: CanvasText; }
+}

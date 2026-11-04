@@ -42,16 +42,29 @@ class MailConfig:
     # Set for mailboxes a person configured themselves: the servers must be public internet
     # addresses on mail ports, so nobody can aim the server at its own internal services.
     guarded: bool = False
+    # Signed in with OAuth (app/mail/oauth.py): "google" or "microsoft"; then `password` is empty
+    # and `oauth` holds the stored tokens. `secret` is the vault name, to save refreshed tokens.
+    oauth_provider: str = ""
+    oauth: dict | None = None
+    secret: str = ""
 
     @classmethod
-    def from_secret(cls, raw: str, *, guarded: bool = False) -> MailConfig:
+    def from_secret(cls, raw: str, *, guarded: bool = False, name: str = "") -> MailConfig:
         data = json.loads(raw)
+        oauth = data.get("auth") == "oauth"
+        if oauth and not data.get("refresh_token"):
+            raise ValueError("the mailbox sign-in is incomplete")
         return cls(
-            imap_host=data["imap_host"], username=data["username"], password=data["password"],
+            imap_host=data["imap_host"], username=data["username"], password="" if oauth else data["password"],
             imap_port=int(data.get("imap_port", 993)), smtp_host=data.get("smtp_host", ""),
             smtp_port=int(data.get("smtp_port", 465)), sender=data.get("from") or data["username"],
-            guarded=guarded,
+            guarded=guarded, oauth_provider=data.get("provider", "") if oauth else "",
+            oauth=data if oauth else None, secret=name,
         )
+
+    @property
+    def method(self) -> str:
+        return f"{self.oauth_provider} sign-in" if self.oauth_provider else "password"
 
 
 IMAP_PORTS = {993}
@@ -82,8 +95,46 @@ def _imap(cfg: MailConfig) -> imaplib.IMAP4_SSL:
     if cfg.guarded:
         check_servers(cfg)
     conn = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port, ssl_context=ssl.create_default_context(), timeout=TIMEOUT)
-    conn.login(cfg.username, cfg.password)
+    try:
+        if cfg.oauth_provider:
+            auth = _xoauth2(cfg)
+            conn.authenticate("XOAUTH2", lambda _challenge: auth.encode())
+        else:
+            conn.login(cfg.username, cfg.password)
+    except Exception:
+        try:
+            conn.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+        raise
     return conn
+
+
+def _xoauth2(cfg: MailConfig) -> str:
+    from app.mail import oauth
+
+    return oauth.xoauth2(cfg.username, oauth.access_token(cfg.secret, cfg.oauth or {}))
+
+
+def _smtp(cfg: MailConfig) -> smtplib.SMTP:
+    """A signed-in SMTP connection (465: TLS from the start; 587: STARTTLS)."""
+    context = ssl.create_default_context()
+    if cfg.smtp_port == 465:
+        server = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, context=context, timeout=TIMEOUT)
+    else:
+        server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=TIMEOUT)
+        server.starttls(context=context)
+    try:
+        if cfg.oauth_provider:
+            auth = _xoauth2(cfg)
+            server.ehlo()
+            server.auth("XOAUTH2", lambda challenge=None: auth, initial_response_ok=True)
+        else:
+            server.login(cfg.username, cfg.password)
+    except Exception:
+        server.close()
+        raise
+    return server
 
 
 def _folder(box: str) -> str:
@@ -208,18 +259,10 @@ def fetch_messages(
 
 def check_login(cfg: MailConfig) -> None:
     """Raises if the IMAP login fails (and the SMTP one, when SMTP is set)."""
-    if cfg.guarded:
-        check_servers(cfg)
-    _imap(cfg).logout()
+    _imap(cfg).logout()  # checks the servers first when guarded
     if cfg.smtp_host:
-        context = ssl.create_default_context()
-        if cfg.smtp_port == 465:
-            server = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, context=context, timeout=TIMEOUT)
-        else:
-            server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=TIMEOUT)
-            server.starttls(context=context)
-        with server:
-            server.login(cfg.username, cfg.password)
+        with _smtp(cfg):
+            pass
 
 
 def set_flag(cfg: MailConfig, message_id: str, action: str, box: str = "inbox") -> str:
@@ -258,13 +301,6 @@ def send(cfg: MailConfig, to: str, subject: str, body: str, in_reply_to: str = "
     if in_reply_to:
         msg["In-Reply-To"] = msg["References"] = in_reply_to.strip()
     msg.set_content(body)
-    context = ssl.create_default_context()
-    if cfg.smtp_port == 465:
-        server = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, context=context, timeout=TIMEOUT)
-    else:
-        server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=TIMEOUT)
-        server.starttls(context=context)
-    with server:
-        server.login(cfg.username, cfg.password)
+    with _smtp(cfg) as server:
         server.send_message(msg)
     return f"Sent to {', '.join(recipients)}: {msg['Subject']}"

@@ -70,6 +70,8 @@ TOOL_STEPS = {
     "create_from_template": "Making documents from {template}",
     "save_template": "Saving the template {name}",
     "review_report": "Opening report {report_id}",
+    "run_python": "Running code on the data",
+    "make_dashboard": "Building a dashboard: {title}",
 }
 
 

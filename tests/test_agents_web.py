@@ -136,7 +136,7 @@ def test_departments_get_the_right_specialists():
     def team(dept):
         return set(specialists.available({"scratchpad": {"department": dept}}))
 
-    everyone = {"files", "organizer", "documents"}  # every department has files, reminders, templates
+    everyone = {"files", "organizer", "documents", "analyst"}  # every department: files, reminders, templates, data
     assert team("researcher") == {"research", "browser", "shopping"} | everyone
     assert team("account") >= {"research", "browser", "mail", "booking", "operations", "shopping"} | everyone
     assert "browser_commit" not in tools_mod.tools_for("researcher")

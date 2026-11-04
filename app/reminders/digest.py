@@ -55,7 +55,7 @@ def _mailbox(session: Session, user: User) -> connector.MailConfig | None:
     if raw is None:
         return None
     try:
-        return connector.MailConfig.from_secret(raw, guarded=True)
+        return connector.MailConfig.from_secret(raw, guarded=True, name=connector.secret_name("personal", user.id))
     except (ValueError, KeyError):
         return None
 

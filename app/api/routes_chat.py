@@ -43,7 +43,7 @@ from app.db.session import (
 )
 from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.orchestrator import execution
-from app.orchestrator.context import browser_request
+from app.orchestrator.context import browser_request, dashboards
 from app.orchestrator.execution import scoped_thread
 from app.orchestrator.progress import progress_sink, step
 from app.request_manager import approvals as approvals_store
@@ -133,6 +133,8 @@ class ChatOut(BaseModel):
     confirm: ConfirmOut | None = None
     # The agent handed the browser to the person: {"scope", "reason"} (see routes_browser).
     browser: dict | None = None
+    # Dashboards made for this reply (app/dashboards.py), drawn under it.
+    dashboards: list[dict] = Field(default_factory=list)
 
 
 class ThreadOut(BaseModel):
@@ -145,6 +147,7 @@ class MessageOut(BaseModel):
     role: str
     content: str
     handled_by: str | None = None  # the department, for work; private messages have none
+    dashboards: list[dict] = Field(default_factory=list)
 
 
 class ChatRequestOut(BaseModel):
@@ -226,11 +229,13 @@ def _before_the_model(
             ),
         )
         reply = _work_reply(result)
-        execution.record_private(subject, body.thread_id, key, body.message, reply, result.department)
+        made = list(dashboards.get() or []) if result.outcome == "ok" else []
+        execution.record_private(subject, body.thread_id, key, body.message, reply, result.department, made)
         _remember_thread(session, key, subject.id, body.thread_id, body.message)
         return mode, ChatOut(
             thread_id=body.thread_id, reply=reply, mode=mode, outcome=result.outcome, route="work",
             department=result.department, approval_id=result.approval_id, task_id=result.task_id,
+            dashboards=made,
         )
     return mode, None
 
@@ -255,6 +260,8 @@ def chat(
 ) -> ChatOut:
     handover: dict = {}
     browser_request.set(handover)  # this request's context only
+    made: list = []
+    dashboards.set(made)
     mode, finished = _before_the_model(body, subject, key, session)
     if finished is not None:
         return finished.model_copy(update={"browser": handover or None})
@@ -268,7 +275,7 @@ def chat(
         reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key,
                               attachments=context, files=files)
     _remember_thread(session, key, subject.id, body.thread_id, body.message)
-    return _private_reply(body.thread_id, mode, reply).model_copy(update={"browser": handover or None})
+    return _private_reply(body.thread_id, mode, reply).model_copy(update={"browser": handover or None, "dashboards": made})
 
 
 def _event(payload: dict) -> str:
@@ -298,6 +305,8 @@ def chat_stream(
     # The request's own session closes once the response starts, so the work runs on its own.
     handover: dict = {}
     browser_request.set(handover)  # copied into the worker threads below, which fill it in
+    made: list = []
+    dashboards.set(made)  # likewise: tools add the dashboards they make
     bind = session.get_bind()
     release_connection(session)
     prepared: queue.Queue = queue.Queue()
@@ -334,6 +343,7 @@ def chat_stream(
             context = attachments.context_for_thread(own, key, subject.id, body.thread_id)
             files = attachments.files_for_thread(own, key, subject.id, body.thread_id)
         browser_request.set(handover)  # this generator may run in another thread's context
+        dashboards.set(made)
         with _private_slot(subject) as free:
             if not free:
                 yield _event({"type": "error", "detail": BUSY_MESSAGE})
@@ -354,7 +364,7 @@ def chat_stream(
         with Session(bind=bind) as later:
             _remember_thread(later, key, subject.id, body.thread_id, body.message)
         yield _event({"type": "done", **_private_reply(body.thread_id, mode, reply).model_dump(),
-                      "browser": handover or None})
+                      "browser": handover or None, "dashboards": made})
 
     return _stream_response(events())
 
@@ -469,6 +479,8 @@ def thread_confirm(
         raise HTTPException(status.HTTP_409_CONFLICT, "nothing is waiting for your confirmation in this chat")
     handover: dict = {}
     browser_request.set(handover)
+    made: list = []
+    dashboards.set(made)
     if body.as_work and pending["tool"] == "browser_commit":
         # Work purchases are paid with company details by Accounts, never from personal ones.
         args = pending["args"]
@@ -494,7 +506,7 @@ def thread_confirm(
         except execution.StaleApproval as e:
             raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
     reply = _private_reply(thread_id, pending["mode"], out)
-    return reply.model_copy(update={"browser": handover or None})
+    return reply.model_copy(update={"browser": handover or None, "dashboards": made})
 
 
 @router.get("/threads/{thread_id}/requests", response_model=list[ChatRequestOut])

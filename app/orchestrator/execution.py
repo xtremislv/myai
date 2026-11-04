@@ -192,13 +192,15 @@ def private_history(subject: Subject, thread_id: str, chat_key: bytes) -> list[d
     with _graph_cm("single", user_keys.checkpoint_serde(chat_key)) as graph:
         values = graph.get_state(config).values
     return [
-        {"role": m["role"], "content": m["content"], "handled_by": m.get("handled_by")}
+        {"role": m["role"], "content": m["content"], "handled_by": m.get("handled_by"),
+         "dashboards": m.get("dashboards") or []}
         for m in _conversation(values)
     ]
 
 
 def record_private(
-    subject: Subject, thread_id: str, chat_key: bytes, message: str, reply: str, handled_by: str | None
+    subject: Subject, thread_id: str, chat_key: bytes, message: str, reply: str, handled_by: str | None,
+    dashboards: list[dict] | None = None,
 ) -> None:
     """Add an exchange that ran elsewhere (department work) to the user's encrypted chat,
     without calling the model, so the conversation reads as one."""
@@ -206,7 +208,8 @@ def record_private(
     update = {
         "messages": [
             {"role": "user", "content": message},
-            {"role": "assistant", "content": reply, "handled_by": handled_by},
+            {"role": "assistant", "content": reply, "handled_by": handled_by,
+             **({"dashboards": dashboards} if dashboards else {})},
         ],
         "subject_id": subject.id,
         "subject_roles": list(subject.roles),

@@ -299,6 +299,40 @@ Here: `ssh-keygen -t ed25519 -N "" -f /root/.ssh/proxy_vps`, then in `.env`:
 and `scripts/check_connectivity.py` shows the difference. Don't set `HTTP_PROXY`/`HTTPS_PROXY` globally: the model
 server, MinIO and the tunnels must stay direct.
 
+### Mail sign-in with Google and Microsoft
+People can connect Gmail with an app password, but "Sign in with Google / Microsoft" (My account) avoids app
+passwords and is the only way for Outlook, Hotmail and Microsoft 365 (Microsoft refuses passwords). Each needs
+the company's own app registration, stored by the admin on the **Credentials** page. Until a secret exists, its
+button is greyed out. Tokens are refreshed automatically and kept in the vault with the mailbox settings.
+
+**Google** (Gmail and Google Workspace):
+1. console.cloud.google.com > create a project > *APIs & Services* > enable the **Gmail API**.
+2. *OAuth consent screen*: External (or Internal for a Workspace-only company), app name, support email. Add the
+   scope `https://mail.google.com/`. Then **Publish app**: while in "Testing", Google's refresh tokens die after
+   7 days. Unverified apps work for up to 100 people, who see a "Google hasn't verified this app" screen
+   (Advanced > continue). Verification removes it but takes weeks.
+3. *Credentials* > Create OAuth client ID > **Desktop app**. Save the secret
+   `oauth/google` = `{"client_id": "...apps.googleusercontent.com", "client_secret": "..."}`.
+   Sign-in ends on `http://127.0.0.1:8765/...`, a page that doesn't load; the person pastes that address back
+   into the app. This works although the quick-tunnel address changes. With a stable domain, use a **Web
+   application** client instead, register `https://<domain>/v1/me/mailbox/oauth/google/callback`, and add
+   `"redirect_uri": "<that address>"` to the secret: the sign-in then finishes by itself.
+
+**Microsoft** (Outlook.com, Hotmail, Live, Microsoft 365):
+1. portal.azure.com > *Microsoft Entra ID* > *App registrations* > New registration. Supported accounts:
+   "Accounts in any organizational directory and personal Microsoft accounts". No redirect URI needed.
+2. *Authentication* > Advanced settings > **Allow public client flows: Yes** (device-code sign-in).
+3. *API permissions* > Add > *APIs my organization uses* > **Office 365 Exchange Online** > Delegated:
+   `IMAP.AccessAsUser.All`, `SMTP.Send` (plus Microsoft Graph `offline_access`, `openid`, `email`).
+4. Save the secret `oauth/microsoft` = `{"client_id": "<Application (client) ID>", "tenant": "common"}`.
+   People open microsoft.com/devicelogin and type the code the app shows. Work/school tenants may need their
+   admin to allow the app (and SMTP AUTH for the mailbox) before sending works.
+
+### Code runner for the agents
+`run_python` (analysis with pandas/numpy, used for dashboards) runs code as the user `nobody` with its own
+interpreter in `/opt/agent-sandbox`, which `nobody` can read (it can't read `/root`). Install it once:
+`scripts/setup_sandbox.sh`. See `app/sandbox.py` for the limits and what the isolation does and doesn't cover.
+
 ### Browser for the agents
 The agents' headless browser needs Chromium and its system libraries:
 

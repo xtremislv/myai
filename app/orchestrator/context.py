@@ -36,3 +36,15 @@ attachment_files: ContextVar[list[dict] | None] = ContextVar("attachment_files",
 # Set by the chat route for a run someone is watching live: a tool fills it in to ask the person
 # to take over the browser (log in, enter an OTP, choose a payment method). None = nobody watching.
 browser_request: ContextVar[dict | None] = ContextVar("browser_request", default=None)
+
+
+# Set by the chat routes to a fresh list: dashboards made during this request (app/dashboards.py)
+# are added to it, and the final reply carries them (with_dashboards). None = nobody to show them to.
+dashboards: ContextVar[list | None] = ContextVar("dashboards", default=None)
+
+
+def with_dashboards(message: dict[str, Any]) -> dict[str, Any]:
+    """The final assistant message, carrying this request's dashboards (if any). They are saved
+    with the message: encrypted with the chat in private chats."""
+    made = dashboards.get()
+    return {**message, "dashboards": list(made)} if made else message

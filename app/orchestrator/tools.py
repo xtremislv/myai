@@ -15,6 +15,7 @@ by strangers and may contain instructions aimed at the agent.
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import typing
 from typing import Any, Callable
@@ -24,6 +25,7 @@ from app.acl.models import Action, Resource, Subject
 from app.db.session import SessionLocal
 from app.departments.packs import (
     BROWSE_TOOLS,
+    DATA_TOOLS,
     FILE_TOOLS,
     LOOKUP_TOOLS,
     MAIL_TOOLS,
@@ -140,19 +142,29 @@ def _mailbox(state: dict[str, Any], category: str, box: str, action: str):
             f"'{secret_name(category, owner)}')"
         )
     try:
-        return MailConfig.from_secret(raw, guarded=category == "personal"), None
+        return MailConfig.from_secret(raw, guarded=category == "personal", name=secret_name(category, owner)), None
     except (ValueError, KeyError):
         return None, f"ERROR: the {category} mailbox settings in the vault are incomplete"
 
 
 def _mail_call(fn, *args) -> str:
+    import imaplib
+    import smtplib
+
+    from app.mail.oauth import OAuthError
+
     try:
         return fn(*args)
-    except ValueError as e:
+    except (ValueError, OAuthError) as e:
         return f"ERROR: {e}"
+    except (imaplib.IMAP4.error, smtplib.SMTPAuthenticationError) as e:
+        said = " ".join(str(e).strip("b'\"").split())[:160]
+        logger.warning("mail login refused: %s", type(e).__name__)
+        return (f"ERROR: the mail server refused the login ({said}). The person should reconnect their "
+                "mailbox under My account > Mail and reminders.")
     except Exception as e:  # noqa: BLE001 - network/auth problems come back as text
         logger.warning("mail call failed: %s", type(e).__name__)
-        return f"ERROR: the mail server could not be reached or refused the login ({type(e).__name__})"
+        return f"ERROR: the mail server could not be reached ({type(e).__name__}). Try again in a moment."
 
 
 def read_mail(
@@ -1301,6 +1313,110 @@ def browser_commit(state: dict[str, Any], ref: int, label: str, summary: str) ->
     return _browse(state, "write", "click", ref, True, label)
 
 
+# ---- data: run Python in the sandbox, show dashboards ----
+def _input_bytes(state: dict[str, Any], path: str) -> tuple[str, bytes] | str:
+    """(name, bytes) of a file the caller may read: one attached to this chat, the person's own
+    file (private chat) or the department's (work). An error string otherwise."""
+    from app.orchestrator.context import attachment_files
+
+    path = path.strip()
+    for f in attachment_files.get() or []:
+        if f["name"] == path or f["name"] == path.rsplit("/", 1)[-1]:
+            return f["name"], f["data"]
+    if _private(state):
+        found = _my_files(state, "read")
+        if isinstance(found, str):
+            return found
+        key, owner = found
+        from app.storage import userfiles
+
+        try:
+            with SessionLocal() as session:
+                info, data = userfiles.read(session, key, owner, path)
+        except userfiles.FileError as e:
+            return f"ERROR: {e}"
+        return info.path, data
+    try:
+        with SessionLocal() as session:
+            found_key, data = _dept_files(session, state).read(path)
+    except PermissionError as e:
+        return f"ACCESS DENIED: {e}"
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR: couldn't read '{path}' ({type(e).__name__})"
+    return found_key, data
+
+
+def _show_dashboard(spec: Any) -> str:
+    from app import dashboards
+    from app.orchestrator.context import dashboards as shown
+
+    try:
+        dash = dashboards.normalize(spec)
+    except ValueError as e:
+        return f"ERROR: dashboard not shown: {e}"
+    made = shown.get()
+    if made is None:
+        return "ERROR: dashboards can only be shown in a chat; give the key numbers in your reply instead."
+    made.append(dash)
+    return dashboards.describe(dash)
+
+
+def make_dashboard(state: dict[str, Any], title: str, spec: str) -> str:
+    if (err := _enforce(state, "write", "compute", "dashboard")) is not None:
+        return err
+    try:
+        data = json.loads(spec) if isinstance(spec, str) and spec.strip().startswith("{") else spec
+    except json.JSONDecodeError as e:
+        return f"ERROR: spec is not valid JSON ({e.msg} at character {e.pos}). Give one JSON object."
+    if isinstance(data, dict):
+        data = {**data, "title": data.get("title") or title}
+    return _show_dashboard(data)
+
+
+def run_python(state: dict[str, Any], code: str, files: str = "", save_to: str = "") -> str:
+    """Approval-free: the code runs in the sandbox (app/sandbox.py) with no network and no
+    access to anything but copies of the files named here."""
+    from app import sandbox
+
+    if (err := _enforce(state, "write", "compute", "python")) is not None:
+        return err
+    inputs: dict[str, bytes] = {}
+    for path in [p.strip() for p in files.split(",") if p.strip()][:10]:
+        got = _input_bytes(state, path)
+        if isinstance(got, str):
+            return got
+        inputs[got[0].rsplit("/", 1)[-1]] = got[1]
+    try:
+        result = sandbox.run(code, inputs)
+    except (ValueError, sandbox.SandboxUnavailable) as e:
+        return f"ERROR: {e}"
+    parts = []
+    if result.timed_out:
+        parts.append(f"STOPPED: the code ran longer than {sandbox.WALL_SECONDS} seconds.")
+    elif not result.ok and not result.stderr.strip():
+        parts.append("STOPPED: the code used too much CPU time or memory. Work on less data, or summarise first.")
+    out = result.stdout.strip()
+    if out:
+        parts.append("OUTPUT:\n" + (out if len(out) <= 4000 else out[:4000] + f"\n[... {len(out) - 4000} more characters]"))
+    if result.stderr.strip():
+        tail = result.stderr.strip()[-1500:]
+        parts.append(("ERROR OUTPUT (fix the code and run it again):\n" if not result.ok else "WARNINGS:\n") + tail)
+    if result.outputs:
+        if save_to.strip():
+            folder = save_to.strip().strip("/")
+            parts += [_save(state, f"{folder}/{name}", data) for name, data in result.outputs.items()]
+        else:
+            parts.append("Files made (not kept; run again with save_to='folder' to keep them): "
+                         + ", ".join(f"{n} ({_size(len(d))})" for n, d in result.outputs.items()))
+    if result.dashboard is not None:
+        parts.append(_show_dashboard(result.dashboard))
+    if not parts:
+        parts.append("The code ran and printed nothing. print() the results you need.")
+    if inputs:
+        parts.insert(0, f"(input files: {', '.join('input/' + n for n in inputs)})")
+    return "\n\n".join(parts)
+
+
 def summarize(state: dict[str, Any], text: str) -> str:
     if (err := _enforce(state, "read", "research", "summarize")) is not None:
         return err
@@ -1372,6 +1488,8 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "browser_commit": browser_commit,
     "summarize": summarize,
     "review_report": review_report,
+    "run_python": run_python,
+    "make_dashboard": make_dashboard,
 }
 
 # Per-department tool allow-lists. "*" = all tools. Must match `tools` in packs.py.
@@ -1379,17 +1497,18 @@ DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
     "account": (
         "balance_lookup", *MAIL_TOOLS, "manage_order", "manage_bill",
         "initiate_payment", "book_service", "inventory_lookup",
-        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
     ),
-    "hr": (*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
+    "hr": (*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS),
     "logistics": (
         "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification",
-        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
     ),
     "researcher": (
-        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS,
+        *TEMPLATE_TOOLS, *DATA_TOOLS,
     ),
-    "superuser": ("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
+    "superuser": ("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS),
     "admin": ("*",),
 }
 
@@ -1490,6 +1609,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                       "with a one-line summary of what it commits (item, quantity, total price, delivery "
                       "address). The person (or an approver at work) confirms it before it is clicked.",
     "summarize": "Summarize a long text.",
+    "make_dashboard": "Show the person a dashboard under your reply: the clearest way to present numbers, "
+                      "comparisons, trends or many records. spec is a JSON object with any of: kpis [{label, "
+                      "value, change, trend up|down|flat}] (up to 8 headline numbers); charts [{type bar|hbar|line, "
+                      "title, labels [...], series [{name, values [numbers]}], unit}] (one value per label, up to 8 "
+                      "series, hbar for rankings and shares, line for time); tables [{title, columns [...], rows "
+                      "[[...]]}]; notes (short Markdown). Use real numbers you looked up or computed, never invented.",
+    "run_python": "Run Python 3 code to analyse data: pandas and numpy are available; no internet. files: "
+                  "comma-separated files to copy into input/ (the person's or department's files, or ones "
+                  "attached to the chat), e.g. 'sales.csv' -> pd.read_csv('input/sales.csv'). print() what you "
+                  "need to see. Files written to output/ can be kept with save_to='folder'. Writing a "
+                  "dashboard spec (see make_dashboard) to dashboard.json shows it as a dashboard: use "
+                  "json.dump(spec, f, default=str) so dates and numpy numbers work.",
     "review_report": "Open a content report by id.",
 }
 
@@ -1551,6 +1682,8 @@ def coerce_args(fn: Callable[..., Any], args: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"'{name}' must be a number, got {value!r}") from None
         elif want is int and isinstance(value, float) and value.is_integer():
             out[name] = int(value)
+        elif want is str and isinstance(value, (dict, list)):
+            out[name] = json.dumps(value)  # e.g. a dashboard spec given as an object
         elif want is str and not isinstance(value, str) and value is not None:
             out[name] = str(value)
     return out

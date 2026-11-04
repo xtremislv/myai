@@ -6,7 +6,7 @@ back with the fix, not just "invalid credentials".
 
 Measured 2026-11-03: Gmail accepts IMAP with an app password (needs 2-Step Verification on and
 IMAP enabled), and answers a normal password with AUTHENTICATIONFAILED. Outlook/Microsoft 365
-answer "Basic authentication is disabled": they need OAuth sign-in, which isn't built yet.
+answer "Basic authentication is disabled": they connect with "Sign in with Microsoft" (app/mail/oauth.py).
 """
 from __future__ import annotations
 
@@ -33,9 +33,8 @@ GMAIL = Provider(
 OUTLOOK = Provider(
     "Outlook", "outlook.office365.com", "smtp.office365.com", 587,
     ("outlook.com", "hotmail.com", "live.com", "msn.com", "outlook.in", "hotmail.co.in"),
-    "Outlook and Microsoft 365 no longer accept passwords from mail apps (Microsoft requires its own "
-    "sign-in, OAuth, which this app doesn't support yet). Use a Gmail address, or forward your Outlook "
-    "mail to one.",
+    "Outlook and Microsoft 365 don't accept passwords from mail apps: use the \"Sign in with Microsoft\" "
+    "button instead.",
     password_ok=False,
 )
 YAHOO = Provider(

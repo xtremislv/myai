@@ -52,6 +52,9 @@ FILE_TOOLS = (
     "delete_file", "restore_file",
 )
 REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
+# Analysing data with code (app/sandbox.py: no network, copies of files only) and showing the
+# results as a dashboard under the reply (app/dashboards.py). Everyone, private chat included.
+DATA_TOOLS = ("run_python", "make_dashboard")
 # Documents from templates: company templates (database) at work; in private chat the person's
 # own templates (My files, templates/) and files attached to the chat.
 TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "save_template")
@@ -62,7 +65,7 @@ TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "sa
 WALLET_TOOLS = ("list_saved_details", "fill_saved", "ask_person_for_secret")
 PRIVATE_TOOLS = (
     *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
-    *WALLET_TOOLS,
+    *WALLET_TOOLS, *DATA_TOOLS,
 )
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
@@ -108,7 +111,7 @@ ACCOUNT = DepartmentSpec(
     tools=(
         "balance_lookup", *MAIL_TOOLS, "manage_order", "manage_bill",
         "initiate_payment", "book_service", "inventory_lookup",
-        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
     ),
     quota_per_min=60,
     max_concurrency=4,
@@ -134,7 +137,7 @@ HR = DepartmentSpec(
         Grant("shared:hr/*", ("read", "write", "list", "delete")),
         Grant("template:hr/*", ("read", "write", "list", "delete")),
     ),
-    tools=(*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
+    tools=(*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS),
 )
 
 LOGISTICS = DepartmentSpec(
@@ -152,7 +155,7 @@ LOGISTICS = DepartmentSpec(
     ),
     tools=(
         "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification",
-        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
     ),
     quota_per_min=120,
     max_concurrency=6,
@@ -170,7 +173,7 @@ RESEARCHER = DepartmentSpec(
         Grant("template:researcher/*", ("read", "write", "list", "delete")),
     ),
     tools=(
-        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
+        "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
     ),
     quota_per_min=120,
     max_concurrency=6,
@@ -184,7 +187,7 @@ SUPERUSER = DepartmentSpec(
         Grant("shared:superuser/*", ("read", "write", "list", "delete")),
         Grant("template:superuser/*", ("read", "write", "list", "delete")),
     ),
-    tools=("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS),
+    tools=("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS),
     quota_per_min=120,
     max_concurrency=6,
 )
@@ -220,6 +223,9 @@ GLOBAL = DepartmentSpec(
         Grant("template:global/*", ("read", "list"), subject="*"),  # company-wide templates
         # Personal shopping in private chat: commits only after the person's own confirmation.
         Grant("web:commit-private", ("write",), subject="*"),
+        # Running analysis code in the sandbox and showing dashboards.
+        Grant("compute:python", ("write",), subject="*"),
+        Grant("compute:dashboard", ("write",), subject="*"),
     ),
     tools=(),
 )

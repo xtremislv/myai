@@ -25,7 +25,7 @@ from app.llm import client as llm
 from app.observability import graph_node_total, tracer
 from app.orchestrator.agents import _conversation
 from app.orchestrator.clock import with_now
-from app.orchestrator.context import with_attachments
+from app.orchestrator.context import with_attachments, with_dashboards
 from app.orchestrator.nodes import (
     READ_SOURCES,
     _department,
@@ -257,6 +257,23 @@ SPECIALISTS: dict[str, Specialist] = {
             ),
         ),
         Specialist(
+            name="analyst",
+            core=("run_python", "make_dashboard"),
+            title="Analysing the data",
+            about="analyses data with Python (CSV/JSON files, numbers from other reports) and shows the "
+                  "result to the person as a dashboard of headline numbers, charts and tables",
+            tools=("run_python", "make_dashboard", "list_files", "read_file", "write_file"),
+            max_rounds=6,
+            prompt=(
+                "You are the ANALYST. Work out the numbers with run_python (pandas, numpy; files go in "
+                "input/, print what you need) instead of by hand. Then present them with make_dashboard: "
+                "a few headline numbers, one or two charts (bar to compare, hbar for rankings and shares, "
+                "line over time) and a table if rows matter. Use only numbers from the task, the files or "
+                "your code's output. Report the takeaways in a few lines; the dashboard itself is shown "
+                "to the person."
+            ),
+        ),
+        Specialist(
             name="operations",
             core=("balance_lookup", "manage_order", "manage_bill", "initiate_payment", "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification", "review_report"),
             title="Checking company systems",
@@ -448,7 +465,8 @@ WRITER_PROMPT = (
     "figures, dates and links that matter, and name sources for facts from the web. If a report "
     "says something needs the person (more details, a login, a payment), ask for exactly that. If "
     "a system was marked [stub], say it isn't connected yet. State only what the reports support: "
-    "never make up schedules, prices, stock or records. Don't mention specialists or tools."
+    "never make up schedules, prices, stock or records. Don't mention specialists or tools. If a "
+    "report says a dashboard is shown, don't repeat its tables or numbers: give the takeaways briefly."
 )
 
 
@@ -462,7 +480,7 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
             *_reports(state),
         ]
         answer = llm.chat(with_attachments(convo), stream=True)
-    return {"messages": [{"role": "assistant", "content": answer}], "next": "__end__"}
+    return {"messages": [with_dashboards({"role": "assistant", "content": answer})], "next": "__end__"}
 
 
 def describe_tools() -> dict[str, list[str]]:

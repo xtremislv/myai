@@ -67,6 +67,12 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   chat uses `web:commit-private` and is always confirmed by the person. Sign-in/OTP/payment are the person's, via
   the live view (`routes_browser.py`); snapshots hide sensitive field values (`_MARK_JS`).
 - `OUTBOUND_PROXY` is for agents' web traffic only (fetch, search APIs, Chromium); keep internal traffic direct.
+- Mailboxes may be signed in with OAuth (`app/mail/oauth.py`, secret `"auth": "oauth"`): always build
+  `MailConfig.from_secret(raw, name=<vault name>)` so refreshed tokens are saved back. App clients are the
+  vault secrets `oauth/google` and `oauth/microsoft`.
+- Agent code runs only through `app/sandbox.py` (as `nobody`, no network, copies of files). Never `exec` model
+  code in the gateway. Dashboards are JSON specs checked by `app/dashboards.py` and drawn by `renderDashboard`
+  (app.js); they ride on the final assistant message via `context.with_dashboards`, never in a `str` state field.
 - Web tools must never pass a block/CAPTCHA page off as content (`extract.block_reason`, `tools._readable`).
   `scripts/check_connectivity.py` shows what this network lets through; it changes over time.
 

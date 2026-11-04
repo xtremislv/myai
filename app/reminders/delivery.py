@@ -20,7 +20,7 @@ def _config(vault: AESGCMVault, name: str) -> MailConfig | None:
     if raw is None:
         return None
     try:
-        cfg = MailConfig.from_secret(raw, guarded=name.startswith("mail/personal/"))
+        cfg = MailConfig.from_secret(raw, guarded=name.startswith("mail/personal/"), name=name)
     except (ValueError, KeyError):
         return None
     return cfg if cfg.smtp_host else None
@@ -34,7 +34,7 @@ def address_of(session: Session, user: User) -> str | None:
     if raw is None:
         return None
     try:
-        cfg = MailConfig.from_secret(raw)
+        cfg = MailConfig.from_secret(raw, name=secret_name("personal", user.id))
     except (ValueError, KeyError):
         return None
     for candidate in (cfg.sender, cfg.username):

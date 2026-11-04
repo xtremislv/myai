@@ -21,7 +21,7 @@ from typing import Any
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
 from app.orchestrator.clock import with_now
-from app.orchestrator.context import with_attachments
+from app.orchestrator.context import with_attachments, with_dashboards
 from app.orchestrator.nodes import (
     _department,
     _parse_tool_call,
@@ -158,7 +158,7 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
             *_conversation(state),
         ]
         answer = llm.chat(with_attachments(convo), stream=True)  # the only part users see
-    return {"messages": [{"role": "assistant", "content": answer}], "next": "__end__"}
+    return {"messages": [with_dashboards({"role": "assistant", "content": answer})], "next": "__end__"}
 
 
 def _verdict(reply: str) -> dict | None:
