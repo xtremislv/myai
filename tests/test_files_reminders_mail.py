@@ -284,9 +284,44 @@ def test_reminder_tools_act_for_the_caller(db):
 
 
 # ---- mail ----
-def test_private_chat_only_reaches_the_persons_own_mailbox(db):
-    assert "only your personal mailbox" in tools.read_mail(_private(), "finance")
+def test_private_chat_reaches_own_mail_and_member_department_mail_only(db, monkeypatch):
+    from app.mail import connector
+
+    # Not in Accounts: no finance mail, private or not.
+    assert tools.read_mail(_private(), "finance").startswith("ACCESS DENIED")
     assert "personal mailbox" in tools.read_mail(_private())  # not connected yet: says how to connect
+
+    box = json.dumps({"imap_host": "imap.example.com", "username": "u", "password": "p"})
+    with db() as s:
+        AESGCMVault(s).put("mail/finance", box.replace('"u"', '"finance@techwiser.com"'))
+        AESGCMVault(s).put("mail/personal/asha", box.replace('"u"', '"asha@gmail.com"'))
+        s.add(User(id="asha", username="asha", password_hash="x", roles=["account"], prefs={}))
+        s.commit()
+    monkeypatch.setattr(connector, "check_servers", lambda cfg: None)
+    monkeypatch.setattr(connector, "list_messages", lambda cfg, *a: f"inbox of {cfg.username}")
+    asha = {"subject_id": "asha", "subject_roles": ["account"], "scratchpad": {"mode": "single"}}
+
+    # Two mailboxes and no choice made: the agent is told to ask, and nothing is read.
+    ask = tools.read_mail(asha)
+    assert ask.startswith("ASK THE PERSON FIRST") and "finance@techwiser.com" in ask and "asha@gmail.com" in ask
+    assert "inbox of finance@techwiser.com" in tools.read_mail(asha, "finance")
+    assert "inbox of finance@techwiser.com" in tools.read_mail(asha, "finance@techwiser.com")
+    assert "inbox of asha@gmail.com" in tools.read_mail(asha, "personal")
+    assert "finance: finance@techwiser.com" in tools.list_mailboxes(asha)
+    # Members may also mark and send from it (sending is confirmed on a card that names the mailbox).
+    monkeypatch.setattr(connector, "set_flag", lambda cfg, *a: f"marked in {cfg.username}")
+    monkeypatch.setattr(connector, "send", lambda cfg, *a: f"sent from {cfg.sender}")
+    assert tools.mark_mail(asha, "1", "read", "finance") == "marked in finance@techwiser.com"
+    assert tools.send_mail(asha, "x@y.com", "hi", "body", "finance") == "sent from finance@techwiser.com"
+    assert tools.send_mail(asha, "x@y.com", "hi", "body").startswith("ASK THE PERSON FIRST")
+    alice = _private()
+    assert tools.send_mail(alice, "x@y.com", "hi", "body", "finance").startswith("ACCESS DENIED")
+    from app.api.routes_chat import confirm_out
+    card = confirm_out({"tool": "send_mail", "args": {"to": "x@y.com", "subject": "hi", "body": "b", "category": "finance"}})
+    assert card.details["from"].startswith("finance") and "category" not in card.details
+    # At work in Accounts the department's own mailbox is the default: no question.
+    at_work = {**asha, "scratchpad": {"department": "account"}}
+    assert "inbox of finance@techwiser.com" in tools.read_mail(at_work)
 
 
 def test_the_admin_can_use_their_own_mail_but_not_anyone_elses(db):

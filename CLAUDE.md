@@ -42,7 +42,8 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   no third-party assets. The token stays in JS memory because it can open private chats.
 - `tests/test_postgres.py` runs only with `POSTGRES_INTEGRATION=1` and a throwaway `POSTGRES_DSN`.
 - `/v1/chat` is the one chat box. `guards.triage` sorts each message, defaulting to private. Private messages
-  have `PRIVATE_TOOLS`: read-only web, plus the person's OWN mailbox (personal category only), files and
+  have `PRIVATE_TOOLS`: read-only web, plus the person's OWN mailbox and the official mailboxes of their own
+  departments (members only, ACL-checked; `_mailbox` makes the agent ask which when unclear), files and
   reminders; no logging or audit of content; only content flagged as explicit or illegal leaves them,
   reported to hr + admin. Work runs through the Request Manager, apart from the encrypted chat because an
   approver must resume it without the user's key. There is one admin, whose finance activity as work is

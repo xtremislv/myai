@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-MAIL_TOOLS = ("read_mail", "search_mail", "open_mail", "mark_mail", "send_mail", "summarize_mail")
+MAIL_TOOLS = ("list_mailboxes", "read_mail", "search_mail", "open_mail", "mark_mail", "send_mail", "summarize_mail")
 LOOKUP_TOOLS = (
     "web_search", "news_search", "scholar_search", "product_search", "product_page", "fetch_page", "scrape_page",
     "weather",

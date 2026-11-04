@@ -99,9 +99,16 @@ CONFIRM_TITLES = {
 }
 
 
+MAILBOX_LABELS = {"finance": "finance (Accounts' official mailbox)", "career": "careers (HR's official mailbox)",
+                  "contact": "contact (Admin's official mailbox)"}
+
+
 def confirm_out(pending: dict) -> ConfirmOut:
     args = pending.get("args") or {}
-    shown = {k: str(v)[:4000] for k, v in args.items() if v not in ("", None)}
+    shown = {k: str(v)[:4000] for k, v in args.items() if v not in ("", None) and k != "category"}
+    if pending["tool"] == "send_mail":
+        box = str(args.get("category") or "personal").lower()
+        shown = {"from": MAILBOX_LABELS.get(box, "your own mailbox"), **shown}
     purchase = pending["tool"] == "browser_commit" and bool(PURCHASE_WORDS.search(f"{args.get('label', '')} {args.get('summary', '')}"))
     title = "Place this order?" if purchase else CONFIRM_TITLES.get(pending["tool"], f"Allow {pending['tool']}?")
     return ConfirmOut(tool=pending["tool"], title=title, details=shown, purchase=purchase)

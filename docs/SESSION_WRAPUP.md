@@ -52,6 +52,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Approvals | `initiate_payment`, `manage_bill`, `manage_order`, `book_service` always need approval. `send_mail`, `delete_file`, `browser_commit` always need a go-ahead: an approver at work, the person themselves in private chat. |
 | Logins | No limit on failed logins (owner declined it). |
 | Departments | `account, hr, logistics, researcher, superuser, admin`; a person can hold several; roles read from the DB on every request. |
+| Department mailboxes in private chat | Members may read, summarize and send from their department's official mailbox in private chat too; sending is confirmed on a card that names the mailbox. With more than one mailbox and none named, the agent asks which (owner, 2026-11-04). |
 | Private chat may use | Read-only web, the person's OWN mailbox, files, reminders and templates, product research, **personal shopping/ordering** (confirmed by the person). Never company data. |
 | Files | Agents create/edit/move/restore freely (versions kept); deleting needs a go-ahead. |
 | Reminders | In-app bell + browser pop-up, optional email, opt-in morning mail digest. |

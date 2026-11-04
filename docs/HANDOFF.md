@@ -299,6 +299,15 @@ Found from the owner's live session (an Amazon headphones order that never got a
 - People whose roles list every department (admin, techwiser, mrinal) still see everything through membership:
   trimming that on the Users page is the owner's call.
 
+## Department mailboxes from any chat (2026-11-04, owner's decision)
+- Members can read, summarize, mark and send from their department's official mailbox in private chat as
+  well as at work (`tools._mailbox`; membership is still the ACL check). `send_mail` stays always-confirmed;
+  the card's first line says which mailbox it goes from (`routes_chat.confirm_out`).
+- Mail tools take `category` empty by default: at work the department's own box; in private chat, if the
+  person has more than one connected mailbox, the tool returns "ASK THE PERSON FIRST" and the agent asks.
+  `list_mailboxes` lists them. The folder parameter is now `folder` (was `box`, which the model confused
+  with the mailbox). Checked on Gemma: it asked which mailbox, then read the one named.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

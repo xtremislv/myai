@@ -121,7 +121,7 @@ SPECIALISTS: dict[str, Specialist] = {
             about="reads, searches, summarizes and sorts mailboxes, and drafts or sends emails and "
                   "replies (sending needs approval)",
             tools=(
-                "summarize_mail", "read_mail", "search_mail", "open_mail", "mark_mail", "send_mail",
+                "list_mailboxes", "summarize_mail", "read_mail", "search_mail", "open_mail", "mark_mail", "send_mail",
                 "set_reminder", "list_reminders", "write_file", "append_file",
             ),
             max_rounds=8,

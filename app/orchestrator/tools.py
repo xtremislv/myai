@@ -117,15 +117,88 @@ def book_service(state: dict[str, Any], service: str, detail: str = "") -> str:
     return f"[stub] service '{service}' booked: {detail} (connect provider)"
 
 
-def _mailbox(state: dict[str, Any], category: str, box: str, action: str):
-    """(config, None) for a mailbox the caller may use, or (None, message for the model)."""
+# Words the model may use for a mailbox, mapped to its category.
+MAILBOX_ALIASES = {
+    "personal": "personal", "mine": "personal", "my": "personal", "own": "personal", "private": "personal",
+    "finance": "finance", "accounts": "finance", "account": "finance",
+    "career": "career", "careers": "career", "hr": "career", "jobs": "career",
+    "contact": "contact", "admin": "contact",
+}
+
+
+def _connected(category: str, owner: str | None) -> str | None:
+    """The address of a connected mailbox, or None."""
     from app.mail.connector import MailConfig, secret_name
 
-    category = (category or "personal").strip().lower()
+    with SessionLocal() as session:
+        raw = AESGCMVault(session).get(secret_name(category, owner))
+    try:
+        return MailConfig.from_secret(raw).username if raw else None
+    except (ValueError, KeyError):
+        return None
+
+
+def _my_mailboxes(state: dict[str, Any]) -> list[tuple[str, str]]:
+    """(category, address) of the connected mailboxes this person may read here: their own, and in
+    private chat or at work the official mailboxes of the departments they belong to."""
+    from app.departments.packs import MAILBOX_OWNERS
+
+    me = _subject(state)
+    found = []
+    if (address := _connected("personal", me.id)) is not None:
+        found.append(("personal", address))
+    dept = (state.get("scratchpad") or {}).get("department")
+    for category, owner in MAILBOX_OWNERS.items():
+        if owner in me.roles and (dept is None or dept == owner) and (address := _connected(category, None)):
+            found.append((category, address))
+    return found
+
+
+def _describe_boxes(boxes: list[tuple[str, str]]) -> str:
+    from app.departments.packs import MAILBOX_OWNERS
+
+    return "; ".join(
+        f"{c}: {a} ({'their own' if c == 'personal' else 'official, ' + MAILBOX_OWNERS[c] + ' department'})"
+        for c, a in boxes
+    )
+
+
+def list_mailboxes(state: dict[str, Any]) -> str:
+    # The person's own listing ($self); each department box is checked again when it is read.
+    if (err := _enforce(state, "list", "mail", f"personal/{_subject(state).id}/mailboxes")) is not None:
+        return err
+    boxes = _my_mailboxes(state)
+    if not boxes:
+        return "No mailbox is connected. The person can connect theirs (and their department's) under Settings."
+    return "Mailboxes you can read here (use the name before the colon as category): " + _describe_boxes(boxes)
+
+
+def _mailbox(state: dict[str, Any], category: str, box: str, action: str):
+    """(config, None) for a mailbox the caller may use, or (None, message for the model).
+
+    No category given and more than one mailbox to choose from: the model is told to ask the
+    person which one, rather than guess (owner, 2026-11-04). A department's official mailbox is
+    for its members, in private chat too, for reading and sending (owner, 2026-11-04): sending
+    always shows the person the exact email, and which mailbox it goes from, before it goes."""
+    from app.departments.packs import MAILBOX_OWNERS
+    from app.mail.connector import MailConfig, secret_name
+
+    wanted = (category or "").strip().lower().split("@")[0]
+    if not wanted:
+        dept = (state.get("scratchpad") or {}).get("department")
+        own_box = next((c for c, d in MAILBOX_OWNERS.items() if d == dept), None)
+        if dept is not None:
+            wanted = own_box or "personal"
+        else:
+            boxes = _my_mailboxes(state)
+            if len(boxes) > 1:
+                return None, ("ASK THE PERSON FIRST: which mailbox do they mean? They have " + _describe_boxes(boxes)
+                              + ". Ask in one short question (they can also say 'both'), then call again with "
+                              "category set; for both, call once per mailbox. Don't guess.")
+            wanted = boxes[0][0] if boxes else "personal"
+    category = MAILBOX_ALIASES.get(wanted, wanted)
     if category not in ("finance", "career", "contact", "personal"):
-        return None, "ERROR: category must be finance, career, contact or personal"
-    if _private(state) and category != "personal":
-        return None, "ERROR: only your personal mailbox is available here (company mail is handled as work)"
+        return None, "ERROR: category must be personal, finance, career or contact (list_mailboxes shows which are connected)"
     # Personal mail is always the caller's own: the owner is never LLM-supplied.
     owner = _subject(state).id if category == "personal" else None
     rid = f"{category}/{owner + '/' if owner else ''}{box or 'inbox'}"
@@ -138,8 +211,8 @@ def _mailbox(state: dict[str, Any], category: str, box: str, action: str):
             return None, ("[stub] no personal mailbox is connected yet: the person can connect one "
                           "under My account > Mail and reminders")
         return None, (
-            f"[stub] no {category} mailbox is connected yet (an admin can add the vault secret "
-            f"'{secret_name(category, owner)}')"
+            f"[stub] the {category} mailbox isn't connected yet: a member of {MAILBOX_OWNERS.get(category, category)} "
+            "can connect it under Settings"
         )
     try:
         # Guarded for every box: department mailboxes are connected by their members, not the server's operator.
@@ -169,47 +242,47 @@ def _mail_call(fn, *args) -> str:
 
 
 def read_mail(
-    state: dict[str, Any], category: str = "personal", box: str = "", limit: int = 10, unread_only: bool = False
+    state: dict[str, Any], category: str = "", folder: str = "", limit: int = 10, unread_only: bool = False
 ) -> str:
     from app.mail import connector
 
-    cfg, err = _mailbox(state, category, box, "read")
+    cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    return untrusted(f"{category} mailbox", _mail_call(connector.list_messages, cfg, box or "inbox", limit, unread_only))
+    return untrusted(f"{category} mailbox", _mail_call(connector.list_messages, cfg, folder or "inbox", limit, unread_only))
 
 
-def search_mail(state: dict[str, Any], query: str, category: str = "personal", box: str = "") -> str:
+def search_mail(state: dict[str, Any], query: str, category: str = "", folder: str = "") -> str:
     from app.mail import connector
 
-    cfg, err = _mailbox(state, category, box, "read")
+    cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    return untrusted(f"{category} mailbox", _mail_call(connector.list_messages, cfg, box or "inbox", 15, False, query))
+    return untrusted(f"{category} mailbox", _mail_call(connector.list_messages, cfg, folder or "inbox", 15, False, query))
 
 
-def open_mail(state: dict[str, Any], message_id: str, category: str = "personal", box: str = "") -> str:
+def open_mail(state: dict[str, Any], message_id: str, category: str = "", folder: str = "") -> str:
     from app.mail import connector
 
-    cfg, err = _mailbox(state, category, box, "read")
+    cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    return untrusted(f"an email in the {category} mailbox", _mail_call(connector.read_message, cfg, message_id, box or "inbox"))
+    return untrusted(f"an email in the {category} mailbox", _mail_call(connector.read_message, cfg, message_id, folder or "inbox"))
 
 
 def mark_mail(
-    state: dict[str, Any], message_id: str, action: str, category: str = "personal", box: str = ""
+    state: dict[str, Any], message_id: str, action: str, category: str = "", folder: str = ""
 ) -> str:
     from app.mail import connector
 
-    cfg, err = _mailbox(state, category, box, "write")
+    cfg, err = _mailbox(state, category, folder, "write")
     if cfg is None:
         return err
-    return _mail_call(connector.set_flag, cfg, message_id, action, box or "inbox")
+    return _mail_call(connector.set_flag, cfg, message_id, action, folder or "inbox")
 
 
 def send_mail(
-    state: dict[str, Any], to: str, subject: str, body: str, category: str = "personal", in_reply_to: str = ""
+    state: dict[str, Any], to: str, subject: str, body: str, category: str = "", in_reply_to: str = ""
 ) -> str:
     """Approval-gated (critical): runs only after a person approved this exact message."""
     from app.mail import connector
@@ -221,18 +294,18 @@ def send_mail(
 
 
 def summarize_mail(
-    state: dict[str, Any], category: str = "personal", box: str = "", count: int = 10, unread_only: bool = True
+    state: dict[str, Any], category: str = "", folder: str = "", count: int = 10, unread_only: bool = True
 ) -> str:
     """Reads up to `count` emails in full and returns a gist, the action needed and any deadline
     for each: a whole inbox in one step, without filling the context with raw mail."""
     from app.mail import connector, summary
 
-    cfg, err = _mailbox(state, category, box, "read")
+    cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
 
     def go() -> str:
-        messages = connector.fetch_messages(cfg, box or "inbox", max(1, min(int(count), 20)), unread_only)
+        messages = connector.fetch_messages(cfg, folder or "inbox", max(1, min(int(count), 20)), unread_only)
         if not messages:
             return "No unread messages." if unread_only else "No messages."
         return summary.render(summary.analyse(messages))
@@ -1509,6 +1582,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "browser_back": browser_back,
     "browser_commit": browser_commit,
     "summarize": summarize,
+    "list_mailboxes": list_mailboxes,
     "review_report": review_report,
     "run_python": run_python,
     "make_dashboard": make_dashboard,
@@ -1546,13 +1620,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "manage_bill": "Create (bill_id 'new') or update a company bill or invoice, with details.",
     "initiate_payment": "Pay a payee from company funds. Always needs an approver.",
     "book_service": "Book or subscribe the company to a service.",
-    "read_mail": "List recent emails (id, subject, sender, date) in a mailbox: category personal (the "
-                 "person's own; the only one in private chat), finance, career or contact. unread_only "
-                 "to see only new mail.",
+    "list_mailboxes": "The mailboxes this person can read here: their own and the official ones of their "
+                      "departments (finance@, careers, contact@), with addresses.",
+    "read_mail": "List recent emails (id, subject, sender, date) in a mailbox. category: personal (the "
+                 "person's own), finance, career or contact (official department mailboxes, for their "
+                 "members); leave it empty when the person didn't say, and you'll be told if you must ask. "
+                 "unread_only to see only new mail.",
     "summarize_mail": "Read up to `count` emails in full and get, for each, a one-line gist, what the "
                       "reader must do, and any deadline; urgent ones first. Best way to answer 'what's "
                       "in my mail' or 'what do I need to do'.",
-    "search_mail": "Find emails in a mailbox whose text contains the query.",
+    "search_mail": "Find emails in a mailbox whose text contains the query. folder: a folder inside it "
+                   "(default the inbox), not which mailbox: that is category.",
     "open_mail": "Read one email in full by the id that read_mail or search_mail showed.",
     "mark_mail": "Mark an email by id: action read, unread, flag or unflag.",
     "send_mail": "Send an email (or a reply: in_reply_to is the original's Message-ID). Call it with the "
