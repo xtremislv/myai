@@ -134,6 +134,8 @@ def real_acl(monkeypatch):
             return None if decision.allowed else f"ACCESS DENIED: {decision.reason}"
 
     monkeypatch.setattr(tools, "_enforce", _enforce)
+    # Never the live vault: a mailbox connected on this server would be read with the test key.
+    monkeypatch.setattr(tools, "SessionLocal", Session)
 
 
 def _read_mail(department, *args, subject="alice"):

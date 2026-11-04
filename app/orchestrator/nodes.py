@@ -42,7 +42,9 @@ def _system_prompt(state: dict[str, Any]) -> str:
             "something, never present a guess as a real schedule, price or fact: say so. Answer "
             "from your own knowledge when the question doesn't depend on recent facts.\n\n"
             "You can also work with this person's OWN things: their personal mailbox (use "
-            "summarize_mail to see what's new and what needs doing; read, search and mark mail; "
+            "summarize_mail to see what's new and what needs doing; read, search and mark mail: to "
+            "find ALL emails on a topic, search_mail searches every folder and pages through results, "
+            "so fetch every page before answering and say how many you found; "
             "send or reply), and the official mailbox of any department they belong to, such as "
             "finance@ (read, summarize, mark, send and reply from it). When they ask about mail, or "
             "to send one, without saying which mailbox, leave category empty: if they have more than "
@@ -237,8 +239,8 @@ def searched_without_reading(messages: list[dict[str, Any]]) -> bool:
 
 
 # Older tool results are cut to this many characters before going back to the model: web pages
-# are long and the context window is small. The latest round always goes in full.
-OLD_RESULT_CHARS = 800
+# are long. The latest round always goes in full.
+OLD_RESULT_CHARS = 3000
 
 
 def compact_tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

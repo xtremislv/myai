@@ -30,15 +30,18 @@ class Settings(BaseSettings):
     # Switch to NVIDIA Nemotron by overriding LLM_MODEL in .env (see .env.example).
     llm_model: str = "google/gemma-4-26B-A4B-it"
     llm_temperature: float = 0.2
-    llm_max_tokens: int = 1024
+    llm_max_tokens: int = 4096
+    # The model server's context window (vLLM --max-model-len). Prompts are fitted into it,
+    # oldest conversation turns first, so a long chat never fails for being too long.
+    llm_context_tokens: int = 65536
     # Agents are told the current date and time in this zone ("tomorrow" must mean something).
     timezone: str = "Asia/Kolkata"
 
     # --- Web access for agents (app/browsing) ---
     # Bing market for search and news, e.g. en-IN, en-US.
     search_market: str = "en-IN"
-    # Most characters of one page or tool result handed to the model (the context is small).
-    web_max_chars: int = 6000
+    # Most characters of one page or tool result handed to the model.
+    web_max_chars: int = 20000
     # Route the agents' web traffic (pages, search APIs, Chromium) through this proxy, e.g.
     # http://user:pass@host:3128 or socks5h://host:1080. Empty = direct. The model server, mail and
     # internal services never use it. The network guard still applies (see netguard).

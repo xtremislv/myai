@@ -38,7 +38,8 @@ LLM_BASE_URL=http://{host['vllm']}:8001/v1
 HUGGING_FACE_HUB_TOKEN={args.hf_token}
 # Local weights directory for scripts/run_vllm.sh (no Docker). Empty: download LLM_MODEL.
 VLLM_MODEL_PATH={model_path}
-VLLM_MAX_MODEL_LEN=16384
+VLLM_MAX_MODEL_LEN=65536
+LLM_CONTEXT_TOKENS=65536
 VLLM_GPU_UTIL=0.90
 # Depends on the card and the weights. See docs/SERVER_SETUP.md, step 5. Turing cards
 # (Quadro RTX 8000) need --dtype half: vLLM refuses bfloat16 below compute capability 8.0.

@@ -150,34 +150,106 @@ def _header(msg, name: str) -> str:
     return " ".join(str(msg.get(name, "")).split())[:200]
 
 
+MAX_LIST = 100  # emails per page of a listing or search
+MAX_SUMMARY = 40  # emails read in full by one summary
+ALL_PREFIX = "all-"  # ids from the archive folder ("All Mail"): UIDs are per folder
+_LIST_ROW = re.compile(r'^\((?P<flags>[^)]*)\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+)$')
+
+
+def _all_mail(conn) -> str | None:
+    """The folder holding every email (Gmail's "[Gmail]/All Mail", marked \\All, RFC 6154):
+    searching only the inbox misses everything archived."""
+    try:
+        _, rows = conn.list()
+    except Exception:  # noqa: BLE001 - a server without LIST just has no archive folder
+        return None
+    for row in rows or []:
+        line = row.decode(errors="replace") if isinstance(row, bytes) else str(row)
+        match = _LIST_ROW.match(line)
+        if match and "\\all" in match.group("flags").lower():
+            return match.group("name").strip().strip('"')
+    return None
+
+
+def _target(conn, message_id: str, box: str) -> tuple[str, str]:
+    """(folder, uid) for an id a listing showed: "all-123" is in the archive folder."""
+    message_id = str(message_id).strip()
+    if message_id.lower().startswith(ALL_PREFIX):
+        return _all_mail(conn) or _folder(box), str(int(message_id[len(ALL_PREFIX):]))
+    return _folder(box), str(int(message_id))
+
+
+def _terms(query: str) -> list[str]:
+    """A topic as separate words ("quoted phrases" kept): an email matches when it has them
+    all, anywhere, rather than only when it has the exact phrase."""
+    return [t.strip('"') for t in re.findall(r'"[^"]+"|\S+', query) if t.strip('"')]
+
+
+def _search(conn, base: list[str], query: str) -> list[bytes]:
+    if not query:
+        _, data = conn.uid("SEARCH", *base)
+        return (data[0] or b"").split()
+    if "X-GM-EXT-1" in getattr(conn, "capabilities", ()):
+        # Gmail: its own search syntax (words anywhere, from:, subject:, older_than:, ...).
+        words = ["X-GM-RAW"]
+        value = query
+    elif not query.isascii():
+        words, value = ["TEXT"], query
+    else:
+        terms = _terms(query)
+        words = [w for t in terms[:-1] for w in ("TEXT", _quote(t))] + ["TEXT"]
+        value = terms[-1] if terms else query
+    if value.isascii():
+        _, data = conn.uid("SEARCH", *base, *words, _quote(value))
+    else:  # non-ASCII goes as a literal: imaplib only sends ASCII arguments
+        conn.literal = value.encode("utf-8")
+        _, data = conn.uid("SEARCH", "CHARSET", "UTF-8", *base, *words)
+    return (data[0] or b"").split()
+
+
 def list_messages(cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_only: bool = False,
-                  query: str = "") -> str:
+                  query: str = "", page: int = 1) -> str:
+    """Emails newest first, one page at a time, with how many there are in all. A search with
+    no folder given looks through every folder (the archive folder) when the server has one."""
     conn = _imap(cfg)
     try:
-        status, _ = conn.select(_folder(box), readonly=True)
+        folder = _folder(box)
+        prefix = ""
+        if query and (box or "inbox").strip().lower() in ("", "inbox", "all") and (archive := _all_mail(conn)):
+            folder, prefix = archive, ALL_PREFIX
+        status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
         if status != "OK":
             return f"ERROR: no mailbox folder named '{box}'"
-        criteria = ["UNSEEN"] if unread_only else ["ALL"]
-        if query:
-            criteria = [*criteria, "TEXT", _quote(query)]
-        _, data = conn.uid("SEARCH", "CHARSET", "UTF-8", *criteria) if query else conn.uid("SEARCH", *criteria)
-        uids = (data[0] or b"").split()[-max(1, min(limit, 30)):][::-1]
-        if not uids:
-            return "No messages."
-        _, rows = conn.uid("FETCH", b",".join(uids), "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
-        lines = []
+        uids = _search(conn, ["UNSEEN"] if unread_only else ["ALL"], query)[::-1]
+        total = len(uids)
+        size = max(1, min(int(limit), MAX_LIST))
+        page = max(1, int(page))
+        shown = uids[(page - 1) * size:page * size]
+        where = "every folder" if prefix else f"the {box or 'inbox'} folder"
+        what = f'matching "{query}"' if query else ("unread" if unread_only else "")
+        if not shown:
+            return f"No emails {what} in {where}." if page == 1 else f"No more: all {total} emails were shown."
+        _, rows = conn.uid("FETCH", b",".join(shown), "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+        found = {}
         for row in rows:
             if not isinstance(row, tuple):
                 continue
             meta, raw = row
             uid = re.search(rb"UID (\d+)", meta)
-            unread = b"\\Seen" not in meta
+            if not uid:
+                continue
             msg = email.message_from_bytes(raw, policy=email.policy.default)
-            lines.append(
-                f"id {uid.group(1).decode() if uid else '?'}{' (unread)' if unread else ''}: "
+            unread = " (unread)" if b"\\Seen" not in meta else ""
+            found[uid.group(1)] = (
+                f"id {prefix}{uid.group(1).decode()}{unread}: "
                 f"{_header(msg, 'Subject') or '(no subject)'} | from {_header(msg, 'From')} | {_header(msg, 'Date')}"
             )
-        return "\n".join(lines)
+        first = (page - 1) * size + 1
+        last = first + len(shown) - 1
+        head = f"{total} emails {what} in {where}, newest first; showing {first}-{last}.".replace("  ", " ")
+        if last < total:
+            head += f" {total - last} more: call again with page={page + 1} to see them."
+        return "\n".join([head, *(found[u] for u in shown if u in found)])
     finally:
         conn.logout()
 
@@ -192,11 +264,12 @@ def _body(msg) -> str:
     return content
 
 
-def read_message(cfg: MailConfig, message_id: str, box: str = "inbox", max_chars: int = 3500) -> str:
+def read_message(cfg: MailConfig, message_id: str, box: str = "inbox", max_chars: int = 12_000) -> str:
     conn = _imap(cfg)
     try:
-        conn.select(_folder(box), readonly=True)
-        _, rows = conn.uid("FETCH", str(int(message_id)), "(BODY.PEEK[])")
+        folder, uid = _target(conn, message_id, box)
+        conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+        _, rows = conn.uid("FETCH", uid, "(BODY.PEEK[])")
         raw = next((r[1] for r in rows if isinstance(r, tuple)), None)
         if raw is None:
             return f"ERROR: no message with id {message_id}"
@@ -215,20 +288,22 @@ def read_message(cfg: MailConfig, message_id: str, box: str = "inbox", max_chars
 
 def fetch_messages(
     cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_only: bool = True,
-    since: dt.date | None = None, body_chars: int = 1500,
+    since: dt.date | None = None, body_chars: int = 3000, query: str = "",
 ) -> list[dict]:
     """The newest messages with their text, without marking them read. Each is
     {"id", "message_id", "from", "subject", "date", "unread", "attachments", "body"}."""
     conn = _imap(cfg)
     try:
-        status, _ = conn.select(_folder(box), readonly=True)
+        folder, prefix = _folder(box), ""
+        if query and (box or "inbox").strip().lower() in ("", "inbox", "all") and (archive := _all_mail(conn)):
+            folder, prefix = archive, ALL_PREFIX
+        status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
         if status != "OK":
             raise ValueError(f"no mailbox folder named '{box}'")
         criteria = ["UNSEEN"] if unread_only else ["ALL"]
         if since is not None:
             criteria += ["SINCE", since.strftime("%d-%b-%Y")]
-        _, data = conn.uid("SEARCH", *criteria)
-        uids = (data[0] or b"").split()[-max(1, min(limit, 40)):][::-1]
+        uids = _search(conn, criteria, query)[-max(1, min(limit, MAX_SUMMARY)):][::-1]
         out = []
         for uid in uids:
             _, rows = conn.uid("FETCH", uid, "(UID FLAGS BODY.PEEK[])")
@@ -242,7 +317,7 @@ def fetch_messages(
                 except Exception:  # noqa: BLE001 - an odd encoding must not stop the rest
                     body = ""
                 out.append({
-                    "id": uid.decode(),
+                    "id": prefix + uid.decode(),
                     "message_id": _header(msg, "Message-ID"),
                     "from": _header(msg, "From"),
                     "subject": _header(msg, "Subject") or "(no subject)",
@@ -272,9 +347,10 @@ def set_flag(cfg: MailConfig, message_id: str, action: str, box: str = "inbox") 
         return f"ERROR: action must be one of {', '.join(flags)}"
     conn = _imap(cfg)
     try:
-        conn.select(_folder(box))
+        folder, uid = _target(conn, message_id, box)
+        conn.select(_quote(folder) if " " in folder else folder)
         op, flag = flags[action]
-        status, _ = conn.uid("STORE", str(int(message_id)), op, flag)
+        status, _ = conn.uid("STORE", uid, op, flag)
         return f"Marked message {message_id} as {action}." if status == "OK" else f"ERROR: could not mark {message_id}"
     finally:
         conn.logout()

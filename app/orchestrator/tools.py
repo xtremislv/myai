@@ -242,23 +242,28 @@ def _mail_call(fn, *args) -> str:
 
 
 def read_mail(
-    state: dict[str, Any], category: str = "", folder: str = "", limit: int = 10, unread_only: bool = False
+    state: dict[str, Any], category: str = "", folder: str = "", limit: int = 20, unread_only: bool = False,
+    page: int = 1,
 ) -> str:
     from app.mail import connector
 
     cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    return untrusted(f"{category} mailbox", _mail_call(connector.list_messages, cfg, folder or "inbox", limit, unread_only))
+    return untrusted(f"{category} mailbox",
+                     _mail_call(connector.list_messages, cfg, folder or "inbox", limit, unread_only, "", page))
 
 
-def search_mail(state: dict[str, Any], query: str, category: str = "", folder: str = "") -> str:
+def search_mail(
+    state: dict[str, Any], query: str, category: str = "", folder: str = "", page: int = 1, limit: int = 50
+) -> str:
     from app.mail import connector
 
     cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    return untrusted(f"{category} mailbox", _mail_call(connector.list_messages, cfg, folder or "inbox", 15, False, query))
+    return untrusted(f"{category} mailbox",
+                     _mail_call(connector.list_messages, cfg, folder, limit, False, query, page))
 
 
 def open_mail(state: dict[str, Any], message_id: str, category: str = "", folder: str = "") -> str:
@@ -294,7 +299,8 @@ def send_mail(
 
 
 def summarize_mail(
-    state: dict[str, Any], category: str = "", folder: str = "", count: int = 10, unread_only: bool = True
+    state: dict[str, Any], category: str = "", folder: str = "", count: int = 10, unread_only: bool = True,
+    query: str = "",
 ) -> str:
     """Reads up to `count` emails in full and returns a gist, the action needed and any deadline
     for each: a whole inbox in one step, without filling the context with raw mail."""
@@ -305,9 +311,12 @@ def summarize_mail(
         return err
 
     def go() -> str:
-        messages = connector.fetch_messages(cfg, folder or "inbox", max(1, min(int(count), 20)), unread_only)
+        messages = connector.fetch_messages(cfg, folder or ("" if query else "inbox"),
+                                            max(1, min(int(count), connector.MAX_SUMMARY)), unread_only,
+                                            query=query)
         if not messages:
-            return "No unread messages." if unread_only else "No messages."
+            what = f' matching "{query}"' if query else ""
+            return f"No unread messages{what}." if unread_only else f"No messages{what}."
         return summary.render(summary.analyse(messages))
 
     return untrusted(f"a summary of the {category} mailbox", _mail_call(go))
@@ -1622,16 +1631,22 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "book_service": "Book or subscribe the company to a service.",
     "list_mailboxes": "The mailboxes this person can read here: their own and the official ones of their "
                       "departments (finance@, careers, contact@), with addresses.",
-    "read_mail": "List recent emails (id, subject, sender, date) in a mailbox. category: personal (the "
+    "read_mail": "List recent inbox emails (id, subject, sender, date), newest first, `limit` per page "
+                 "(most 100); page for older ones. category: personal (the "
                  "person's own), finance, career or contact (official department mailboxes, for their "
                  "members); leave it empty when the person didn't say, and you'll be told if you must ask. "
                  "unread_only to see only new mail.",
-    "summarize_mail": "Read up to `count` emails in full and get, for each, a one-line gist, what the "
-                      "reader must do, and any deadline; urgent ones first. Best way to answer 'what's "
-                      "in my mail' or 'what do I need to do'.",
-    "search_mail": "Find emails in a mailbox whose text contains the query. folder: a folder inside it "
-                   "(default the inbox), not which mailbox: that is category.",
-    "open_mail": "Read one email in full by the id that read_mail or search_mail showed.",
+    "summarize_mail": "Read up to `count` emails (most 40) in full and get, for each, a one-line gist, "
+                      "what the reader must do, and any deadline; urgent ones first. Best way to answer "
+                      "'what's in my mail' or 'what do I need to do'. With query, it summarizes the emails "
+                      "on that topic from every folder (set unread_only false to include read ones).",
+    "search_mail": "Find ALL emails on a topic: every folder including archived mail, newest first, 50 "
+                   "per page, with the total. The query is words that must all appear (Gmail also takes "
+                   "from:, subject:, after:2026/01/01). If the result says there are more, call again with "
+                   "the next page until you have them all before answering. folder: only to limit the "
+                   "search to one folder; which mailbox is category.",
+    "open_mail": "Read one email in full by the id exactly as read_mail or search_mail showed it "
+                 "(ids like all-123 are from the archive search).",
     "mark_mail": "Mark an email by id: action read, unread, flag or unflag.",
     "send_mail": "Send an email (or a reply: in_reply_to is the original's Message-ID). Call it with the "
                  "final text when asked to send: the app shows the exact email for confirmation "

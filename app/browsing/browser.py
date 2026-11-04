@@ -72,7 +72,7 @@ def _site_of(url: str) -> str:
 HUMAN_KEYS = {"Enter", "Tab", "Backspace", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Delete"}
 CALL_TIMEOUT_S = 75
 MAX_ELEMENTS = 60
-PAGE_TEXT_CHARS = 2200
+PAGE_TEXT_CHARS = 6000
 
 _MARK_JS = r"""
 (maxCount) => {

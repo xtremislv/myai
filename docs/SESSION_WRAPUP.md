@@ -70,7 +70,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Thing | State |
 |---|---|
 | Host | vast.ai container behind aiccloud.in. Quadro RTX 8000 48 GB (Turing, CC 7.5). No Docker, no systemd. Disk 40 GB, **~7 GB free** (watch it). |
-| Model | `google/gemma-4-26B-A4B-it`, AWQ/compressed-tensors INT4 (`cyankiwi/...qat-AWQ-INT4` in `/root/models/gemma-4-26b`), vLLM 0.32.0 in `/root/vllm-env`, `--dtype half`, Turing patch applied, **16k context**, KV cache 280k tokens, `--max-num-seqs 16`, tool parser `gemma4`. |
+| Model | `google/gemma-4-26B-A4B-it`, AWQ/compressed-tensors INT4 (`cyankiwi/...qat-AWQ-INT4` in `/root/models/gemma-4-26b`), vLLM 0.32.0 in `/root/vllm-env`, `--dtype half`, Turing patch applied, **64k context** (`LLM_CONTEXT_TOKENS` must match), KV cache 683k tokens, `--max-num-seqs 16`, tool parser `gemma4`. |
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
 | Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**: all started by `scripts/start_native.sh`. |
@@ -283,7 +283,7 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 - Disk: ~7 GB free of 40 GB.
 
 **Product limits**
-- 16k context; long pages are clipped (6,000 chars per page, older tool results to 800).
+- 64k context; pages are clipped (20,000 chars per page, older tool results to 3,000); overlong prompts drop their oldest turns. Prompts near 50k tokens take minutes to prefill on the Quadro.
 - Gemma sometimes needs nudges (it asked "are you sure?" in words before deleting; fixed by prompt wording).
 - Keyless web search is decent through DuckDuckGo but rate-limits; a Tavily/Serper key would be better.
 - Many shops/news sites block automated browsers regardless of network.

@@ -26,7 +26,7 @@ from jinja2 import StrictUndefined, TemplateSyntaxError, UndefinedError, meta
 from jinja2.sandbox import SandboxedEnvironment
 
 TEXT_SUFFIXES = (".md", ".txt", ".html", ".htm", ".csv", ".json", ".xml", ".yaml", ".yml", ".tex", ".rtf")
-MAX_EXAMPLE_CHARS = 9000
+MAX_EXAMPLE_CHARS = 24_000
 MAX_DOCX_SEGMENTS = 160
 _ENV = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
 _MARKERS = re.compile(r"\{\{|\{%")

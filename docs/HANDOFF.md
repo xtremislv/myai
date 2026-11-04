@@ -137,8 +137,10 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   attachments, files, reminders, notifications, mailbox login, their work requests; optionally the account.
   NSFW reports and the audit log are kept.
 - **Vault key rotation:** `scripts/rotate_vault_key.py` (stop gateway + scheduler first). Not run on this server.
-- **Context 16k:** `VLLM_MAX_MODEL_LEN=16384`; KV cache 280k tokens (17 full-length chats). Pages are clipped at
-  6,000 characters and older tool results at 800. Load test (`scripts/load_test.py`, ~1.5k-token prompts):
+- **Context 64k** (raised from 16k on 2026-11-04): `VLLM_MAX_MODEL_LEN=65536`, `LLM_CONTEXT_TOKENS=65536`; KV cache
+  683k tokens (10 full-length requests). Pages are clipped at 20,000 characters, browser page text at 6,000, older
+  tool results at 3,000; replies up to 4,096 tokens. `llm.client.fit_to_context` drops the oldest turns when a
+  prompt wouldn't fit, so long chats never fail. A ~50k-token prompt takes ~3 minutes to prefill on this card. Load test (`scripts/load_test.py`, ~1.5k-token prompts):
   1 chat 73 tok/s; 4 at once 39 tok/s each; 8: 25; 16: 15 (215 tok/s total), first word under 0.6 s. An 8k-token
   prompt takes ~7.6 s to the first word (prefill on Turing).
 - **Triage** now keeps "my files / my mail / remind me" private and sends team/department files and reminders for
@@ -366,3 +368,13 @@ Found from the owner's live session (an Amazon headphones order that never got a
 - After changing a model, run `alembic revision --autogenerate`. A test fails if models and migrations differ.
 - Never put message content in logs, spans or exception text.
 - The owner lets you commit to the current branch unless a change is alarming. Don't commit `.claude/`.
+
+## Bigger context; complete mail search (2026-11-04)
+- vLLM context 16k -> 64k (see "Context 64k" above). Work requests see the last 30 chat messages (was 12);
+  specialist reports 5,000 chars; attachments 80,000 chars; document examples 24,000; one email 12,000.
+- `search_mail` used to return 15 inbox hits as one exact phrase. Now: every folder (the `\All` folder,
+  Gmail's "[Gmail]/All Mail"; ids from it are `all-<uid>` and open_mail/mark_mail understand them), Gmail
+  `X-GM-RAW` syntax or each word matched separately elsewhere, 50 per page (most 100) with the total and a
+  "call again with page=N" line; the agents are told to fetch every page. `read_mail` pages too (limit up to 100).
+  `summarize_mail(query=...)` summarizes up to 40 emails on a topic. Tested against a fake IMAP server
+  (`tests/test_mail_search.py`), not against a real Gmail account.

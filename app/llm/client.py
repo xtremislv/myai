@@ -109,6 +109,42 @@ class Reply(str):
         return obj
 
 
+# Prompts are measured roughly (no tokenizer here): Gemma averages ~4 characters per token on
+# English, less on JSON and other scripts, so 3 keeps a margin.
+CHARS_PER_TOKEN = 3
+CONTEXT_MARGIN_TOKENS = 512
+MIN_REPLY_TOKENS = 256
+
+
+def _estimate_tokens(messages: list[dict], tools: list | None = None) -> int:
+    size = sum(len(json.dumps(m, ensure_ascii=False, default=str)) for m in messages)
+    if tools:
+        size += len(json.dumps(tools, ensure_ascii=False, default=str))
+    return size // CHARS_PER_TOKEN
+
+
+def fit_to_context(messages: list[dict], tools: list | None, max_tokens: int,
+                   context: int | None = None) -> tuple[list[dict], int]:
+    """The messages and reply length that fit the model's context window. Oldest turns go
+    first; system messages and the latest turn always stay, and what's left starts on a user
+    turn so no tool result is cut off from its call. The reply length shrinks only if dropping
+    turns isn't enough."""
+    context = context or _settings.llm_context_tokens
+    budget = context - max_tokens - CONTEXT_MARGIN_TOKENS
+    if _estimate_tokens(messages, tools) <= budget:
+        return messages, max_tokens
+    system = [m for m in messages if m.get("role") == "system"]
+    rest = [m for m in messages if m.get("role") != "system"]
+    users = [i for i, m in enumerate(rest) if m.get("role") == "user"]
+    for start in users[1:]:  # drop whole turns, oldest first, never the last one
+        rest_now = rest[start:]
+        if _estimate_tokens(system + rest_now, tools) <= budget:
+            return [*system, *rest_now], max_tokens
+    kept = [*system, *(rest[users[-1]:] if users else rest)]
+    room = context - CONTEXT_MARGIN_TOKENS - _estimate_tokens(kept, tools)
+    return kept, max(MIN_REPLY_TOKENS, min(max_tokens, room))
+
+
 def _for_model(message: dict) -> dict:
     """One stored message in the shape the API wants. Native tool calls keep their ids so the
     chat template can pair each result with its call. Older tool results with no id are sent
@@ -162,10 +198,10 @@ def chat(
     model = model or _settings.llm_model
     params = {
         "model": model,
-        "messages": [_for_model(m) for m in messages],
         "temperature": kwargs.get("temperature", _settings.llm_temperature),
-        "max_tokens": kwargs.get("max_tokens", _settings.llm_max_tokens),
     }
+    params["messages"], params["max_tokens"] = fit_to_context(
+        [_for_model(m) for m in messages], tools, kwargs.get("max_tokens", _settings.llm_max_tokens))
     if tools:
         params["tools"] = tools
         params["tool_choice"] = tool_choice or "auto"

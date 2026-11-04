@@ -63,7 +63,7 @@ THREAD_ID_MAX = 100  # stored with a suffix when a paused run needs a fresh one
 DEPARTMENT_LABELS = {"account": "Accounts", "hr": "HR", "logistics": "Logistics", "researcher": "Research",
                      "superuser": "Superuser", "admin": "Admin"}
 RECENT_MESSAGES = 2  # what triage sees
-WORK_CONTEXT_MESSAGES = 12  # how far back a work request looks for earlier work in this chat
+WORK_CONTEXT_MESSAGES = 30  # how far back a work request looks for earlier work in this chat
 REPORT_EXCERPT_CHARS = 2000
 NSFW_SAMPLE_CHARS = 4000
 
