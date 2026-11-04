@@ -61,6 +61,9 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   `jinja2.Template`: templates come from users). Company templates are work-only; private chat uses the
   person's own templates and attachments (`attachment_files` context var).
 - The UI renders model text with `md()` (app.js), which builds DOM nodes; never use innerHTML for model or page text.
+- UI look: tokens at the top of `style.css` (light + dark, dark repeated under `:root[data-theme="dark"]`); use
+  `mi(name)` for icons (add paths to `MI` from Material Symbols Outlined 400), `heading(title, text, {eyebrow})`
+  for page titles, and only show real data (no mock status or features from the design files).
 - Saved details (`app/wallet.py`) are private-chat only, encrypted with the person's key; tools fill them into
   pages via `Browser.fill_value` with a site check, and must never return values to the model.
 - Personal purchases stay private (`guards.triage` drops an action on a private route); `browser_commit` in private

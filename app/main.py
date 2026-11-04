@@ -83,7 +83,7 @@ async def ui_security_headers(request: Request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/ui"):
         response.headers["Content-Security-Policy"] = (
-            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+            "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
             "img-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"

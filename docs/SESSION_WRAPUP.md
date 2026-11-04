@@ -208,7 +208,7 @@ reply streamed (Markdown) → UI; work exchanges are also copied into the encryp
 | `app/reminders/` | `when` (time parsing), `service` (reminders, notifications, delivery), `delivery` (email), `digest` |
 | `app/vault/` | `aesgcm_vault` (envelope encryption, master key in .env), `user_keys` (per-person chat key), `notes` (server notes key) |
 | `app/privacy.py` | erase a person's data |
-| `app/web/` | `index.html`, `app.js` (no framework; `md()` renderer, live browser panel), `style.css` |
+| `app/web/` | `index.html`, `app.js` (no framework; `md()` renderer, live browser panel, `renderDashboard`), `style.css` ("Executive Slate" light / "Executive Dark Slate" dark design, TW-ai brand, theme toggle kept in localStorage), `fonts/` (Newsreader, Geist, JetBrains Mono, bundled: OFL). Icons are Material Symbols paths inlined in `MI` (app.js). Design references: `/root/stitch_tw_ai_ui_redesign/` (not in the repo). |
 | `scripts/` | `start_native.sh`, `run_vllm.sh`, `scheduler.py`, `backup.sh`/`restore.sh`, `rotate_vault_key.py`, `eval_triage.py`, `load_test.py`, `check_connectivity.py`, `seed_departments.py`, `init_db.py`, `generate_env.py` |
 | `deploy/native/` | prometheus (incl. alerting → gateway), loki, alloy, grafana provisioning; `deploy/prometheus-rules.yml` |
 

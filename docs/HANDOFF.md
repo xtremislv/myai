@@ -247,6 +247,16 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
 - Live run on Gemma: CSV -> run_python -> make_dashboard -> short reply, ~55-80 s, one or two self-corrected
   code errors on the way.
 
+## UI redesign (2026-11-04)
+- The web UI follows the owner's designs in `/root/stitch_tw_ai_ui_redesign/` (light "Executive Slate", dark
+  "Executive Dark Slate"): TW-ai brand, serif display headings (Newsreader), Geist body, mono labels, a top bar
+  with search (pages and chats, Ctrl/⌘K), theme toggle, bell and settings, and redesigned sign-in, chat,
+  Overview and Users screens; every other page picks up the same styles.
+- Fonts are bundled in `app/web/fonts/` and the CSP gained `font-src 'self'`; nothing loads from third parties.
+- Mock content in the designs was left out on purpose: Okta/SAML sign-on, "remember device", SOC2/cluster/node
+  labels, model picker, microphone, "hardware enclaves". Status lines use the real `/readyz`.
+- Checked with a mocked-API Playwright run of every page in both themes and at phone width (no script errors).
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

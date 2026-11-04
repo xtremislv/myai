@@ -48,13 +48,20 @@ const DEPARTMENT_NAMES = {
 };
 const departmentName = (name) => DEPARTMENT_NAMES[name] || name;
 
+// Suggestions under the empty chat: [text, icon]. Department ones first, then personal ones.
 const IDEAS = {
-  account: "Show the ledger summary",
-  logistics: "Track shipment SHP-8842",
-  researcher: "Summarize the Q3 research notes",
-  hr: "How many career emails came in?",
-  superuser: "Check stock of laptops",
+  account: ["Show the ledger summary", "receipt_long"],
+  logistics: ["Track shipment SHP-8842", "local_shipping"],
+  researcher: ["Summarize the Q3 research notes", "science"],
+  hr: ["Any new candidate emails in the careers inbox?", "mail"],
+  superuser: ["Check stock of laptops", "inventory_2"],
 };
+const PERSONAL_IDEAS = [
+  ["What's new in my mail?", "mail"],
+  ["Analyse a CSV and show me a dashboard", "monitoring"],
+  ["Remind me tomorrow at 9 to call the bank", "alarm"],
+  ["Help me write a polite email", "edit_square"],
+];
 
 const ICONS = {
   plus: "M12 5v14M5 12h14",
@@ -65,6 +72,65 @@ const ICONS = {
   lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z",
   bell: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0",
   globe: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z",
+};
+
+// Material Symbols (Outlined, weight 400; Apache License 2.0), drawn by mi(). viewBox 0 -960 960 960.
+const MI = {
+  account_circle: "M222-255q63-44 125-67.5T480-346q71 0 133.5 23.5T739-255q44-54 62.5-109T820-480q0-145-97.5-242.5T480-820q-145 0-242.5 97.5T140-480q0 61 19 116t63 109Zm160.5-234.5Q343-529 343-587t39.5-97.5Q422-724 480-724t97.5 39.5Q617-645 617-587t-39.5 97.5Q538-450 480-450t-97.5-39.5ZM480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-83 31.5-155.5t86-127Q252-817 325-848.5T480-880q83 0 155.5 31.5t127 86q54.5 54.5 86 127T880-480q0 82-31.5 155t-86 127.5q-54.5 54.5-127 86T480-80Zm107.5-76Q640-172 691-212q-51-36-104-55t-107-19q-54 0-107 19t-104 55q51 40 103.5 56T480-140q55 0 107.5-16Zm-52-375.5Q557-553 557-587t-21.5-55.5Q514-664 480-664t-55.5 21.5Q403-621 403-587t21.5 55.5Q446-510 480-510t55.5-21.5ZM480-587Zm0 374Z",
+  add: "M450-450H200v-60h250v-250h60v250h250v60H510v250h-60v-250Z",
+  alarm: "M339.5-110q-65.5-28-114-76.5t-77-114Q120-366 120-440.73q0-74.74 28.5-140Q177-646 225.5-695t114-77Q405-800 479-800t139.5 28Q684-744 733-695t77 114.27q28 65.26 28 140 0 74.73-28 140.23-28 65.5-77 114T618.5-110Q553-82 479-82t-139.5-28ZM479-439Zm121 161 42-42-130-130v-190h-60v214l148 148ZM214-867l42 42L92-667l-42-42 164-158Zm530 0 164 158-42 42-164-158 42-42ZM479.04-142Q604-142 691-229.04q87-87.05 87-212Q778-566 690.96-653q-87.05-87-212-87Q354-740 267-652.96q-87 87.05-87 212Q180-316 267.04-229q87.05 87 212 87Z",
+  alternate_email: "M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480v53q0 56-39.34 94.5Q801.31-294 744-294q-36.08 0-68.04-17.5Q644-329 627-361q-26 34-65.08 50.5Q522.83-294 480-294q-77.61 0-132.3-54Q293-402 293-480.01q0-78.02 54.5-133Q402-668 480-668t132.5 54.99Q667-558.02 667-480v53q0 30.61 22.5 51.81Q712-354 743.5-354t54-21.19Q820-396.39 820-427v-53q0-142.38-99-241.19T480-820q-142 0-241 99t-99 241q0 142 98.81 241 98.82 99 241.19 99h214v60H480Zm90-310.75q37-36.75 37-89.25 0-54-37.06-91t-90-37Q427-608 390-571t-37 91q0 52.5 37.06 89.25t90 36.75Q533-354 570-390.75Z",
+  arrow_forward: "M686-450H160v-60h526L438-758l42-42 320 320-320 320-42-42 248-248Z",
+  arrow_upward: "M450-160v-526L202-438l-42-42 320-320 320 320-42 42-248-248v526h-60Z",
+  attach_file: "M728-326q0 103-72.18 174.5-72.17 71.5-175 71.5Q378-80 305.5-151.5T233-326v-380q0-72.5 51.5-123.25T408-880q72 0 123.5 50.75T583-706v360q0 42-30 72t-72.5 30q-42.5 0-72.5-29.67-30-29.68-30-72.33v-370h60v370q0 17 12.5 29.5t30.64 12.5q18.14 0 30-12.5T523-346v-360q0-48-33.5-81t-81.71-33q-48.21 0-81.5 33.06T293-706v380q0 78 54.97 132T481-140q77.92 0 132.46-54Q668-248 668-326v-390h60v390Z",
+  bar_chart: "M660-160v-280h140v280H660Zm-250 0v-640h140v640H410Zm-250 0v-440h140v440H160Z",
+  block: "M324-111.5Q251-143 197-197t-85.5-127Q80-397 80-480t31.5-156Q143-709 197-763t127-85.5Q397-880 480-880t156 31.5Q709-817 763-763t85.5 127Q880-563 880-480t-31.5 156Q817-251 763-197t-127 85.5Q563-80 480-80t-156-31.5ZM480-140q61.01 0 117.51-20.5Q654-181 699-220L220-699q-38 46-59 102.17T140-480q0 142.37 98.81 241.19Q337.63-140 480-140Zm259-121q37-45 59-101.49 22-56.5 22-117.51 0-142.38-98.81-241.19T480-820q-60.66 0-116.83 21T261-739l478 478ZM480-480Z",
+  chat_bubble: "M80-80v-740q0-24 18-42t42-18h680q24 0 42 18t18 42v520q0 24-18 42t-42 18H240L80-80Zm134-220h606v-520H140v600l74-80Zm-74 0v-520 520Z",
+  check_circle: "m421-298 283-283-46-45-237 237-120-120-45 45 165 166Zm59 218q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-83 31.5-156t86-127Q252-817 325-848.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 82-31.5 155T763-197.5q-54 54.5-127 86T480-80Zm0-60q142 0 241-99.5T820-480q0-142-99-241t-241-99q-141 0-240.5 99T140-480q0 141 99.5 240.5T480-140Zm0-340Z",
+  chevron_right: "M530-481 332-679l43-43 241 241-241 241-43-43 198-198Z",
+  close: "m249-207-42-42 231-231-231-231 42-42 231 231 231-231 42 42-231 231 231 231-42 42-231-231-231 231Z",
+  dark_mode: "M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q8 0 17 .5t23 1.5q-36 32-56 79t-20 99q0 90 63 153t153 63q52 0 99-18.5t79-51.5q1 12 1.5 19.5t.5 14.5q0 150-105 255T480-120Zm0-60q109 0 190-67.5T771-406q-25 11-53.67 16.5Q688.67-384 660-384q-114.69 0-195.34-80.66Q384-545.31 384-660q0-24 5-51.5t18-62.5q-98 27-162.5 109.5T180-480q0 125 87.5 212.5T480-180Zm-4-297Z",
+  dashboard: "M510-570v-270h330v270H510ZM120-450v-390h330v390H120Zm390 330v-390h330v390H510Zm-390 0v-270h330v270H120Zm60-390h210v-270H180v270Zm390 330h210v-270H570v270Zm0-450h210v-150H570v150ZM180-180h210v-150H180v150Zm210-330Zm180-120Zm0 180ZM390-330Z",
+  delete: "M261-120q-24.75 0-42.37-17.63Q201-155.25 201-180v-570h-41v-60h188v-30h264v30h188v60h-41v570q0 24-18 42t-42 18H261Zm438-630H261v570h438v-570ZM367-266h60v-399h-60v399Zm166 0h60v-399h-60v399ZM261-750v570-570Z",
+  description: "M319-250h322v-60H319v60Zm0-170h322v-60H319v60ZM220-80q-24 0-42-18t-18-42v-680q0-24 18-42t42-18h361l219 219v521q0 24-18 42t-42 18H220Zm331-554v-186H220v680h520v-494H551ZM220-820v186-186 680-680Z",
+  download: "M480-313 287-506l43-43 120 120v-371h60v371l120-120 43 43-193 193ZM220-160q-24 0-42-18t-18-42v-143h60v143h520v-143h60v143q0 24-18 42t-42 18H220Z",
+  edit_square: "M180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h405l-60 60H180v600h600v-348l60-60v408q0 24-18 42t-42 18H180Zm300-360ZM360-360v-170l382-382q9-9 20-13t22-4q11 0 22.32 4.5Q817.63-920 827-911l83 84q8.61 8.96 13.3 19.78 4.7 10.83 4.7 22.02 0 11.2-4.5 22.7T910-742L530-360H360Zm508-425-84-84 84 84ZM420-420h85l253-253-43-42-43-42-252 251v86Zm295-295-43-42 43 42 43 42-43-42Z",
+  fact_check: "M132-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h696q24 0 42 18t18 42v600q0 24-18 42t-42 18H132Zm0-60h696v-600H132v600Zm68-100h200v-80H200v80Zm382-80 198-198-57-57-141 142-57-57-56 57 113 113Zm-382-80h200v-80H200v80Zm0-160h200v-80H200v80Zm-68 420v-600 600Z",
+  flag: "M200-120v-680h343l19 86h238v370H544l-18.93-85H260v309h-60Zm300-452Zm95 168h145v-250H511l-19-86H260v251h316l19 85Z",
+  folder: "M140-160q-24 0-42-18.5T80-220v-520q0-23 18-41.5t42-18.5h281l60 60h339q23 0 41.5 18.5T880-680v460q0 23-18.5 41.5T820-160H140Zm0-60h680v-460H456l-60-60H140v520Zm0 0v-520 520Z",
+  forum: "M880-81 721-240H300q-24.75 0-42.37-17.63Q240-275.25 240-300v-80h440q24.75 0 42.38-17.63Q740-415.25 740-440v-280h80q24.75 0 42.38 17.62Q880-684.75 880-660v579ZM140-425l75-75h405v-320H140v395ZM80-280v-540q0-24.75 17.63-42.38Q115.25-880 140-880h480q24.75 0 42.38 17.62Q680-844.75 680-820v320q0 24.75-17.62 42.37Q644.75-440 620-440H240L80-280Zm60-220v-320 320Z",
+  gavel: "M160-120v-60h480v60H160Zm222-212L160-554l70-72 224 222-72 72Zm254-254L414-810l72-70 222 222-72 72Zm202 426L302-696l42-42 536 536-42 42Z",
+  group: "M38-160v-94q0-35 18-63.5t50-42.5q73-32 131.5-46T358-420q62 0 120 14t131 46q32 14 50.5 42.5T678-254v94H38Zm700 0v-94q0-63-32-103.5T622-423q69 8 130 23.5t99 35.5q33 19 52 47t19 63v94H738ZM250-523q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42Zm426 0q-42 42-108 42-11 0-24.5-1.5T519-488q24-25 36.5-61.5T568-631q0-45-12.5-79.5T519-774q11-3 24.5-5t24.5-2q66 0 108 42t42 108q0 66-42 108ZM98-220h520v-34q0-16-9.5-31T585-306q-72-32-121-43t-106-11q-57 0-106.5 11T130-306q-14 6-23 21t-9 31v34Zm324.5-346.5Q448-592 448-631t-25.5-64.5Q397-721 358-721t-64.5 25.5Q268-670 268-631t25.5 64.5Q319-541 358-541t64.5-25.5ZM358-220Zm0-411Z",
+  history: "M477-120q-149 0-253-105.5T120-481h60q0 125 86 213t211 88q127 0 215-89t88-216q0-124-89-209.5T477-780q-68 0-127.5 31T246-667h105v60H142v-208h60v106q52-61 123.5-96T477-840q75 0 141 28t115.5 76.5Q783-687 811.5-622T840-482q0 75-28.5 141t-78 115Q684-177 618-148.5T477-120Zm128-197L451-469v-214h60v189l137 134-43 43Z",
+  hourglass_empty: "M308-140h344v-127q0-72-50-121.5T480-438q-72 0-122 49.5T308-267v127Zm294-432q50-50 50-122v-126H308v126q0 72 50 122t122 50q72 0 122-50ZM160-80v-60h88v-127q0-71 40-129t106-84q-66-27-106-85t-40-129v-126h-88v-60h640v60h-88v126q0 71-40 129t-106 85q66 26 106 84t40 129v127h88v60H160Z",
+  inbox: "M180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h600q24 0 42 18t18 42v600q0 24-18 42t-42 18H180Zm0-60h600v-136H634q-26 40-67.5 61.5T480-233q-45 0-86.5-21.5T326-316H180v136Zm374-136.5q33-23.5 56-59.5h170v-404H180v404h170q23 36 56.25 59.5 33.24 23.5 74 23.5Q521-293 554-316.5ZM180-180h600-600Z",
+  inventory_2: "M180-80q-24.75 0-42.37-17.63Q120-115.25 120-140v-483q-17-6-28.5-21.39T80-680v-140q0-24.75 17.63-42.38Q115.25-880 140-880h680q24.75 0 42.38 17.62Q880-844.75 880-820v140q0 20.22-11.5 35.61T840-623v483q0 24.75-17.62 42.37Q804.75-80 780-80H180Zm0-540v480h600v-480H180Zm-40-60h680v-140H140v140Zm220 260h240v-60H360v60Zm120 40Z",
+  key: "M232-432q-20-20-20-48t20-48q20-20 48-20t48 20q20 20 20 48t-20 48q-20 20-48 20t-48-20Zm48 192q-100 0-170-70T40-480q0-100 70-170t170-70q72 0 126 34t85 103h356l113 113-167 153-88-64-88 64-75-60h-51q-25 60-78.5 98.5T280-240Zm0-60q58 0 107-38.5t63-98.5h114l54 45 88-63 82 62 85-79-51-51H450q-12-56-60-96.5T280-660q-75 0-127.5 52.5T100-480q0 75 52.5 127.5T280-300Z",
+  language: "M323-111.5Q250-143 196-197t-85-127.5Q80-398 80-482t31-156.5Q142-711 196-765t127-84.5Q396-880 480-880t157 30.5Q710-819 764-765t85 126.5Q880-566 880-482t-31 157.5Q818-251 764-197t-127 85.5Q564-80 480-80t-157-31.5ZM480-138q35-36 58.5-82.5T577-331H384q14 60 37.5 108t58.5 85Zm-85-12q-25-38-43-82t-30-99H172q38 71 88 111.5T395-150Zm171-1q72-23 129.5-69T788-331H639q-13 54-30.5 98T566-151ZM152-391h159q-3-27-3.5-48.5T307-482q0-25 1-44.5t4-43.5H152q-7 24-9.5 43t-2.5 45q0 26 2.5 46.5T152-391Zm221 0h215q4-31 5-50.5t1-40.5q0-20-1-38.5t-5-49.5H373q-4 31-5 49.5t-1 38.5q0 21 1 40.5t5 50.5Zm275 0h160q7-24 9.5-44.5T820-482q0-26-2.5-45t-9.5-43H649q3 35 4 53.5t1 34.5q0 22-1.5 41.5T648-391Zm-10-239h150q-33-69-90.5-115T565-810q25 37 42.5 80T638-630Zm-254 0h194q-11-53-37-102.5T480-820q-32 27-54 71t-42 119Zm-212 0h151q11-54 28-96.5t43-82.5q-75 19-131 64t-91 115Z",
+  light_mode: "M579-381q41-41 41-99t-41-99q-41-41-99-41t-99 41q-41 41-41 99t41 99q41 41 99 41t99-41Zm-240.5 42.5Q280-397 280-480t58.5-141.5Q397-680 480-680t141.5 58.5Q680-563 680-480t-58.5 141.5Q563-280 480-280t-141.5-58.5ZM200-450H40v-60h160v60Zm720 0H760v-60h160v60ZM450-760v-160h60v160h-60Zm0 720v-160h60v160h-60ZM262-658l-100-97 43-44 96 100-39 41Zm494 496-98-100 41-41 99 98-42 43Zm-99-537 98-99 44 42-99 98-43-41ZM162-205l99-98 42 42-98 99-43-43Zm318-275Z",
+  local_shipping: "M140.5-195.42Q106-229.83 106-279H40v-461q0-24 18-42t42-18h579v167h105l136 181v173h-71q0 49.17-34.38 83.58Q780.24-161 731.12-161t-83.62-34.42Q613-229.83 613-279H342q0 49-34.38 83.5t-83.5 34.5q-49.12 0-83.62-34.42ZM265-238q17-17 17-41t-17-41q-17-17-41-17t-41 17q-17 17-17 41t17 41q17 17 41 17t41-17ZM100-339h22q17-27 43.04-43t58-16q31.96 0 58.46 16.5T325-339h294v-401H100v401Zm672 101q17-17 17-41t-17-41q-17-17-41-17t-41 17q-17 17-17 41t17 41q17 17 41 17t41-17Zm-93-187h186L754-573h-75v148ZM360-529Z",
+  lock: "M220-80q-24.75 0-42.37-17.63Q160-115.25 160-140v-434q0-24.75 17.63-42.38Q195.25-634 220-634h70v-96q0-78.85 55.61-134.42Q401.21-920 480.11-920q78.89 0 134.39 55.58Q670-808.85 670-730v96h70q24.75 0 42.38 17.62Q800-598.75 800-574v434q0 24.75-17.62 42.37Q764.75-80 740-80H220Zm0-60h520v-434H220v434Zm314.5-162.03Q557-324.06 557-355q0-30-22.67-54.5t-54.5-24.5q-31.83 0-54.33 24.5t-22.5 55q0 30.5 22.67 52.5t54.5 22q31.83 0 54.33-22.03ZM350-634h260v-96q0-54.17-37.88-92.08-37.88-37.92-92-37.92T388-822.08q-38 37.91-38 92.08v96ZM220-140v-434 434Z",
+  logout: "M180-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h299v60H180v600h299v60H180Zm486-185-43-43 102-102H360v-60h363L621-612l43-43 176 176-174 174Z",
+  mail: "M140-160q-24 0-42-18t-18-42v-520q0-24 18-42t42-18h680q24 0 42 18t18 42v520q0 24-18 42t-42 18H140Zm340-302L140-685v465h680v-465L480-462Zm0-60 336-218H145l335 218ZM140-685v-55 520-465Z",
+  menu: "M120-240v-60h720v60H120Zm0-210v-60h720v60H120Zm0-210v-60h720v60H120Z",
+  monitoring: "M120-120v-76l60-60v136h-60Zm165 0v-236l60-60v296h-60Zm165 0v-296l60 61v235h-60Zm165 0v-235l60-60v295h-60Zm165 0v-396l60-60v456h-60ZM120-356v-85l280-278 160 160 280-281v85L560-474 400-634 120-356Z",
+  more_vert: "M479.86-160Q460-160 446-174.14t-14-34Q432-228 446.14-242t34-14Q500-256 514-241.86t14 34Q528-188 513.86-174t-34 14Zm0-272Q460-432 446-446.14t-14-34Q432-500 446.14-514t34-14Q500-528 514-513.86t14 34Q528-460 513.86-446t-34 14Zm0-272Q460-704 446-718.14t-14-34Q432-772 446.14-786t34-14Q500-800 514-785.86t14 34Q528-732 513.86-718t-34 14Z",
+  north_east: "m202-160-42-42 498-498H364v-60h396v396h-60v-294L202-160Z",
+  notifications: "M160-200v-60h80v-304q0-84 49.5-150.5T420-798v-22q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820v22q81 17 130.5 83.5T720-564v304h80v60H160Zm320-302Zm0 422q-33 0-56.5-23.5T400-160h160q0 33-23.5 56.5T480-80ZM300-260h360v-304q0-75-52.5-127.5T480-744q-75 0-127.5 52.5T300-564v304Z",
+  person: "M372-523q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42ZM160-160v-94q0-38 19-65t49-41q67-30 128.5-45T480-420q62 0 123 15.5T731-360q31 14 50 41t19 65v94H160Zm60-60h520v-34q0-16-9.5-30.5T707-306q-64-31-117-42.5T480-360q-57 0-111 11.5T252-306q-14 7-23 21.5t-9 30.5v34Zm324.5-346.5Q570-592 570-631t-25.5-64.5Q519-721 480-721t-64.5 25.5Q390-670 390-631t25.5 64.5Q441-541 480-541t64.5-25.5ZM480-631Zm0 411Z",
+  person_add: "M730-400v-130H600v-60h130v-130h60v130h130v60H790v130h-60ZM252-523q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42ZM40-160v-94q0-35 17.5-63.5T108-360q75-33 133.5-46.5T360-420q60 0 118 13.5T611-360q33 15 51 43t18 63v94H40Zm60-60h520v-34q0-16-9-30.5T587-306q-71-33-120-43.5T360-360q-58 0-107.5 10.5T132-306q-15 7-23.5 21.5T100-254v34Zm324.5-346.5Q450-592 450-631t-25.5-64.5Q399-721 360-721t-64.5 25.5Q270-670 270-631t25.5 64.5Q321-541 360-541t64.5-25.5ZM360-631Zm0 411Z",
+  public: "M324-111.5Q251-143 197-197t-85.5-127Q80-397 80-480t31.5-156Q143-709 197-763t127-85.5Q397-880 480-880t156 31.5Q709-817 763-763t85.5 127Q880-563 880-480t-31.5 156Q817-251 763-197t-127 85.5Q563-80 480-80t-156-31.5ZM437-141v-82q-35 0-59-26t-24-61v-44L149-559q-5 20-7 39.5t-2 39.5q0 130 84.5 227T437-141Zm294-108q44-48 66.5-107.5T820-480q0-106-58-192.5T607-799v18q0 35-24 61t-59 26h-87v87q0 17-13.5 28T393-568h-83v88h258q17 0 28 13t11 30v127h43q29 0 51 17t30 44Z",
+  receipt_long: "M222-80q-43.75 0-74.37-30.63Q117-141.25 117-185v-125h127v-570l59.8 60 59.8-60 59.8 60 59.8-60 59.8 60 60-60 60 60 60-60 60 60 60-60v695q0 43.75-30.62 74.37Q781.75-80 738-80H222Zm516-60q20 0 32.5-12.5T783-185v-595H304v470h389v125q0 20 12.5 32.5T738-140ZM357-622v-60h240v60H357Zm0 134v-60h240v60H357Zm333-134q-12 0-21-9t-9-21q0-12 9-21t21-9q12 0 21 9t9 21q0 12-9 21t-21 9Zm0 129q-12 0-21-9t-9-21q0-12 9-21t21-9q12 0 21 9t9 21q0 12-9 21t-21 9ZM221-140h412v-110H177v65q0 20 12.65 32.5T221-140Zm-44 0v-110 110Z",
+  restart_alt: "M451-122q-123-10-207-101t-84-216q0-77 35.5-145T295-695l43 43q-56 33-87 90.5T220-439q0 100 66 173t165 84v60Zm60 0v-60q100-12 165-84.5T741-439q0-109-75.5-184.5T481-699h-20l60 60-43 43-133-133 133-133 43 43-60 60h20q134 0 227 93.5T801-439q0 125-83.5 216T511-122Z",
+  schedule: "m627-287 45-45-159-160v-201h-60v225l174 181ZM480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-82 31.5-155t86-127.5Q252-817 325-848.5T480-880q82 0 155 31.5t127.5 86Q817-708 848.5-635T880-480q0 82-31.5 155t-86 127.5Q708-143 635-111.5T480-80Zm0-400Zm0 340q140 0 240-100t100-240q0-140-100-240T480-820q-140 0-240 100T140-480q0 140 100 240t240 100Z",
+  science: "M172-120q-41.78 0-59.39-39T124-230l248-280v-270h-52q-12.75 0-21.37-8.68-8.63-8.67-8.63-21.5 0-12.82 8.63-21.32 8.62-8.5 21.37-8.5h320q12.75 0 21.38 8.68 8.62 8.67 8.62 21.5 0 12.82-8.62 21.32-8.63 8.5-21.38 8.5h-52v270l248 280q29 32 11.39 71T788-120H172Zm-12-60h640L528-488v-292h-96v292L160-180Zm318-300Z",
+  search: "M796-121 533-384q-30 26-70 40.5T378-329q-108 0-183-75t-75-181q0-106 75-181t182-75q106 0 180.5 75T632-585q0 43-14 83t-42 75l264 262-44 44ZM377-389q81 0 138-57.5T572-585q0-81-57-138.5T377-781q-82 0-139.5 57.5T180-585q0 81 57.5 138.5T377-389Z",
+  settings: "m388-80-20-126q-19-7-40-19t-37-25l-118 54-93-164 108-79q-2-9-2.5-20.5T185-480q0-9 .5-20.5T188-521L80-600l93-164 118 54q16-13 37-25t40-18l20-127h184l20 126q19 7 40.5 18.5T669-710l118-54 93 164-108 77q2 10 2.5 21.5t.5 21.5q0 10-.5 21t-2.5 21l108 78-93 164-118-54q-16 13-36.5 25.5T592-206L572-80H388Zm48-60h88l14-112q33-8 62.5-25t53.5-41l106 46 40-72-94-69q4-17 6.5-33.5T715-480q0-17-2-33.5t-7-33.5l94-69-40-72-106 46q-23-26-52-43.5T538-708l-14-112h-88l-14 112q-34 7-63.5 24T306-642l-106-46-40 72 94 69q-4 17-6.5 33.5T245-480q0 17 2.5 33.5T254-413l-94 69 40 72 106-46q24 24 53.5 41t62.5 25l14 112Zm44-210q54 0 92-38t38-92q0-54-38-92t-92-38q-54 0-92 38t-38 92q0 54 38 92t92 38Zm0-130Z",
+  shield: "M480-81q-140-35-230-162.5T160-523v-238l320-120 320 120v238q0 152-90 279.5T480-81Zm0-62q115-38 187.5-143.5T740-523v-196l-260-98-260 98v196q0 131 72.5 236.5T480-143Zm0-337Z",
+  task_alt: "M480-80q-85 0-158-30.5T195-195q-54-54-84.5-127T80-480q0-84 30.5-157T195-764q54-54 127-85t158-31q75 0 140 24t117 66l-43 43q-44-35-98-54t-116-19q-145 0-242.5 97.5T140-480q0 145 97.5 242.5T480-140q145 0 242.5-97.5T820-480q0-30-4.5-58.5T802-594l46-46q16 37 24 77t8 83q0 85-31 158t-85 127q-54 54-127 84.5T480-80Zm-59-218L256-464l45-45 120 120 414-414 46 45-460 460Z",
+  verified_user: "m436-347 228-228-42-41-183 183-101-101-44 44 142 143Zm44 266q-140-35-230-162.5T160-523v-238l320-120 320 120v238q0 152-90 279.5T480-81Zm0-62q115-38 187.5-143.5T740-523v-196l-260-98-260 98v196q0 131 72.5 236.5T480-143Zm0-337Z",
+  visibility: "M600.5-379.5Q650-429 650-500t-49.5-120.5Q551-670 480-670t-120.5 49.5Q310-571 310-500t49.5 120.5Q409-330 480-330t120.5-49.5Zm-200-41Q368-453 368-500t32.5-79.5Q433-612 480-612t79.5 32.5Q592-547 592-500t-32.5 79.5Q527-388 480-388t-79.5-32.5ZM216-283Q98-366 40-500q58-134 176-217t264-83q146 0 264 83t176 217q-58 134-176 217t-264 83q-146 0-264-83Zm264-217Zm222.5 174.5Q804-391 857-500q-53-109-154.5-174.5T480-740q-121 0-222.5 65.5T102-500q54 109 155.5 174.5T480-260q121 0 222.5-65.5Z",
+  visibility_off: "m629-419-44-44q26-71-27-118t-115-24l-44-44q17-11 38-16t43-5q71 0 120.5 49.5T650-500q0 22-5.5 43.5T629-419Zm129 129-40-40q49-36 85.5-80.5T857-500q-50-111-150-175.5T490-740q-42 0-86 8t-69 19l-46-47q35-16 89.5-28T485-800q143 0 261.5 81.5T920-500q-26 64-67 117t-95 93Zm58 226L648-229q-35 14-79 21.5t-89 7.5q-146 0-265-81.5T40-500q20-52 55.5-101.5T182-696L56-822l42-43 757 757-39 44ZM223-654q-37 27-71.5 71T102-500q51 111 153.5 175.5T488-260q33 0 65-4t48-12l-64-64q-11 5-27 7.5t-30 2.5q-70 0-120-49t-50-121q0-15 2.5-30t7.5-27l-97-97Zm305 142Zm-116 58Z",
 };
 
 // ---- small DOM helpers ----
@@ -97,9 +163,69 @@ function icon(name) {
   return svg;
 }
 
-// The brand mark: a spark on the accent gradient. Size comes from the CSS class.
+function mi(name, label) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 -960 960 960");
+  svg.setAttribute("class", "mi");
+  if (label) { svg.setAttribute("role", "img"); svg.setAttribute("aria-label", label); } else svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", MI[name] || "");
+  svg.append(path);
+  return svg;
+}
+
+// The brand: "TW" on a dark square, then the name. Size comes from the CSS class.
+const BRAND = "TW-ai";
 function logo(size = "") {
-  return h("span", { class: `logo ${size}`, "aria-hidden": "true" }, icon("spark"));
+  return h("span", { class: `logo ${size}`, "aria-hidden": "true" }, "TW");
+}
+function brand(size = "") {
+  return [logo(size), h("span", { class: "brand-text" }, h("span", { class: "brand-name" }, BRAND), h("span", { class: "brand-by" }, "by TW Labs"))];
+}
+
+// ---- theme: the system's, unless the person picked one (kept in this browser only) ----
+function savedTheme() {
+  try { return localStorage.getItem("theme"); } catch { return null; }
+}
+function currentTheme() {
+  const picked = document.documentElement.dataset.theme;
+  if (picked === "light" || picked === "dark") return picked;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function applyTheme(theme) {
+  if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+}
+applyTheme(savedTheme());
+function themeButton(extraClass = "") {
+  const button = h("button", { type: "button", class: `icon-button theme-toggle ${extraClass}` });
+  const paint = () => {
+    const dark = currentTheme() === "dark";
+    button.replaceChildren(mi(dark ? "light_mode" : "dark_mode"));
+    button.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+    button.title = button.getAttribute("aria-label");
+  };
+  button.addEventListener("click", () => {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem("theme", next); } catch { /* this browser won't remember it */ }
+    document.querySelectorAll(".theme-toggle").forEach((b) => b.dispatchEvent(new Event("repaint")));
+  });
+  button.addEventListener("repaint", paint);
+  paint();
+  return button;
+}
+
+// Whether the server and its model are up (GET /readyz, public), for the status lines.
+async function serverStatus() {
+  try {
+    const response = await fetch("/readyz");
+    const data = await response.json();
+    return { up: !!data.ready, model: data.checks?.model_server === "ok" };
+  } catch {
+    return { up: false, model: false };
+  }
 }
 
 function initials(name) {
@@ -360,12 +486,38 @@ function signOut(message) {
 const has = (...roles) => roles.some((role) => state.roles.includes(role));
 
 // ---- sign-in screens ----
+// An input with an icon in front (and a show/hide button for passwords).
+function iconField(iconName, input) {
+  const parts = [mi(iconName), input];
+  if (input.type === "password") {
+    const reveal = h("button", { type: "button", class: "field-end", "aria-label": "Show password", title: "Show password" }, mi("visibility"));
+    reveal.addEventListener("click", () => {
+      const hidden = input.type === "password";
+      input.type = hidden ? "text" : "password";
+      reveal.replaceChildren(mi(hidden ? "visibility_off" : "visibility"));
+      reveal.setAttribute("aria-label", hidden ? "Hide password" : "Show password");
+    });
+    parts.push(reveal);
+  }
+  return h("div", { class: "field" }, parts);
+}
+
+// The frame around every sign-in screen: theme switch in the corner, live status under the card.
+function authFrame(card) {
+  const status = h("div", { class: "auth-status" });
+  serverStatus().then(({ up, model }) => fill(status,
+    h("span", null, h("span", { class: `status-dot ${up ? "up" : "down"}` }), "System: ", h("strong", null, up ? "Operational" : "Unavailable")),
+    up && h("span", null, "Assistant: ", h("strong", null, model ? "Online" : "Starting")),
+  ));
+  return h("div", { class: "center" }, h("div", { class: "corner" }, themeButton("boxed")), card, status);
+}
+
 function loginScreen(message) {
   const error = errorBox();
-  const username = h("input", { autocomplete: "username", required: true });
-  const password = h("input", { type: "password", autocomplete: "current-password", required: true });
-  const submit = h("button", { class: "primary", type: "submit" }, "Sign in");
-  show(h("div", { class: "center" }, h("form", {
+  const username = h("input", { autocomplete: "username", required: true, placeholder: "Your username", id: "login-username" });
+  const password = h("input", { type: "password", autocomplete: "current-password", required: true, placeholder: "••••••••••••", id: "login-password" });
+  const submit = h("button", { class: "primary wide", type: "submit" }, "Sign in", mi("arrow_forward"));
+  show(authFrame(h("form", {
     class: "card auth",
     onsubmit: async (event) => {
       event.preventDefault();
@@ -384,18 +536,18 @@ function loginScreen(message) {
       }
     },
   },
-    h("div", { class: "auth-brand" }, logo("lg"), h("span", { class: "auth-name" }, "AI Platform")),
+    h("div", { class: "auth-brand" }, brand("lg")),
     h("h1", null, "Welcome back"),
-    h("p", { class: "muted auth-sub" }, "Sign in to your company's private AI workspace."),
+    h("p", { class: "auth-sub" }, "Sign in to your private workspace"),
     message && h("div", { class: "notice info" }, message),
     error,
-    h("label", null, "Username", username),
-    h("label", null, "Password", password),
-    h("div", { class: "row spread auth-actions" },
-      submit,
-      h("button", { class: "link", type: "button", onclick: recoverScreen }, "Forgot password?"),
-    ),
-    h("p", { class: "auth-foot" }, icon("lock"), "Private chats are encrypted with a key only you can unlock."),
+    h("label", { for: "login-username" }, h("span", { class: "caps" }, "Username"), iconField("alternate_email", username)),
+    h("label", { for: "login-password" },
+      h("span", { class: "label-row" }, h("span", { class: "caps" }, "Password"),
+        h("button", { class: "link small", type: "button", onclick: recoverScreen }, "Forgot password?")),
+      iconField("lock", password)),
+    h("div", { class: "auth-actions" }, submit),
+    h("p", { class: "auth-foot" }, mi("lock"), "Private chats are encrypted with a key only you can unlock."),
   )));
   username.focus();
 }
@@ -404,7 +556,7 @@ function firstPasswordScreen(oldPassword) {
   const error = errorBox();
   const next = h("input", { type: "password", autocomplete: "new-password", minLength: 12, required: true });
   const again = h("input", { type: "password", autocomplete: "new-password", required: true });
-  show(h("div", { class: "center" }, h("form", {
+  show(authFrame(h("form", {
     class: "card auth",
     onsubmit: async (event) => {
       event.preventDefault();
@@ -421,6 +573,7 @@ function firstPasswordScreen(oldPassword) {
       }
     },
   },
+    h("div", { class: "auth-brand" }, brand("lg")),
     h("h1", null, "Set your own password"),
     h("p", { class: "muted" }, "Your administrator chose your first password. Set your own to start chatting. "
       + "Only your password can unlock your private chats, so your administrator can't read them."),
@@ -443,7 +596,7 @@ function recoveryCodeScreen(code) {
       copy.textContent = "Copied";
     },
   }, "Copy code");
-  show(h("div", { class: "center" }, h("div", { class: "card auth" },
+  show(authFrame(h("div", { class: "card auth" },
     h("h1", null, "Save your recovery code"),
     h("p", null, "If you forget your password, this code is the only way back into your private chats. "
       + "It won't be shown again, and nobody can reset it for you."),
@@ -460,7 +613,7 @@ function recoverScreen() {
   const username = h("input", { autocomplete: "username", required: true });
   const code = h("input", { autocomplete: "off", required: true, placeholder: "ABCD-EFGH-..." });
   const next = h("input", { type: "password", autocomplete: "new-password", minLength: 12, required: true });
-  show(h("div", { class: "center" }, h("form", {
+  show(authFrame(h("form", {
     class: "card auth",
     onsubmit: async (event) => {
       event.preventDefault();
@@ -477,6 +630,7 @@ function recoverScreen() {
       }
     },
   },
+    h("div", { class: "auth-brand" }, brand("lg")),
     h("h1", null, "Recover your account"),
     h("p", { class: "muted" }, "Your recovery code sets a new password and keeps your chats. "
       + "The code works once, and you'll get a new one."),
@@ -493,19 +647,20 @@ function recoverScreen() {
 }
 
 // ---- shell ----
+// [id, label, view, badge count key, icon, group]
 function morePages() {
   return [
-    has("admin") && ["approvals", "Approvals", approvalsView, "pending_approvals"],
-    has("admin", "account") && ["inbox", "Accounts inbox", inboxView, "inbox_queued"],
-    has("admin", "hr", "account") && ["reports", "Reports", reportsView, "open_reports"],
-    has("admin") && ["users", "Users", usersView],
-    has("admin") && ["credentials", "Credentials", credentialsView],
-    ["notifications", "Notifications", notificationsView, "unread_notifications"],
-    ["files", "My files", filesView],
-    ["templates", "Templates", templatesView],
-    ["reminders", "Reminders", remindersView],
-    ["overview", "Overview", overviewView],
-    ["account", "My account", accountView],
+    ["overview", "Overview", overviewView, null, "dashboard", "work"],
+    has("admin") && ["approvals", "Approvals", approvalsView, "pending_approvals", "gavel", "work"],
+    has("admin", "account") && ["inbox", "Accounts inbox", inboxView, "inbox_queued", "inbox", "work"],
+    has("admin", "hr", "account") && ["reports", "Reports", reportsView, "open_reports", "bar_chart", "work"],
+    has("admin") && ["users", "Users", usersView, null, "group", "work"],
+    has("admin") && ["credentials", "Credentials", credentialsView, null, "key", "work"],
+    ["templates", "Templates", templatesView, null, "description", "work"],
+    ["files", "My files", filesView, null, "folder", "mine"],
+    ["reminders", "Reminders", remindersView, null, "alarm", "mine"],
+    ["notifications", "Notifications", notificationsView, "unread_notifications", "notifications", "mine"],
+    ["account", "Settings", accountView, null, "settings", "mine"],
   ].filter(Boolean);
 }
 
@@ -541,12 +696,23 @@ async function checkBell(paint) {
 function shell() {
   const view = h("div", { class: "view" });
   const chats = h("div", { class: "chats", "aria-label": "Your chats" });
-  const more = h("div", { class: "side-more" });
+  const work = h("div", { class: "side-more" });
+  const mine = h("div", { class: "side-more" });
   const side = h("nav", { class: "side", "aria-label": "Main" });
   const scrim = h("button", { class: "scrim", "aria-label": "Close menu", onclick: () => toggleSide(false) });
+  const bellDot = h("span", { class: "dot", hidden: true });
   const toggleSide = (open) => {
     side.classList.toggle("open", open);
     scrim.classList.toggle("open", open);
+  };
+
+  const pageItem = ([id, label, , badge, iconName]) => {
+    const count = badge && state.counts[badge];
+    return h("button", {
+      class: `side-item ${state.view === id ? "active" : ""}`,
+      "aria-current": state.view === id ? "page" : null,
+      onclick: () => go(id),
+    }, h("span", { class: "lead" }, mi(iconName), h("span", { class: "title" }, label)), count > 0 && h("span", { class: "badge" }, count));
   };
 
   const paint = () => {
@@ -555,16 +721,18 @@ function shell() {
       state.threads.map((t) => h("button", {
         class: `side-item ${state.view === "chat" && t.thread_id === state.thread ? "active" : ""}`,
         onclick: () => openChat(t.thread_id),
-      }, h("span", { class: "title", title: t.title }, t.title || "Untitled chat"))),
+      }, h("span", { class: "lead" }, mi("chat_bubble"), h("span", { class: "title", title: t.title }, t.title || "Untitled chat")))),
     );
-    fill(more, morePages().map(([id, label, , badge]) => {
-      const count = badge && state.counts[badge];
-      return h("button", {
-        class: `side-item ${state.view === id ? "active" : ""}`,
-        "aria-current": state.view === id ? "page" : null,
-        onclick: () => go(id),
-      }, h("span", { class: "title" }, label), count > 0 && h("span", { class: "badge" }, count));
-    }));
+    const pages = morePages();
+    fill(work,
+      h("button", {
+        class: `side-item ${state.view === "chat" && !state.threads.some((t) => t.thread_id === state.thread) ? "active" : ""}`,
+        onclick: () => openChat(newThreadId()),
+      }, h("span", { class: "lead" }, mi("forum"), h("span", { class: "title" }, "Chat assistant"))),
+      pages.filter((p) => p[5] === "work").map(pageItem),
+    );
+    fill(mine, pages.filter((p) => p[5] === "mine").map(pageItem));
+    bellDot.hidden = !(state.unread > 0);
   };
 
   const reloadThreads = async () => {
@@ -608,28 +776,41 @@ function shell() {
 
   state.go = go;
   fill(side,
-    h("div", { class: "brand" }, logo(), h("span", null, "AI Platform")),
-    h("button", { class: "new-chat", onclick: () => openChat(newThreadId()) }, icon("pen"), "New chat"),
-    h("div", { class: "side-label" }, "Recent chats"),
-    chats,
-    h("div", { class: "side-label" }, "Workspace"),
-    more,
+    h("div", { class: "side-top" }, brand()),
+    h("div", { class: "side-body" },
+      h("button", { class: "new-chat", onclick: () => openChat(newThreadId()) },
+        h("span", null, mi("add"), "New chat")),
+      h("div", { class: "side-label" }, "Recents"),
+      chats,
+      h("div", { class: "side-label" }, "Workspace"),
+      work,
+      h("div", { class: "side-label" }, "Personal"),
+      mine,
+    ),
     h("div", { class: "who" },
       h("span", { class: "avatar", "aria-hidden": "true" }, initials(state.username)),
       h("span", { class: "who-text" },
         h("span", { class: "who-name" }, state.username),
         h("span", { class: "who-role" }, state.roles.map(departmentName).join(" · ") || "Member"),
       ),
-      h("button", { class: "link", onclick: () => signOut() }, "Sign out"),
+      h("button", { class: "icon-button", "aria-label": "Sign out", title: "Sign out", onclick: () => signOut() }, mi("logout")),
     ),
   );
   show(h("div", { class: "shell" },
     side,
     scrim,
     h("div", { class: "main" },
-      h("div", { class: "topbar" },
-        h("button", { class: "icon-button", "aria-label": "Open menu", onclick: () => toggleSide(true) }, icon("menu")),
-        h("span", { class: "brand" }, logo(), h("span", null, "AI Platform")),
+      h("header", { class: "topbar" },
+        h("button", { class: "icon-button menu-button", "aria-label": "Open menu", onclick: () => toggleSide(true) }, mi("menu")),
+        h("span", { class: "top-brand" }, brand()),
+        searchBox({ openChat, go }),
+        h("div", { class: "top-actions" },
+          themeButton(),
+          h("button", { class: "icon-button", "aria-label": "Notifications", title: "Notifications", onclick: () => go("notifications") },
+            mi("notifications"), bellDot),
+          h("button", { class: "icon-button boxed", "aria-label": "Settings", title: "Your account and settings", onclick: () => go("account") },
+            mi("person")),
+        ),
       ),
       view,
     ),
@@ -643,8 +824,72 @@ function shell() {
   state.bellPoll = setInterval(() => { if (state.token) checkBell(paint); }, 60000);
 }
 
-function heading(text, subtitle) {
-  return h("div", { class: "head" }, h("h1", null, text), subtitle && h("p", { class: "muted" }, subtitle));
+// "Search workspace": jump to a page or one of your chats by name. Ctrl/⌘+K focuses it.
+function searchBox({ openChat, go }) {
+  const input = h("input", { type: "search", placeholder: "Search chats and pages...", "aria-label": "Search chats and pages", autocomplete: "off" });
+  const results = h("div", { class: "search-results", role: "listbox", hidden: true });
+  let picked = 0;
+  let found = [];
+  const close = () => { results.hidden = true; };
+  const choose = (item) => { close(); input.value = ""; input.blur(); item.run(); };
+  const paint = () => {
+    const q = input.value.trim().toLowerCase();
+    const pages = morePages().map(([id, label, , , iconName]) => ({ label, iconName, group: "Pages", run: () => go(id) }));
+    const chats = state.threads.map((t) => ({ label: t.title || "Untitled chat", iconName: "chat_bubble", group: "Chats", run: () => openChat(t.thread_id) }));
+    found = [...pages, ...chats].filter((item) => !q || item.label.toLowerCase().includes(q)).slice(0, 12);
+    picked = Math.min(picked, Math.max(0, found.length - 1));
+    let group = "";
+    fill(results, found.length ? found.flatMap((item, i) => {
+      const head = item.group !== group ? h("div", { class: "group" }, (group = item.group)) : null;
+      return [head, h("button", {
+        type: "button", role: "option", class: `side-item ${i === picked ? "picked" : ""}`,
+        onmousedown: (event) => { event.preventDefault(); choose(item); },
+      }, h("span", { class: "lead" }, mi(item.iconName), h("span", { class: "title" }, item.label)))];
+    }) : h("div", { class: "none" }, "Nothing matches."));
+    results.hidden = false;
+  };
+  input.addEventListener("focus", paint);
+  input.addEventListener("input", () => { picked = 0; paint(); });
+  input.addEventListener("blur", () => setTimeout(close, 100));
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      picked = (picked + (event.key === "ArrowDown" ? 1 : -1) + found.length) % Math.max(1, found.length);
+      paint();
+    } else if (event.key === "Enter" && found[picked]) {
+      event.preventDefault();
+      choose(found[picked]);
+    } else if (event.key === "Escape") {
+      close();
+      input.blur();
+    }
+  });
+  if (!searchBox.bound) {
+    searchBox.bound = true;
+    document.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        const box = document.querySelector(".search input");
+        if (box) { event.preventDefault(); box.focus(); }
+      }
+    });
+  }
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  return h("div", { class: "search" }, iconField("search", input), h("kbd", null, mac ? "⌘K" : "Ctrl K"), results);
+}
+
+// A page title in the serif display face, with an optional mono "eyebrow" trail above it, a chip
+// beside it and actions on the right.
+function heading(text, subtitle, { eyebrow, chip, actions } = {}) {
+  return h("div", { class: "head" },
+    eyebrow && h("div", { class: "eyebrow" }, eyebrow.flatMap((part, i) => [
+      i > 0 && h("span", { class: "sep" }, "/"),
+      i === eyebrow.length - 1 ? h("strong", null, part) : h("span", null, part),
+    ])),
+    h("div", { class: "head-row" },
+      h("div", null, h("h1", null, text, chip), subtitle && h("p", { class: "muted" }, subtitle)),
+      actions && h("div", { class: "row" }, actions),
+    ),
+  );
 }
 
 // ---- chat ----
@@ -655,8 +900,8 @@ async function chatView(thread, { reloadThreads, paint }) {
   const scroll = h("div", { class: "scroll" }, messages, requests);
   const files = h("div", { class: "files" });
   const error = errorBox();
-  const input = h("textarea", { placeholder: "Message the assistant", "aria-label": "Message", rows: 1 });
-  const send = h("button", { class: "primary round", type: "submit", "aria-label": "Send" }, icon("send"));
+  const input = h("textarea", { placeholder: "Ask anything: personal questions stay private, work goes to the right team...", "aria-label": "Message", rows: 2 });
+  const send = h("button", { class: "primary round", type: "submit", "aria-label": "Send", title: "Send (Enter)" }, mi("arrow_upward"));
   const picker = h("input", { type: "file", class: "hidden-input", id: "file-picker", onchange: () => upload() });
 
   const toBottom = () => { scroll.scrollTop = scroll.scrollHeight; };
@@ -664,7 +909,7 @@ async function chatView(thread, { reloadThreads, paint }) {
 
   const bubble = (role, text, handledBy, dashboards) => {
     const node = h("div", { class: `msg ${role} ${role === "assistant" ? "md" : ""}` }, role === "assistant" ? md(text) : text,
-      role === "assistant" && handledBy && h("span", { class: "handled" }, `Handled as work by ${departmentName(handledBy)}`));
+      role === "assistant" && handledBy && h("span", { class: "handled" }, mi("task_alt"), `Handled as work by ${departmentName(handledBy)}`));
     messages.append(node);
     for (const dash of dashboards || []) messages.append(renderDashboard(dash));
     toBottom();
@@ -903,8 +1148,12 @@ async function chatView(thread, { reloadThreads, paint }) {
     files,
     input,
     h("div", { class: "composer-actions" },
-      h("button", { type: "button", class: "round", "aria-label": "Attach a file", title: "Attach a file", onclick: () => picker.click() }, icon("plus")),
-      h("button", { type: "button", class: "round", "aria-label": "Open the live browser", title: "Live browser (sign in to shops, see what the assistant sees)", onclick: () => openBrowser("private", "") }, icon("globe")),
+      h("div", { class: "composer-tools" },
+        h("button", { type: "button", class: "round", "aria-label": "Attach a file", title: "Attach a file (text, CSV, PDF, Word)", onclick: () => picker.click() }, mi("attach_file")),
+        h("button", { type: "button", class: "round", "aria-label": "Open the live browser", title: "Live browser (sign in to shops, see what the assistant sees)", onclick: () => openBrowser("private", "") }, mi("language")),
+        h("span", { class: "divider", "aria-hidden": "true" }),
+        h("span", { class: "composer-hint" }, "Enter to send · Shift+Enter for a new line"),
+      ),
       picker,
       send,
     ),
@@ -917,33 +1166,41 @@ async function chatView(thread, { reloadThreads, paint }) {
     }
   });
 
-  const ideaTexts = [
+  const ideas = [
     ...state.roles.filter((role) => IDEAS[role]).map((role) => IDEAS[role]),
-    "Help me write a polite email",
+    ...PERSONAL_IDEAS,
   ].slice(0, 4);
+
+  const status = h("span", { class: "chip-status" }, h("span", { class: "status-dot" }), "Checking the assistant...");
+  serverStatus().then(({ up, model }) => fill(status,
+    h("span", { class: `status-dot ${up && model ? "up" : "down"}` }),
+    up && model ? "Assistant online" : up ? "Assistant starting" : "Server unavailable",
+  ));
 
   const content = h("div", { class: "chat is-empty" },
     h("h1", { class: "sr-only" }, "Chat"),
-    h("div", { class: "greeting column" },
-      logo("xl"),
-      h("h1", null, "What can I help with, ", h("span", { class: "accent-text" }, state.username), "?"),
-      h("p", { class: "muted greeting-sub" }, "Ask anything. Personal questions stay private; work goes to the right team."),
+    h("div", { class: "chat-status column" }, status),
+    h("div", { class: "chat-body" },
+      h("div", { class: "greeting column" },
+        h("div", { class: "spark-box", "aria-hidden": "true" }, icon("spark")),
+        h("h2", { class: "greeting-title" }, "How can I assist today, ", h("em", null, state.username), "?"),
+        h("p", { class: "greeting-sub" }, h("span", null, "Private by default"), h("span", { class: "sep" }), h("span", null, "Work goes to the right team")),
+      ),
+      scroll,
+      h("div", { class: "dock column" },
+        error,
+        composer,
+        h("div", { class: "ideas" }, ideas.map(([text, iconName]) => h("button", {
+          type: "button",
+          onclick: () => {
+            input.value = text;
+            grow();
+            input.focus();
+          },
+        }, mi(iconName), h("span", null, text), mi("north_east")))),
+      ),
     ),
-    scroll,
-    h("div", { class: "dock column" },
-      error,
-      composer,
-      h("div", { class: "ideas" }, ideaTexts.map((text) => h("button", {
-        type: "button",
-        onclick: () => {
-          input.value = text;
-          grow();
-          input.focus();
-        },
-      }, icon("spark"), h("span", null, text)))),
-      h("p", { class: "fineprint" }, "Private chats are encrypted with your key. Work is visible to the department "
-        + "that handles it. Explicit or illegal content is reported."),
-    ),
+    h("p", { class: "fineprint column" }, mi("shield"), "Private chats are encrypted with your key. Work is seen only by the team that handles it."),
   );
 
   if (known()) {
@@ -1267,8 +1524,27 @@ function renderDashboard(dash) {
 }
 
 // ---- overview ----
-function tile(label, value, hint, target) {
-  const body = [h("div", { class: "label" }, label), h("div", { class: "value" }, value), hint && h("div", { class: "hint" }, hint)];
+const DEPT_ICONS = {
+  account: "receipt_long", logistics: "local_shipping", researcher: "science", hr: "group",
+  superuser: "inventory_2", admin: "shield", none: "block",
+};
+const deptLabel = (name) => (name === "none" ? "Unrouted" : departmentName(name));
+
+// A KPI tile: caps label (and a chip or icon) on top, a serif number with its unit, then an
+// optional meter and a footer line [left, right]. With a target it opens that page.
+function tile(label, value, hint, target, { chip, unit, iconName, meter, foot, mono } = {}) {
+  let meterEl = null;
+  if (meter !== undefined && meter !== null) {
+    const fillBar = h("i");
+    fillBar.style.width = `${Math.max(0, Math.min(1, meter)) * 100}%`;
+    meterEl = h("div", { class: "meter" }, fillBar);
+  }
+  const body = [
+    h("div", { class: "tile-top" }, h("span", { class: `label ${mono ? "mono" : ""}` }, label), chip || (iconName && mi(iconName))),
+    h("div", { class: "value" }, String(value), unit && h("span", { class: `unit ${mono ? "mono" : ""}` }, unit)),
+    meterEl,
+    (foot || hint) && h("div", { class: "hint" }, foot ? [h("span", null, foot[0]), foot[1] && h("strong", null, foot[1])] : h("span", null, hint)),
+  ];
   return target
     ? h("button", { class: "tile", onclick: () => state.go(target) }, body)
     : h("div", { class: "tile" }, body);
@@ -1290,59 +1566,109 @@ function bindTooltip(el, text) {
   el.addEventListener("blur", hide);
 }
 
-function activityChart(activity) {
+function departmentTotals(activity) {
   const totals = new Map();
   for (const { department, count } of activity) totals.set(department, (totals.get(department) || 0) + count);
-  const rows = [...totals].sort((a, b) => b[1] - a[1]);
+  return [...totals].sort((a, b) => b[1] - a[1]);
+}
+
+function activityChart(activity, rows) {
   const max = Math.max(...rows.map(([, count]) => count));
-  return h("div", { class: "bars" }, rows.map(([department, count]) => {
+  return h("div", { class: "bars" }, rows.map(([department, count], i) => {
     const parts = activity
       .filter((a) => a.department === department)
       .map((a) => `${a.count} ${(OUTCOMES[a.outcome] || [a.outcome])[0].toLowerCase()}`)
       .join(", ");
-    const bar = h("div", { class: "bar" });
-    bar.style.width = `calc((100% - 44px) * ${count / max})`;
-    const row = h("div", { class: "bar-row", tabIndex: 0, "aria-label": `${department}: ${count} requests, ${parts}` },
-      h("div", { class: "small" }, department === "none" ? "unrouted" : department),
-      h("div", { class: "bar-track" }, bar, h("span", { class: "small" }, count)),
+    const bar = h("div", { class: `bar b${Math.min(i + 1, 4)}` });
+    bar.style.width = `${(count / max) * 100}%`;
+    const row = h("div", { class: "bar-row", tabIndex: 0, "aria-label": `${deptLabel(department)}: ${count} requests, ${parts}` },
+      h("div", { class: "name" }, mi(DEPT_ICONS[department] || "group"), deptLabel(department)),
+      h("div", { class: "bar-track" }, bar),
+      h("div", { class: "count" }, count),
     );
-    bindTooltip(row, `${department === "none" ? "unrouted" : department}: ${parts}`);
+    bindTooltip(row, `${deptLabel(department)}: ${parts}`);
     return row;
   }));
 }
 
-async function overviewView() {
+function statusChip(count, { zero, some }) {
+  return count > 0 ? h("span", { class: "pill warn dot" }, some) : h("span", { class: "pill good dot" }, zero);
+}
+
+async function overviewView(refresh) {
   const data = await refreshCounts();
   const total = data.activity.reduce((sum, a) => sum + a.count, 0);
+  const done = data.activity.filter((a) => a.outcome === "ok").reduce((sum, a) => sum + a.count, 0);
+  const rows = departmentTotals(data.activity);
+  const pct = (n) => `${total ? Math.round((n / total) * 1000) / 10 : 0}%`;
   const tiles = [
-    tile(has("admin") ? "Work requests, last 24 hours" : "Your work requests, last 24 hours", total),
-    data.pending_approvals !== undefined && tile("Waiting for approval", data.pending_approvals, null, "approvals"),
-    data.inbox_queued !== undefined && tile("Accounts inbox", data.inbox_queued, "queued", "inbox"),
-    data.open_reports !== undefined && tile("Open reports", data.open_reports, null, "reports"),
-    data.users !== undefined && tile("Users", data.users, null, "users"),
+    tile(has("admin") ? "Work requests" : "Your work requests", total, null, null, {
+      unit: "last 24h", chip: h("span", { class: "pill mono" }, `${rows.length} dept${rows.length === 1 ? "" : "s"}`),
+      foot: ["Completed", total ? pct(done) : "–"],
+    }),
+    data.pending_approvals !== undefined && tile("Pending approvals", data.pending_approvals, null, "approvals", {
+      unit: "waiting", chip: statusChip(data.pending_approvals, { zero: "Clear", some: "Needs you" }),
+      foot: ["Paused actions", "Open →"],
+    }),
+    data.inbox_queued !== undefined && tile("Accounts inbox", data.inbox_queued, null, "inbox", {
+      unit: "queued", chip: statusChip(data.inbox_queued, { zero: "Empty", some: "Queued" }),
+      foot: ["Orders, bills, bookings", "Open →"],
+    }),
+    data.open_reports !== undefined && tile("Open reports", data.open_reports, null, "reports", {
+      unit: "open", chip: statusChip(data.open_reports, { zero: "None", some: "Review" }),
+      foot: ["Flagged content", "Open →"],
+    }),
   ];
+  const legend = rows.length > 0 && h("div", { class: "legend" },
+    rows.slice(0, 2).map(([d, n], i) => h("span", null, h("i", { class: `b${i + 1}` }), `${deptLabel(d)} (${pct(n)})`)),
+    rows.length > 2 && h("span", null, h("i", { class: "b4" }), `Others (${pct(rows.slice(2).reduce((a, [, n]) => a + n, 0))})`),
+  );
   const outcomeRows = data.activity
     .slice()
-    .sort((a, b) => a.department.localeCompare(b.department) || b.count - a.count)
-    .map((a) => [a.department === "none" ? "unrouted" : a.department, outcomePill(a.outcome), a.count]);
+    .sort((a, b) => b.count - a.count || a.department.localeCompare(b.department))
+    .map((a) => {
+      const [text, kind] = OUTCOMES[a.outcome] || [a.outcome, ""];
+      return [h("span", { class: "dot-label" }, deptLabel(a.department)), h("span", { class: `pill dot ${kind}` }, text), a.count];
+    });
+
+  const side = data.departments
+    ? h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, mi("shield"), "Departments"), h("span", { class: "pill mono" }, `${data.users ?? "–"} people`)),
+      h("div", { class: "list-cards" }, data.departments.map((d) => h("div", { class: "list-card" },
+        h("span", { class: "avatar", "aria-hidden": "true" }, initials(departmentName(d.name))),
+        h("div", { class: "grow" },
+          h("div", null, departmentName(d.name)),
+          h("div", null, `${d.quota_per_min} requests/min · ${d.tools.includes("*") ? "all tools" : `${d.tools.length} tools`}`)),
+      ))),
+    )
+    : h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, mi("person"), "Your departments")),
+      h("div", { class: "list-cards" }, (state.roles.length ? state.roles : ["none"]).map((r) => h("div", { class: "list-card" },
+        h("span", { class: "avatar", "aria-hidden": "true" }, initials(deptLabel(r))),
+        h("div", { class: "grow" }, h("div", null, r === "none" ? "No department yet" : departmentName(r)),
+          h("div", null, r === "none" ? "Ask your administrator to add you to one" : "Work you ask for here is handled by this team")),
+      ))),
+    );
 
   return h("div", null,
-    heading("Overview", "Work handled by departments. Private chats are never counted here."),
+    heading("Overview", "Work requests handled by departments. Private conversations are never counted or logged here.", {
+      eyebrow: ["Workspace", "Last 24 hours"],
+      actions: h("button", { type: "button", onclick: refresh }, "Refresh"),
+    }),
     h("div", { class: "tiles" }, tiles),
     h("div", { class: "card" },
-      h("h2", null, "Work requests by department, last 24 hours"),
-      total ? activityChart(data.activity) : h("div", { class: "empty" }, "No work requests in the last 24 hours."),
+      h("div", { class: "card-head" }, h("h2", null, mi("bar_chart"), "Work requests by department"), legend),
+      total ? activityChart(data.activity, rows) : h("div", { class: "empty" }, "No work requests in the last 24 hours."),
+      total > 0 && h("div", { class: "card-foot" },
+        h("span", null, `${total} request${total === 1 ? "" : "s"} across ${rows.length} department${rows.length === 1 ? "" : "s"}`),
+        h("span", null, "Hover a row for its outcomes")),
     ),
-    total > 0 && h("div", { class: "card" },
-      h("h2", null, "Outcomes"),
-      table(["Department", "Outcome", "Requests"], outcomeRows),
-    ),
-    data.departments && h("div", { class: "card" },
-      h("h2", null, "Departments"),
-      table(
-        ["Department", "Requests per minute", "Tools"],
-        data.departments.map((d) => [d.name, d.quota_per_min, d.tools.includes("*") ? "All tools" : d.tools.join(", ")]),
+    h("div", { class: "overview-grid" },
+      h("div", { class: "card" },
+        h("div", { class: "card-head" }, h("h2", null, mi("task_alt"), "Outcomes"), h("span", { class: "eyebrow" }, "Last 24 hours")),
+        total ? table(["Department", "Outcome", "Requests"], outcomeRows) : h("div", { class: "empty" }, "Nothing yet."),
       ),
+      side,
     ),
   );
 }
@@ -1371,7 +1697,7 @@ async function approvalsView(refresh) {
     }
   };
   return h("div", null,
-    heading("Approvals", "These actions are paused until you decide. Accounts is notified of each decision on a finance action."),
+    heading("Approvals", "These actions are paused until you decide. Accounts is notified of each decision on a finance action.", { eyebrow: ["Workspace", "Approvals"] }),
     error,
     h("div", { class: "card" }, table(
       ["Action", "Details", "Requested by", "Original message", "Decision"],
@@ -1409,7 +1735,7 @@ async function inboxView(refresh) {
     }
   };
   return h("div", null,
-    heading("Accounts inbox", "Orders, bookings and bills sent to accounts from chats."),
+    heading("Accounts inbox", "Orders, bookings and bills sent to accounts from chats.", { eyebrow: ["Workspace", "Accounts inbox"] }),
     error,
     h("div", { class: "card" }, table(
       ["Type", "Requested by", "Message", ""],
@@ -1429,7 +1755,7 @@ async function reportsView() {
   const rows = await api("/v1/reports");
   const KINDS = { nsfw: ["Explicit or illegal", "bad"], finance_notice: ["Admin finance activity", "warn"] };
   return h("div", null,
-    heading("Reports", "Only what your role is notified about."),
+    heading("Reports", "Only what your role is notified about.", { eyebrow: ["Workspace", "Reports"] }),
     h("div", { class: "card" }, table(
       ["Type", "User", "Content"],
       rows.map((r) => {
@@ -1442,7 +1768,7 @@ async function reportsView() {
 }
 
 // ---- users ----
-function departmentBoxes(selected, onChange) {
+function departmentBoxes(selected, onChange) {  // checkbox chips
   const boxes = DEPARTMENTS.map((name) => {
     const box = h("input", { type: "checkbox", value: name, checked: selected.includes(name), onchange: onChange });
     return [box, h("label", { class: "check" }, box, h("span", null, departmentName(name)))];
@@ -1565,38 +1891,41 @@ function userCard(user, refresh) {
   );
 
   const pills = [
+    isMe && h("span", { class: "pill you info" }, "YOU"),
     isAdmin && h("span", { class: "pill" }, "Administrator"),
     user.disabled
-      ? h("span", { class: "pill bad" }, "Disabled")
-      : h("span", { class: "pill good" }, "Active"),
-    h("span", { class: `pill ${user.chat_enabled ? "" : "warn"}` }, user.chat_enabled ? "Own password set" : "Waiting for first sign-in"),
+      ? h("span", { class: "pill bad dot" }, "Disabled")
+      : h("span", { class: "pill good dot" }, "Active"),
+    h("span", { class: `pill mono ${user.chat_enabled ? "" : "warn"}` }, user.chat_enabled ? "Own password set" : "Waiting for first sign-in"),
   ];
 
   return h("div", { class: `card user-card ${user.disabled ? "is-disabled" : ""}` },
     h("div", { class: "user-head" },
       h("span", { class: "avatar", "aria-hidden": "true" }, initials(user.username)),
       h("div", { class: "grow" },
-        h("div", { class: "user-name" }, user.username, isMe && h("span", { class: "muted small" }, " (you)")),
-        h("div", { class: "row pills" }, pills),
+        h("div", { class: "user-name" }, user.username, pills),
+        h("div", { class: "user-meta" }, `ID: ${user.id}`),
       ),
     ),
     error,
     h("div", { class: "user-section" },
-      h("div", { class: "small muted" }, "Departments"),
+      h("div", { class: "caps" }, "Departments"),
       boxes.node,
     ),
-    h("div", { class: "row user-actions" },
+    h("div", { class: "user-actions" },
+      h("div", { class: "row" },
+        !isMe && h("button", { type: "button", class: "ghost", onclick: () => { reset.hidden = false; toggle.hidden = true; temporary.focus(); } }, mi("lock"), "Reset password"),
+        !isMe && h("button", {
+          type: "button",
+          class: user.disabled ? "ghost" : "ghost danger",
+          onclick: () => { toggle.hidden = false; reset.hidden = true; },
+        }, mi(user.disabled ? "check_circle" : "block"), user.disabled ? "Enable" : "Disable"),
+        !isMe && h("button", {
+          type: "button", class: "ghost danger", onclick: () => { erase.hidden = false; reset.hidden = true; toggle.hidden = true; eraseName.focus(); },
+        }, mi("delete"), "Erase data"),
+        isMe && h("span", { class: "small muted" }, "Change your own password under Settings."),
+      ),
       save,
-      !isMe && h("button", { type: "button", onclick: () => { reset.hidden = false; toggle.hidden = true; temporary.focus(); } }, "Reset password"),
-      !isMe && h("button", {
-        type: "button",
-        class: user.disabled ? "" : "danger",
-        onclick: () => { toggle.hidden = false; reset.hidden = true; },
-      }, user.disabled ? "Enable" : "Disable"),
-      !isMe && h("button", {
-        type: "button", class: "danger", onclick: () => { erase.hidden = false; reset.hidden = true; toggle.hidden = true; eraseName.focus(); },
-      }, "Erase data"),
-      isMe && h("span", { class: "small muted" }, "Change your own password under My account."),
     ),
     reset,
     toggle,
@@ -1607,59 +1936,83 @@ function userCard(user, refresh) {
 async function usersView(refresh) {
   const users = await api("/v1/auth/users");
   const createError = errorBox();
-  const username = h("input", { required: true, autocomplete: "off" });
-  const password = h("input", { type: "password", required: true, minLength: 12, autocomplete: "new-password" });
+  const username = h("input", { required: true, autocomplete: "off", placeholder: "e.g. priya.sharma", id: "new-username" });
+  const password = h("input", { type: "password", required: true, minLength: 12, autocomplete: "new-password", placeholder: "At least 12 characters", id: "new-password" });
   const boxes = departmentBoxes([]);
   const list = h("div", { class: "user-list" });
-  const search = h("input", { type: "search", placeholder: "Search people", "aria-label": "Search people" });
+  const search = h("input", { type: "search", placeholder: "Search by name or department...", "aria-label": "Search people" });
+  const filter = h("select", { "aria-label": "Department" },
+    h("option", { value: "" }, "Department: All"),
+    [...DEPARTMENTS, "admin"].map((d) => h("option", { value: d }, departmentName(d))),
+    h("option", { value: "-" }, "No department"));
+  const count = h("span", { class: "eyebrow" });
   const paint = () => {
     const q = search.value.trim().toLowerCase();
-    const shown = users.filter((u) => !q || u.username.toLowerCase().includes(q)
-      || u.roles.some((r) => departmentName(r).toLowerCase().includes(q)));
+    const shown = users.filter((u) => (!q || u.username.toLowerCase().includes(q)
+      || u.roles.some((r) => departmentName(r).toLowerCase().includes(q)))
+      && (!filter.value || (filter.value === "-" ? !u.roles.length : u.roles.includes(filter.value))));
     fill(list, shown.length ? shown.map((u) => userCard(u, refresh)) : h("div", { class: "card empty" }, "Nobody matches."));
+    count.textContent = `Showing ${shown.length} of ${users.length} people`;
   };
   search.addEventListener("input", paint);
+  filter.addEventListener("change", paint);
   paint();
 
   const active = users.filter((u) => !u.disabled).length;
+  const waiting = users.filter((u) => !u.chat_enabled).length;
+  const csv = () => download("users.csv", csvOf(["username", "departments", "status", "own_password_set"],
+    users.map((u) => [u.username, u.roles.join(" "), u.disabled ? "disabled" : "active", u.chat_enabled ? "yes" : "no"])), "text/csv");
   return h("div", null,
-    heading("Users", "Add people, choose their departments, and manage their sign-in. Changes apply right away."),
+    heading("Users & Access", "Add people, choose their departments and manage their sign-in. Changes apply right away.", {
+      eyebrow: ["Administration", "Users"],
+      chip: h("span", { class: "pill mono good dot" }, "Private chats encrypted"),
+      actions: h("button", { type: "button", onclick: csv }, mi("download"), "Download CSV"),
+    }),
     h("div", { class: "tiles" },
-      tile("People", users.length),
-      tile("Active", active),
-      tile("Disabled", users.length - active),
-      tile("Waiting for first sign-in", users.filter((u) => !u.chat_enabled).length),
+      tile("Total accounts", users.length, null, null, { mono: true, iconName: "group", meter: 1, unit: `${users.filter((u) => u.roles.includes("admin")).length} admin` }),
+      tile("Active", active, null, null, { mono: true, iconName: "check_circle", meter: users.length ? active / users.length : 0, unit: "can sign in" }),
+      tile("Disabled", users.length - active, null, null, { mono: true, iconName: "block", meter: users.length ? (users.length - active) / users.length : 0, unit: "signed out" }),
+      tile("Awaiting first sign-in", waiting, null, null, { mono: true, iconName: "hourglass_empty", meter: users.length ? waiting / users.length : 0, unit: "first password" }),
     ),
     h("div", { class: "admin-grid" },
       h("div", null,
-        h("div", { class: "toolbar" }, search),
+        h("div", { class: "toolbar" }, iconField("search", search), filter),
         list,
+        h("div", { class: "list-foot" }, count),
       ),
-      h("form", {
-        class: "card add-user",
-        onsubmit: async (event) => {
-          event.preventDefault();
-          createError.clear();
-          try {
-            await api("/v1/auth/users", {
-              method: "POST",
-              body: { username: username.value, password: password.value, roles: boxes.value() },
-            });
-            refresh();
-          } catch (err) {
-            createError.fail(err);
-          }
+      h("aside", null,
+        h("form", {
+          class: "card add-user",
+          onsubmit: async (event) => {
+            event.preventDefault();
+            createError.clear();
+            try {
+              await api("/v1/auth/users", {
+                method: "POST",
+                body: { username: username.value, password: password.value, roles: boxes.value() },
+              });
+              refresh();
+            } catch (err) {
+              createError.fail(err);
+            }
+          },
         },
-      },
-        h("h2", null, "Add a person"),
-        h("p", { class: "muted small" }, "You choose a first password. They replace it at first sign-in, which creates "
-          + "the key for their private chats. You can't read those chats."),
-        createError,
-        h("label", null, "Username", username),
-        h("label", null, "First password (at least 12 characters)", password),
-        h("div", { class: "small muted" }, "Departments"),
-        h("div", { class: "user-section" }, boxes.node),
-        h("button", { class: "primary", type: "submit" }, "Add person"),
+          h("div", { class: "card-head" }, h("h2", null, mi("person_add"), "Add a person")),
+          h("p", { class: "muted small" }, "Choose a first password. At first sign-in they set their own, which creates the key "
+            + "for their private chats. Administrators can't read those chats."),
+          createError,
+          h("label", { for: "new-username" }, h("span", { class: "caps" }, "Username"), iconField("alternate_email", username)),
+          h("label", { for: "new-password" }, h("span", { class: "label-row" }, h("span", { class: "caps" }, "First password"), h("span", { class: "subtle small mono" }, "min 12 chars")),
+            iconField("key", password)),
+          h("div", { class: "caps" }, "Departments"),
+          h("div", { class: "user-section" }, boxes.node),
+          h("button", { class: "primary wide", type: "submit" }, mi("add"), "Add person"),
+        ),
+        h("div", { class: "card info-card" },
+          h("h2", null, mi("verified_user"), "Private by design"),
+          h("p", null, "Each person's private chats, files and saved details are encrypted with their own key. Administrators "
+            + "manage access and departments, but can't open private chats, personal mail or saved logins."),
+        ),
       ),
     ),
   );
@@ -1702,7 +2055,7 @@ async function credentialsView(refresh) {
   });
 
   return h("div", null,
-    heading("Credentials", "API keys and passwords the platform's tools use, such as a payment gateway or email provider."),
+    heading("Credentials", "API keys and passwords the platform's tools use, such as a payment gateway or email provider.", { eyebrow: ["Administration", "Credentials"] }),
     h("div", { class: "notice info" }, "Values are encrypted in the vault and are never shown again, not even here. "
       + "To change one, replace it."),
     h("div", { class: "admin-grid" },
@@ -1746,7 +2099,7 @@ async function accountView() {
   const codeError = errorBox();
 
   return h("div", null,
-    heading("My account"),
+    heading("Settings", "Your mailbox, reminders, saved details and password.", { eyebrow: ["Personal", "Settings"] }),
     await mailSettingsCard(),
     await walletCard(),
     h("div", { class: "card" },
@@ -1910,7 +2263,7 @@ async function notificationsView(refresh) {
     }
   };
   return h("div", null,
-    heading("Notifications", "Reminders, your morning mail digest and, for the admin, server alerts."),
+    heading("Notifications", "Reminders, your morning mail digest and, for the admin, server alerts.", { eyebrow: ["Personal", "Notifications"] }),
     h("div", { class: "row" }, items.some((n) => !n.read) && h("button", { type: "button", onclick: readAll }, "Mark all read"), allow),
     items.length
       ? h("div", { class: "notes" }, items.map((n) => {
@@ -1976,7 +2329,8 @@ async function filesView(refresh, { trash = false } = {}) {
     heading(trash ? "Trash" : "My files", trash
       ? "Deleted files are kept for 7 days, then removed for good."
       : "Encrypted with your key: only you, and the assistant in your private chats, can open them. "
-        + "Ask the assistant to write notes, edit lists or organize files. Every change keeps the old version."),
+        + "Ask the assistant to write notes, edit lists or organize files. Every change keeps the old version.",
+      { eyebrow: ["Personal", trash ? "Trash" : "My files"] }),
     error,
     h("div", { class: "row" },
       !trash && folder,
@@ -2016,7 +2370,7 @@ async function remindersView(refresh) {
     ["none", "daily", "weekdays", "weekly", "monthly"].map((r) => h("option", { value: r }, r === "none" ? "Once" : r[0].toUpperCase() + r.slice(1))));
   const email = h("input", { type: "checkbox" });
   return h("div", null,
-    heading("Reminders", "You can also just ask in chat: \"remind me to call the bank tomorrow at 10\"."),
+    heading("Reminders", "You can also just ask in chat: \"remind me to call the bank tomorrow at 10\".", { eyebrow: ["Personal", "Reminders"] }),
     h("form", {
       class: "card",
       onsubmit: async (event) => {
@@ -2295,7 +2649,8 @@ async function templatesView(refresh) {
   };
   return h("div", null,
     heading("Templates", "Company document templates. Ask the assistant at work, e.g. \"make offer letters for these "
-      + "three people from the Offer letter template\". Your own templates go in My files, folder templates/, or attach one to a chat."),
+      + "three people from the Offer letter template\". Your own templates go in My files, folder templates/, or attach one to a chat.",
+      { eyebrow: ["Workspace", "Templates"] }),
     listError,
     h("div", { class: "card" }, table(
       ["Name", "For", "Format", "Fills in", ""],
