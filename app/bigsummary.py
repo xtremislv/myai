@@ -232,8 +232,11 @@ def _map(ws: Workspace, count: int, job: Callable[[int], str], say, label: str) 
             logger.warning("summary part %s failed: %s", i, e)
             return i, None
 
+    import contextvars
+
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
-        for i, out in pool.map(one, range(1, count + 1)):
+        futures = [pool.submit(contextvars.copy_context().run, one, i) for i in range(1, count + 1)]
+        for i, out in (f.result() for f in futures):
             done += 1
             if out is None:
                 failed.append(i)

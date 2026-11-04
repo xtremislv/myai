@@ -95,9 +95,13 @@ def analyse(messages: list[dict], chat=None, progress=None, *, batch_size: int =
             reply = ""
         return _parse(str(reply), batch)
 
+    import contextvars
+
     items: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=parallel) as pool:
-        for done, got in enumerate(pool.map(one, batches), 1):
+        # Each worker runs in a copy of this context, so a background job's calls stay background.
+        futures = [pool.submit(contextvars.copy_context().run, one, b) for b in batches]
+        for done, got in enumerate((f.result() for f in futures), 1):
             items.extend(got)
             if progress and len(batches) > 1:
                 progress(f"Read {min(done * batch_size, len(messages))} of {len(messages)} emails")

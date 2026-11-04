@@ -429,3 +429,16 @@ Found from the owner's live session (an Amazon headphones order that never got a
 - Non-Gmail servers understand `subject:` / `from:` / `to:` terms. Triage: follow-ups about what the
   assistant just made in a private chat stay private (eval p79-p84; 85 cases x 3 runs x 2 personas = 510/510).
 - Agents are told to report exact counts and not to call a background job done before it is.
+
+## Background work gives way to live chats (2026-11-04)
+- `app/llm/governor.py`: every model call goes through `llm.chat`; calls made inside a background job
+  (`governor.background` context var, set by `app/jobs.py` and copied into worker threads) wait for a slot.
+  Slots: 8 when nothing else is running, 3 for 20 s after live work, 0 while live work runs (1 after 60 s of
+  unbroken live work, so jobs never stall). Live work = non-background calls in this process plus vLLM's
+  `num_requests_running+waiting` from `/metrics` minus our own (outside load must show in two readings in a
+  row: the server's count lags our calls ending). Background calls stream; a watcher closes the stream
+  within 0.25 s when the slot is taken away, even during prefill, and `governor.run` reruns the call later
+  (vLLM's prefix cache keeps most of the prompt). Paused calls are counted as `status="paused"`.
+- Measured on the Quadro (live chat, 400-token answer): idle 0.1 s to first words, 95 pieces/s, 3.2 s; with
+  8 background calls and no governor 2.7 s, 21/s, 17 s; with the governor 0.2 s, 93/s, 3.3 s. Background
+  ~77-84 emails/min when idle; job progress says "full speed", "picking up speed" or "paused for live chats".

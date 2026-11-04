@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -11,6 +12,7 @@ from typing import Any
 from openai import OpenAI
 
 from app.config import get_settings
+from app.llm.governor import Paused
 from app.observability import (
     llm_latency_seconds,
     llm_requests_total,
@@ -95,6 +97,38 @@ def _assembled(streamed: dict[int, dict[str, str]]) -> list[dict[str, Any]]:
             args = slot["args"]
         calls.append({"id": slot["id"] or f"call_{index}", "name": slot["name"], "args": args})
     return calls
+
+
+YIELD_POLL_SECONDS = 0.25  # how often a background call checks whether to give way
+
+
+class _GaveWay(threading.Event):
+    done: threading.Event
+
+
+def _watch(chunks, stop_if: Callable[[], bool]) -> _GaveWay:
+    """Close a background call's stream as soon as stop_if() says live work needs the room, even
+    while the model is still reading the prompt (when no pieces arrive to check between). The
+    model server cancels a request whose connection closes."""
+    gave_way = _GaveWay()
+    gave_way.done = threading.Event()
+
+    def watch() -> None:
+        while not gave_way.done.wait(YIELD_POLL_SECONDS):
+            if stop_if():
+                gave_way.set()
+                try:
+                    chunks.response.close()
+                except Exception:  # noqa: BLE001 - already closed
+                    pass
+                return
+
+    threading.Thread(target=watch, daemon=True, name="llm-yield").start()
+    return gave_way
+
+
+def _discard(_text: str) -> None:
+    pass
 
 
 class Reply(str):
@@ -183,6 +217,27 @@ def chat(
     tool_choice: str | None = None,
     **kwargs,
 ) -> Reply:
+    """One model call. Background work waits for a slot that shrinks while people are chatting
+    (app/llm/governor.py); everything else counts as live load."""
+    from app.llm.governor import background, governor
+
+    if background.get():
+        return governor.run(lambda should_yield: _chat(
+            messages, model=model, stream=stream, tools=tools, tool_choice=tool_choice, stop_if=should_yield, **kwargs))
+    with governor.live():
+        return _chat(messages, model=model, stream=stream, tools=tools, tool_choice=tool_choice, **kwargs)
+
+
+def _chat(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    stream: bool = False,
+    tools: list[dict] | None = None,
+    tool_choice: str | None = None,
+    stop_if: Callable[[], bool] | None = None,
+    **kwargs,
+) -> Reply:
     """Single completion. messages = [{"role": "...", "content": "..."}].
 
     stream=True marks this call as the one producing the user-visible reply: if a streamed
@@ -195,6 +250,8 @@ def chat(
     a preamble, and the chat replaces everything streamed with the final reply when it's done.
     """
     sink = token_sink.get() if stream else None
+    if stop_if is not None and sink is None:
+        sink = _discard  # stream, so the call can be stopped part-way
     model = model or _settings.llm_model
     params = {
         "model": model,
@@ -219,22 +276,36 @@ def chat(
                 chunks = _client.chat.completions.create(
                     **params, stream=True, stream_options={"include_usage": True}
                 )
-                for chunk in chunks:
-                    usage = getattr(chunk, "usage", None) or usage
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        parts.append(delta.content)
-                        out.feed(delta.content)
-                    for tc in getattr(delta, "tool_calls", None) or []:
-                        slot = streamed_calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
-                        slot["id"] = tc.id or slot["id"]
-                        if tc.function is not None:
-                            slot["name"] += tc.function.name or ""
-                            slot["args"] += tc.function.arguments or ""
+                gave_way = _watch(chunks, stop_if) if stop_if is not None else None
+                try:
+                    for chunk in chunks:
+                        usage = getattr(chunk, "usage", None) or usage
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            parts.append(delta.content)
+                            out.feed(delta.content)
+                        for tc in getattr(delta, "tool_calls", None) or []:
+                            slot = streamed_calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                            slot["id"] = tc.id or slot["id"]
+                            if tc.function is not None:
+                                slot["name"] += tc.function.name or ""
+                                slot["args"] += tc.function.arguments or ""
+                except Exception:
+                    if gave_way is not None and gave_way.is_set():
+                        raise Paused from None
+                    raise
+                finally:
+                    if gave_way is not None:
+                        gave_way.done.set()
+                if gave_way is not None and gave_way.is_set():
+                    raise Paused  # closed just as it ended: the reply may be cut short
                 out.flush()
             llm_requests_total.labels(model=model, status="ok").inc()
+        except Paused:
+            llm_requests_total.labels(model=model, status="paused").inc()
+            raise
         except Exception:
             llm_requests_total.labels(model=model, status="error").inc()
             raise

@@ -16,7 +16,7 @@ MAX_SUMMARIZED = 2000    # emails summarized by the model in one sheet (~10 min 
 BODY_BYTES = 64 * 1024   # of each email, for its summary (text comes before attachments)
 BODY_CHARS = 1500        # of that text, handed to the model
 BATCH = 8                # emails per model call
-PARALLEL = 6             # model calls at once
+PARALLEL = 8             # most model calls at once; the governor decides how many really run
 
 HEADER_COLUMNS = ["Date", "From", "From email", "Subject", "Unread"]
 SUMMARY_COLUMNS = ["Date", "From", "From email", "Subject", "Summary", "Action needed", "Deadline",
@@ -47,9 +47,12 @@ def header_rows(mails: list[dict]) -> list[dict]:
 
 
 def summary_rows(mails: list[dict], progress: Callable[[str], None] | None = None, chat=None) -> list[dict]:
+    from app.llm.governor import governor
+
     for m in mails:
         m["body"] = m["body"][:BODY_CHARS]
-    items = summary.analyse(mails, chat=chat, progress=progress, batch_size=BATCH, parallel=PARALLEL)
+    report = (lambda text: progress(f"{text} ({governor.mode()})")) if progress else None
+    items = summary.analyse(mails, chat=chat, progress=report, batch_size=BATCH, parallel=PARALLEL)
     by_id = {i["id"]: i for i in items}
     rows = []
     for m in mails:

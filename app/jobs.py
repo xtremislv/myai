@@ -69,6 +69,9 @@ def start(owner: str, title: str, work: Callable[[Callable[[str], None]], str],
         job.progress = text
 
     def run() -> None:
+        from app.llm.governor import background
+
+        background.set(True)  # this job's model calls give way to live chats
         try:
             job.result = work(progress)
             job.status = "done"
