@@ -442,3 +442,19 @@ Found from the owner's live session (an Amazon headphones order that never got a
 - Measured on the Quadro (live chat, 400-token answer): idle 0.1 s to first words, 95 pieces/s, 3.2 s; with
   8 background calls and no governor 2.7 s, 21/s, 17 s; with the governor 0.2 s, 93/s, 3.3 s. Background
   ~77-84 emails/min when idle; job progress says "full speed", "picking up speed" or "paused for live chats".
+
+## Careers mailbox to a sheet: what went wrong, and department files (2026-11-04)
+- HR work run (audit log + work checkpoint): mail access worked (141 matches) and mail_to_sheet started, but
+  the agent then polled job_status, tried summarize_large on the not-yet-saved sheet, and ended with a false
+  "I can't access your email, give me your credentials". Next message: Gemma passed folder `''` and the
+  mailbox address as a file. Earlier run: opened emails one by one and summarized ~20 of 140.
+- Fixes: a tool result with `JOB_STARTED` ends the turn (single agent and specialists force a final reply
+  with `JOB_NOTE`); prompts forbid claiming no access or asking for credentials (report the error);
+  `search_mail` with >20 matches and a capped `summarize_mail` point to mail_to_sheet; `coerce_args` maps
+  `''`/`""` to empty; summarize_large explains a mailbox address. mail_to_sheet states where the file goes
+  (My files in private chat, Files > Department files for work) and the notification says so.
+- Files page: "Department files" lists each member department's `shared/<dept>/` (GET /v1/department-files,
+  download, upload; members only, ACL-checked and audited; the admin role doesn't see other departments).
+  Sidebar entry renamed "Files".
+- Replayed on Gemma against a fake careers mailbox (141 applications), single and team mode: list ->
+  search -> mail_to_sheet -> reply with location and preview; job saved 141/141.

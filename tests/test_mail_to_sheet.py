@@ -107,3 +107,28 @@ def test_other_servers_understand_subject_and_from():
     assert connector._criterion("subject:ai") == ("SUBJECT", "ai")
     assert connector._criterion("from:bank.com") == ("FROM", "bank.com")
     assert connector._criterion("invoice") == ("TEXT", "invoice")
+
+
+# ---- after starting a job the agent replies, instead of polling (2026-11-04) ----
+def test_a_started_job_ends_the_turn():
+    from app.orchestrator import nodes
+
+    started = [{"role": "tool", "content": "...STARTED IN THE BACKGROUND (job x): 142 emails match..."}]
+    assert nodes.started_background(started)
+    assert not nodes.started_background([{"role": "tool", "content": "DONE. Created 'a.xlsx'"}])
+
+
+def test_a_big_search_points_to_the_sheet_tool(env):
+    out = tools_mod.search_mail({"subject_id": "u1"}, "subject:ai")
+    assert "1006 emails" in out and "call mail_to_sheet" in out
+
+
+def test_quote_marks_for_an_empty_value_mean_empty():
+    assert tools_mod.coerce_args(tools_mod.list_files, {"folder": "''"}) == {"folder": ""}
+
+
+def test_a_mailbox_given_as_a_file_is_explained(monkeypatch):
+    monkeypatch.setattr(tools_mod, "_enforce", lambda *a: None)
+    monkeypatch.setattr(tools_mod, "_input_bytes", lambda state, p: "ERROR: couldn't read it")
+    out = tools_mod.summarize_large({"subject_id": "u1"}, "career@techwiser.com")
+    assert "is a mailbox, not a file" in out and "mail_to_sheet" in out

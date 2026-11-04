@@ -707,6 +707,10 @@ kbd {
 .recent-more:hover:not(:disabled) { color: var(--ink-strong); background: transparent; box-shadow: none; }
 @media (max-width: 640px) { .recent-when { display: none; } .recent-filter { width: 100%; max-width: none; } .recent-head { flex-wrap: wrap; } }
 
+.dept-files { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }
+.dept-files .section-title { margin: 0; font-size: 18px; }
+.dept-files .card .row.spread { margin-bottom: 10px; }
+
 /* ---- overview ---- */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin-bottom: 24px; }
 .tile {

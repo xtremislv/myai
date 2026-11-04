@@ -18,6 +18,7 @@ import datetime as _dt
 import inspect
 import json
 import logging
+import re
 import typing
 from typing import Any, Callable
 
@@ -277,8 +278,12 @@ def search_mail(
     cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    return untrusted(f"{category} mailbox",
-                     _mail_call(connector.list_messages, cfg, folder, limit, False, query, page))
+    found = _mail_call(connector.list_messages, cfg, folder, limit, False, query, page)
+    total = re.match(r"(\d+) emails", found)
+    if total and int(total.group(1)) > INLINE_SUMMARIZED:
+        found += (f"\n\nTo list, tabulate or summarize all {total.group(1)} of these, call mail_to_sheet with this "
+                  "query (it does every email, in the background) instead of opening them one by one.")
+    return untrusted(f"{category} mailbox", found)
 
 
 def open_mail(state: dict[str, Any], message_id: str, category: str = "", folder: str = "") -> str:
@@ -335,12 +340,17 @@ def summarize_mail(
         from app.orchestrator.progress import step
 
         step(f"Reading {len(messages)} emails")
-        return summary.render(summary.analyse(messages, progress=step))
+        text = summary.render(summary.analyse(messages, progress=step))
+        if len(messages) >= max(1, min(int(count), connector.MAX_SUMMARY)):
+            text += ("\n\nThese are only the newest {n}. If the person wants all of them, or a table or sheet, "
+                     "call mail_to_sheet (every matching email, in the background).").format(n=len(messages))
+        return text
 
     return untrusted(f"a summary of the {category} mailbox", _mail_call(go))
 
 
 INLINE_SUMMARIZED = 20  # emails summarized within the reply; more go to a background job
+JOB_STARTED = "STARTED IN THE BACKGROUND"  # nodes end the turn when a tool result says this
 PREVIEW_ROWS = 15
 
 
@@ -411,7 +421,9 @@ def mail_to_sheet(
         saved = _save(state, path, data)
         if not saved.startswith(("Created", "Saved")):
             raise RuntimeError(saved)
-        return f"{saved} {len(rows)} of {found} emails matching \"{query}\" are in it ({columns_note})."
+        where = ("Find it under Files (My files)." if _private(state)
+                 else "Find it under Files > Department files.")
+        return f"{saved} {len(rows)} of {found} emails matching \"{query}\" are in it ({columns_note}). {where}"
 
     if not summarize or count <= INLINE_SUMMARIZED:
         try:
@@ -426,10 +438,12 @@ def mail_to_sheet(
         job = jobs.start(_subject(state).id, f"Sheet of {count} emails: {query}"[:120], make)
     except jobs.Busy as e:
         return f"ERROR: not started: {e}"
+    place = ("the person's own Files (Files > My files)" if _private(state)
+             else "the department's shared folder (Files > Department files), not the person's own files")
     minutes = max(2, round(count / 80))  # ~80 summarized emails a minute on the Quadro (measured)
     return untrusted(f"the {label}", "\n".join([
-        f"STARTED IN THE BACKGROUND (job {job.id}): {total} emails match \"{query}\"; the sheet will hold "
-        f"{count} of them with {columns_note}, saved as '{path}'.{capped} It takes about {minutes} minutes. The "
+        f"{JOB_STARTED} (job {job.id}): {total} emails match \"{query}\"; the sheet will hold "
+        f"{count} of them with {columns_note}, saved as '{path}' in {place}.{capped} It takes about {minutes} minutes. The "
         "person gets a notification (the bell) when it is saved; job_status shows progress.",
         f"Newest {len(newest)} for a table in your reply now:", table,
         "Tell the person exactly this: it is running in the background, the file name, roughly how long, and that "
@@ -1682,6 +1696,9 @@ def summarize_large(
         return "ERROR: output must be auto, chat, doc, sheet or csv"
     got = _input_bytes(state, source)
     if isinstance(got, str):
+        if "@" in source and "/" not in source:
+            return (f"ERROR: '{source}' is a mailbox, not a file. For its emails use mail_to_sheet (every "
+                    "matching email into a sheet, with summaries) or summarize_mail.")
         return got
     name, data = got
     text = extract_text(name, guess_type(name), data, max_pdf_pages=2000)
@@ -2043,6 +2060,8 @@ def coerce_args(fn: Callable[..., Any], args: dict[str, Any]) -> dict[str, Any]:
             out[name] = json.dumps(value)  # e.g. a dashboard spec given as an object
         elif want is str and not isinstance(value, str) and value is not None:
             out[name] = str(value)
+        if isinstance(out[name], str) and out[name].strip() in ("''", '""', "``"):
+            out[name] = ""  # Gemma writes an empty value as the two quote marks
     return out
 
 

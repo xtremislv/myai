@@ -679,7 +679,7 @@ function morePages() {
     has("admin") && ["users", "Users", usersView, null, "group", "work"],
     has("admin") && ["credentials", "Credentials", credentialsView, null, "key", "work"],
     ["templates", "Templates", templatesView, null, "description", "work"],
-    ["files", "My files", filesView, null, "folder", "mine"],
+    ["files", "Files", filesView, null, "folder", "mine"],
     ["reminders", "Reminders", remindersView, null, "alarm", "mine"],
     ["notifications", "Notifications", notificationsView, "unread_notifications", "notifications", "mine"],
     ["account", "Settings", accountView, null, "settings", "mine"],
@@ -2443,9 +2443,70 @@ async function filesView(refresh, { trash = false } = {}) {
       trash ? "The trash is empty." : "No files yet. Upload some, or ask the assistant to write one.",
     )),
     preview,
+    !trash && await departmentFilesSection(),
   );
   return page;
 }
+
+// The shared folders of the person's departments: what department work saves (a sheet made from
+// the careers mailbox lands here). Members only; the server checks every listing and download.
+async function departmentFilesSection() {
+  let rows;
+  try {
+    rows = await api("/v1/department-files");
+  } catch {
+    return null;
+  }
+  const depts = [...new Set(state.roles)].filter((r) => DEPT_LABEL_OF[r]);
+  if (!depts.length) return null;
+  const error = errorBox();
+  const box = h("section", { class: "dept-files" });
+  const download = (f) => async () => {
+    error.clear();
+    try {
+      const blob = await api(`/v1/department-files/download?department=${encodeURIComponent(f.department)}&path=${encodeURIComponent(f.path)}`, { raw: true });
+      const link = h("a", { href: URL.createObjectURL(blob), download: f.name.split("/").pop() });
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (err) { error.fail(err); }
+  };
+  const draw = (list) => {
+    box.replaceChildren(
+      h("h2", { class: "section-title" }, "Department files"),
+      h("p", { class: "small muted" }, "Shared folders of your departments. Everyone in the department can open them, and work the assistant does for a department is saved here."),
+      error,
+      ...depts.map((dept) => {
+        const mine = list.filter((f) => f.department === dept);
+        const picker = h("input", { type: "file", class: "hidden-input", multiple: true });
+        picker.addEventListener("change", async () => {
+          error.clear();
+          for (const file of picker.files) {
+            const form = new FormData();
+            form.append("file", file);
+            form.append("department", dept);
+            try { await api("/v1/department-files", { method: "POST", form }); } catch (err) { error.fail(err); }
+          }
+          picker.value = "";
+          draw(await api("/v1/department-files"));
+        });
+        return h("div", { class: "card" },
+          h("div", { class: "row spread" },
+            h("strong", null, `${DEPT_LABEL_OF[dept]} · shared/${dept}/`),
+            h("div", { class: "row" }, picker, h("button", { type: "button", onclick: () => picker.click() }, icon("plus"), "Upload"))),
+          table(["Name", "Size", "Changed", ""], mine.map((f) => [
+            h("span", { class: "mono" }, f.name),
+            formatSize(f.size),
+            f.updated_at ? new Date(f.updated_at).toLocaleString() : "",
+            h("button", { type: "button", onclick: download(f) }, "Download"),
+          ]), "Nothing here yet."));
+      }),
+    );
+  };
+  draw(rows);
+  return box;
+}
+
+const DEPT_LABEL_OF = { account: "Accounts", hr: "HR", logistics: "Logistics", researcher: "Research", superuser: "Superuser", admin: "Admin" };
 
 // ---- reminders ----
 async function remindersView(refresh) {

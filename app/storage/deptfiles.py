@@ -67,6 +67,12 @@ class DeptFiles:
         self._acl.enforce(self._subject, Action.LIST, objects.resource_for(prefix, listing=True))
         return [(k, size) for k, size, _ in objects.list_system_objects(prefix) if not k.startswith(HIDDEN)]
 
+    def entries(self, folder: str = "") -> list[tuple[str, int, object]]:
+        """Like list, with each file's last change time."""
+        prefix = folder_for(folder, self._dept)
+        self._acl.enforce(self._subject, Action.LIST, objects.resource_for(prefix, listing=True))
+        return [(k, size, when) for k, size, when in objects.list_system_objects(prefix) if not k.startswith(HIDDEN)]
+
     def read(self, path: str) -> tuple[str, bytes]:
         key = key_for(path, self._dept)
         self._acl.enforce(self._subject, Action.READ, objects.resource_for(key))

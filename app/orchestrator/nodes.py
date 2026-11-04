@@ -102,7 +102,9 @@ DATA_HINT = (
     "reads all of it in parts. If the person wants the result as a document or sheet, set output to doc "
     "or sheet; long summaries are saved as a Word document anyway. Report what tools did exactly: the "
     "number of rows or emails a tool says a file holds, never more, and a background job is not done "
-    "until job_status or the person's notification says so."
+    "until job_status or the person's notification says so. Never ask for passwords, login details or "
+    "\"access\" to a mailbox or system: connected mailboxes already work through your tools. If a tool "
+    "failed, say which step failed and the error it gave, not that you have no access."
 )
 
 
@@ -198,6 +200,10 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
             return {"messages": [with_dashboards({"role": "assistant", "content": reply})], "next": "__end__"}
 
         private = _department(state) is None  # private chat: the words stream to the person
+        if started_background(this_turn(state.get("messages", []))):
+            reply = llm.chat(with_attachments([*convo, {"role": "user", "content": JOB_NOTE}]),
+                             tools=tools, tool_choice="none", stream=private)
+            return {"messages": [with_dashboards({"role": "assistant", "content": reply})], "next": "__end__"}
         if state.get("tool_rounds", 0) >= MAX_TOOL_ROUNDS:
             step("Wrapping up with what I found")
             reply = llm.chat(with_attachments([*convo, {"role": "user", "content": BUDGET_NOTE}]),
@@ -221,6 +227,23 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
     if calls:
         return {"messages": [assistant_calls(reply, calls)], "next": "tools"}
     return {"messages": [with_dashboards({"role": "assistant", "content": reply})], "next": "__end__"}
+
+
+# Once a background job has started, the turn is over: the agent says so instead of polling
+# job_status or reaching for a file that isn't saved yet (seen 2026-11-04, ending in a false "I
+# can't access the mailbox").
+JOB_NOTE = (
+    "A background job has started (see the tool result). Stop calling tools now and reply: say what "
+    "is being made, the file name and where it will be, exactly as the tool result says, roughly how "
+    "long it takes, and that they will get a notification. Show "
+    "the preview table if the tool gave one. Do not say it is finished."
+)
+
+
+def started_background(messages: list[dict[str, Any]]) -> bool:
+    from app.orchestrator.tools import JOB_STARTED
+
+    return any(m.get("role") == "tool" and JOB_STARTED in str(m.get("content") or "") for m in messages)
 
 
 # Search snippets are not evidence: an answer built on web or news search must have opened at

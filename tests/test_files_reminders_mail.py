@@ -622,3 +622,35 @@ def test_the_admin_cannot_grant_department_data_by_policy(client, db):
     ok = client.post("/v1/admin/policies", headers=admin,
                      json={"subject": "admin", "effect": "allow", "action": "read", "resource": "inventory:widgets"})
     assert ok.status_code == 201
+
+
+# ---- department files in the Files tab (2026-11-04: a sheet saved to shared/hr/ was invisible) ----
+def test_department_files_are_listed_and_downloadable_by_members_only(client, db, store):
+    store["shared/hr/applications.xlsx"] = b"sheet"
+    store["shared/account/ledger.csv"] = b"money"
+    hr = _hdr("hana", "hr")
+    listed = client.get("/v1/department-files", headers=hr).json()
+    assert [(f["department"], f["name"]) for f in listed] == [("hr", "applications.xlsx")]
+    got = client.get("/v1/department-files/download", headers=hr,
+                     params={"department": "hr", "path": "shared/hr/applications.xlsx"})
+    assert got.status_code == 200 and got.content == b"sheet"
+    # Not a member of accounts, the admin included: no listing, no download, not even by path tricks.
+    for outsider in (hr, _hdr("root", "admin"), _hdr("sam", "superuser")):
+        assert all(f["department"] != "account" for f in client.get("/v1/department-files", headers=outsider).json())
+        assert client.get("/v1/department-files/download", headers=outsider,
+                          params={"department": "account", "path": "shared/account/ledger.csv"}).status_code == 403
+    assert client.get("/v1/department-files/download", headers=hr,
+                      params={"department": "hr", "path": "shared/account/ledger.csv"}).status_code == 404
+
+
+def test_members_can_upload_to_their_department_folder(client, db, store, monkeypatch):
+    from app.request_manager import guards
+
+    monkeypatch.setattr(guards, "is_nsfw", lambda text: (False, ""))
+    hr = _hdr("hana", "hr")
+    made = client.post("/v1/department-files", headers=hr, data={"department": "hr"},
+                       files={"file": ("cv.txt", b"Ravi Kumar CV", "text/plain")})
+    assert made.status_code == 201 and made.json()["path"] == "shared/hr/cv.txt"
+    assert store["shared/hr/cv.txt"] == b"Ravi Kumar CV"
+    assert client.post("/v1/department-files", headers=hr, data={"department": "account"},
+                       files={"file": ("x.txt", b"x", "text/plain")}).status_code == 403

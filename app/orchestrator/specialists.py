@@ -27,6 +27,7 @@ from app.orchestrator.agents import _conversation
 from app.orchestrator.clock import with_now
 from app.orchestrator.context import with_attachments, with_dashboards
 from app.orchestrator.nodes import (
+    JOB_NOTE,
     READ_SOURCES,
     _department,
     assistant_calls,
@@ -35,6 +36,7 @@ from app.orchestrator.nodes import (
     execute_calls,
     pending_calls,
     searched_without_reading,
+    started_background,
 )
 from app.orchestrator.progress import step
 from app.orchestrator.tools import TOOL_DESCRIPTIONS, tool_schemas
@@ -418,7 +420,7 @@ def _specialist_convo(state: dict[str, Any], spec: Specialist) -> list[dict[str,
     return [
         {"role": "system", "content": with_now(
             f"{spec.prompt} {UNTRUSTED_RULE} If a tool returns an ERROR, fix the call or try another "
-            "way. When the task is done, or can't be done, reply without calling a tool: a short "
+            "way; never claim you have no access or ask for passwords or credentials: report the error itself. When the task is done, or can't be done, reply without calling a tool: a short "
             "report of what you found or did, with the facts, figures, dates and links that matter, "
             "and anything left undone."
         )},
@@ -465,7 +467,12 @@ def make_specialist(name: str):
             step(spec.title)
         with tracer.start_as_current_span(f"agents.{name}"):
             convo = _specialist_convo(state, spec)
-            if rounds >= spec.max_rounds or not tools:
+            own_so_far = state.get("messages", [])[state.get("agent_start", 0):]
+            if tools and started_background(own_so_far):
+                convo.append({"role": "user", "content": JOB_NOTE + " Write it as your report."})
+                reply = llm.chat(convo, tools=tools, tool_choice="none")
+                calls = []
+            elif rounds >= spec.max_rounds or not tools:
                 convo.append({"role": "user", "content": "No more tool calls: write your report now."})
                 reply = llm.chat(convo, tools=tools or None, tool_choice="none" if tools else None)
                 calls = []

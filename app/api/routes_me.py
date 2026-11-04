@@ -535,6 +535,105 @@ def restore_file(
     return FileOut(**userfiles.by_id(session, key, subject.id, file_id).as_dict())
 
 
+# ---- Department files: each department's shared folder, for its members ----
+class DeptFileOut(BaseModel):
+    department: str
+    label: str
+    path: str        # the full key, e.g. shared/hr/applications.xlsx
+    name: str        # inside the department's folder, e.g. applications.xlsx
+    size: int
+    updated_at: dt.datetime | None = None
+
+
+def _member_departments(subject: Subject) -> list[str]:
+    from app.departments.packs import DEFAULT_DEPARTMENTS
+
+    return [d.name for d in DEFAULT_DEPARTMENTS if d.name in subject.roles]
+
+
+def _dept_files(session: Session, subject: Subject, department: str):
+    from app.acl.engine import ACLEngine
+    from app.storage.deptfiles import DeptFiles
+
+    if department not in _member_departments(subject):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "only members of a department can open its files")
+    return DeptFiles(ACLEngine(session), subject, department)
+
+
+@router.get("/department-files", response_model=list[DeptFileOut])
+def department_files(subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> list[DeptFileOut]:
+    """Files in the shared folder of each department the person belongs to (what department
+    work saves, e.g. a sheet made from the careers mailbox). The ACL checks every listing."""
+    from app.api.routes_chat import DEPARTMENT_LABELS
+
+    out: list[DeptFileOut] = []
+    for dept in _member_departments(subject):
+        try:
+            rows = _dept_files(session, subject, dept).entries("")
+        except (PermissionError, HTTPException):
+            continue
+        root = f"shared/{dept}/"
+        for key, size, when in sorted(rows, key=lambda r: r[0]):
+            out.append(DeptFileOut(department=dept, label=DEPARTMENT_LABELS.get(dept, dept), path=key,
+                                   name=key.removeprefix(root), size=size, updated_at=when))
+    return out
+
+
+@router.get("/department-files/download")
+def download_department_file(
+    department: str, path: str, subject: Subject = Depends(current_subject), session: Session = Depends(get_session),
+) -> Response:
+    from app.storage.userfiles import FileError
+
+    if not path.startswith(f"shared/{department}/"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file not found")
+    try:
+        key, data = _dept_files(session, subject, department).read(path)
+    except PermissionError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not allowed") from None
+    except FileError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file not found") from None
+    return Response(
+        content=data, media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(key.rsplit('/', 1)[-1])}",
+                 "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.post("/department-files", response_model=DeptFileOut, status_code=status.HTTP_201_CREATED)
+def upload_department_file(
+    file: UploadFile, department: str = Form(max_length=40), folder: str = Form(default="", max_length=200),
+    subject: Subject = Depends(current_subject), session: Session = Depends(get_session),
+) -> DeptFileOut:
+    from app.api.routes_chat import DEPARTMENT_LABELS, safe_filename
+    from app.request_manager import guards
+    from app.storage.attachments import extract_text
+    from app.storage.userfiles import FileError
+
+    files = _dept_files(session, subject, department)
+    limit = get_settings().attachment_max_bytes
+    data = file.file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"files are limited to {limit} bytes")
+    name = safe_filename(file.filename)
+    sub = folder.strip().strip("/")
+    text = extract_text(name, file.content_type or userfiles.guess_type(name), data)
+    if text:
+        flagged, why = guards.is_nsfw(text[:NSFW_SAMPLE_CHARS])
+        if flagged:
+            guards.report_nsfw(session, subject.id, f"[department file {name}] {text[:2000]}")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{why}; reported to hr, admin")
+    try:
+        key, _ = files.write(f"{sub}/{name}" if sub else name, data)
+    except PermissionError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not allowed") from None
+    except FileError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from None
+    return DeptFileOut(department=department, label=DEPARTMENT_LABELS.get(department, department), path=key,
+                       name=key.removeprefix(f"shared/{department}/"), size=len(data),
+                       updated_at=dt.datetime.now(dt.timezone.utc))
+
+
 # ---- saved details (app/wallet.py): only the owner, with their key ----
 class WalletIn(BaseModel):
     kind: Literal["login", "card", "upi", "address"]
