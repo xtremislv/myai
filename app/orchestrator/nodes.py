@@ -44,7 +44,9 @@ def _system_prompt(state: dict[str, Any]) -> str:
             "You can also work with this person's OWN things: their personal mailbox (use "
             "summarize_mail to see what's new and what needs doing; read, search and mark mail: to "
             "find ALL emails on a topic, search_mail searches every folder and pages through results, "
-            "so fetch every page before answering and say how many you found; "
+            "so fetch every page before answering and say how many you found; for a sheet, table "
+            "file or list of many emails use mail_to_sheet (every match; big ones run in the background "
+            "and the person is notified), never write such a file yourself from search pages; "
             "send or reply), and the official mailbox of any department they belong to, such as "
             "finance@ (read, summarize, mark, send and reply from it). When they ask about mail, or "
             "to send one, without saying which mailbox, leave category empty: if they have more than "
@@ -98,7 +100,9 @@ DATA_HINT = (
     "with make_dashboard (headline numbers, a chart, a table) and keep your reply to the takeaways. "
     "For a file or attachment too long to read in full (or marked truncated), use summarize_large: it "
     "reads all of it in parts. If the person wants the result as a document or sheet, set output to doc "
-    "or sheet; long summaries are saved as a Word document anyway."
+    "or sheet; long summaries are saved as a Word document anyway. Report what tools did exactly: the "
+    "number of rows or emails a tool says a file holds, never more, and a background job is not done "
+    "until job_status or the person's notification says so."
 )
 
 

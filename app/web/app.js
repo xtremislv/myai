@@ -2327,7 +2327,7 @@ async function walletCard() {
 }
 
 // ---- notifications (the bell) ----
-const KIND_LABELS = { reminder: ["Reminder", "warn"], digest: ["Mail digest", ""], alert: ["Server alert", "bad"], mail: ["Mail", ""] };
+const KIND_LABELS = { reminder: ["Reminder", "warn"], digest: ["Mail digest", ""], alert: ["Server alert", "bad"], mail: ["Mail", ""], job: ["Finished task", "good"] };
 
 async function notificationsView(refresh) {
   const items = await api("/v1/notifications");

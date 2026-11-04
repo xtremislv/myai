@@ -412,3 +412,20 @@ Found from the owner's live session (an Amazon headphones order that never got a
   email (attachments were downloaded whole); IMAP timeout 20 -> 60 s. `summary.analyse` runs 4 batches at
   once, reports "Read N of M emails", and a failed batch keeps its emails instead of failing the summary.
 - Not verified through Cloudflare itself (opening a test tunnel was not permitted); covered by unit tests.
+
+## Every email into a sheet, in the background (2026-11-04)
+- Reported: "all mails with ai in the subject into a sheet" gave a CSV of 50 (search page 1) that the agent
+  called the full list of 1,006; follow-ups ("the sheet only has 50", "create a new file") were triaged as
+  work, so the Research department (no access to the person's mail) answered "export your mail as CSV".
+- `mail_to_sheet(query, category, folder, summarize, save_as, max_emails)`: `connector.search_all` fetches
+  every match on one connection, 50 per FETCH (headers, or the first 64 KB for summaries);
+  `app/mail/export.py` builds rows (Date, From, From email, Subject, Summary, Action needed, Deadline, Urgent,
+  Type, Attachments, Unread); `summary.analyse` with 8 emails per call, 6 at once. Up to 2,000 summarized or
+  5,000 headers-only. Over 20 summarized emails it runs as a background job (`app/jobs.py`: in-memory, one per
+  person, three in all, a copy of the caller's context so it can save to their encrypted files) and ends with
+  a bell notification (kind `job`); `job_status` reports progress. A gateway restart loses a running job.
+- Measured on Gemma: ~80 summarized emails a minute (200/200 filled); more parallel calls don't help, the
+  GPU is the limit. 1,006 emails take ~12 minutes. Headers-only sheets are immediate.
+- Non-Gmail servers understand `subject:` / `from:` / `to:` terms. Triage: follow-ups about what the
+  assistant just made in a private chat stay private (eval p79-p84; 85 cases x 3 runs x 2 personas = 510/510).
+- Agents are told to report exact counts and not to call a background job done before it is.

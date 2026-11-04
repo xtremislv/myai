@@ -73,6 +73,8 @@ TOOL_STEPS = {
     "review_report": "Opening report {report_id}",
     "run_python": "Running code on the data",
     "summarize_large": "Summarizing {source}",
+    "mail_to_sheet": "Finding every email matching {query}",
+    "job_status": "Checking on the background work",
     "make_dashboard": "Building a dashboard: {title}",
 }
 

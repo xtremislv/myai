@@ -121,7 +121,8 @@ SPECIALISTS: dict[str, Specialist] = {
             about="reads, searches, summarizes and sorts mailboxes, and drafts or sends emails and "
                   "replies (sending needs approval)",
             tools=(
-                "list_mailboxes", "summarize_mail", "read_mail", "search_mail", "open_mail", "mark_mail", "send_mail",
+                "list_mailboxes", "summarize_mail", "mail_to_sheet", "job_status", "read_mail", "search_mail", "open_mail",
+                "mark_mail", "send_mail",
                 "set_reminder", "list_reminders", "write_file", "append_file",
             ),
             max_rounds=8,
@@ -130,7 +131,8 @@ SPECIALISTS: dict[str, Specialist] = {
                 "the emails for you); open single messages with open_mail when you need the exact "
                 "words. To find every email on a topic, use search_mail and keep calling it with the "
                 "next page until it says there are no more, then report how many there are; "
-                "summarize_mail with query reads up to 40 of them for you. "
+                "summarize_mail with query reads up to 40 of them for you. For a sheet or list file of "
+                "emails, or more than 40, use mail_to_sheet (every match, in the background if many). "
                 "Say who sent what and what they want, and point out anything urgent or with a "
                 "deadline. When the task asks to be reminded, or a deadline matters and the task says "
                 "to keep track, set a reminder with set_reminder (a sensible time before the deadline). "

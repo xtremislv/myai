@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-MAIL_TOOLS = ("list_mailboxes", "read_mail", "search_mail", "open_mail", "mark_mail", "send_mail", "summarize_mail")
+MAIL_TOOLS = ("list_mailboxes", "read_mail", "search_mail", "open_mail", "mark_mail", "send_mail", "summarize_mail", "mail_to_sheet")
 LOOKUP_TOOLS = (
     "web_search", "news_search", "scholar_search", "product_search", "product_page", "fetch_page", "scrape_page",
     "weather",
@@ -56,7 +56,7 @@ FILE_TOOLS = (
 REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
 # Analysing data with code (app/sandbox.py: no network, copies of files only) and showing the
 # results as a dashboard under the reply (app/dashboards.py). Everyone, private chat included.
-DATA_TOOLS = ("run_python", "make_dashboard", "summarize_large")
+DATA_TOOLS = ("run_python", "make_dashboard", "summarize_large", "job_status")
 # Documents from templates: company templates (database) at work; in private chat the person's
 # own templates (My files, templates/) and files attached to the chat.
 TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "save_template")

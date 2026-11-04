@@ -72,13 +72,14 @@ def _parse(reply: str, batch: list[dict]) -> list[dict[str, Any]]:
 PARALLEL = 4  # batches read at once (vLLM serves them together)
 
 
-def analyse(messages: list[dict], chat=None, progress=None) -> list[dict[str, Any]]:
+def analyse(messages: list[dict], chat=None, progress=None, *, batch_size: int = BATCH,
+            parallel: int = PARALLEL) -> list[dict[str, Any]]:
     """Each email's gist, action, deadline and kind. A batch the model fails on keeps its
     emails with their opening lines, rather than failing the whole summary."""
     from concurrent.futures import ThreadPoolExecutor
 
     chat = chat or llm.chat
-    batches = [messages[i:i + BATCH] for i in range(0, len(messages), BATCH)]
+    batches = [messages[i:i + batch_size] for i in range(0, len(messages), batch_size)]
 
     def one(batch: list[dict]) -> list[dict[str, Any]]:
         try:
@@ -87,7 +88,7 @@ def analyse(messages: list[dict], chat=None, progress=None) -> list[dict[str, An
                     {"role": "system", "content": f"{PROMPT}\n\n{now_line()}"},
                     {"role": "user", "content": _batch_prompt(batch)},
                 ],
-                temperature=0, max_tokens=900,
+                temperature=0, max_tokens=max(900, 160 * len(batch)),
             )
         except Exception:  # noqa: BLE001 - one bad batch must not lose the others
             logger.warning("mail summary batch failed")
@@ -95,11 +96,11 @@ def analyse(messages: list[dict], chat=None, progress=None) -> list[dict[str, An
         return _parse(str(reply), batch)
 
     items: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
         for done, got in enumerate(pool.map(one, batches), 1):
             items.extend(got)
             if progress and len(batches) > 1:
-                progress(f"Read {min(done * BATCH, len(messages))} of {len(messages)} emails")
+                progress(f"Read {min(done * batch_size, len(messages))} of {len(messages)} emails")
     return items
 
 

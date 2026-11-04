@@ -98,6 +98,10 @@ TRIAGE_PROMPT = (
     "Making documents from a company or department template, form or letterhead is work; from "
     "the person's own template or a file they attached it is private, even for documents that "
     "sound like HR or accounts paperwork (an offer letter, an invoice) when the template is attached. "
+    "Follow-ups about what the assistant just did in a private conversation stay private: complaints "
+    "or corrections about a file, sheet, summary or list it made there (\"the sheet only has 50\", "
+    "\"that's wrong\", \"do it again\", \"make a new file\"), and sheets or tables made from the "
+    "person's own mail. "
     'If you are unsure, choose "private".\n\n'
     "department: for work, the department that owns that data or system, from this list, otherwise "
     "null. Choose the owner even if it is marked not available to this person: never substitute "

@@ -14,6 +14,7 @@ by strangers and may contain instructions aimed at the agent.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import inspect
 import json
 import logging
@@ -337,6 +338,124 @@ def summarize_mail(
         return summary.render(summary.analyse(messages, progress=step))
 
     return untrusted(f"a summary of the {category} mailbox", _mail_call(go))
+
+
+INLINE_SUMMARIZED = 20  # emails summarized within the reply; more go to a background job
+PREVIEW_ROWS = 15
+
+
+def _sheet_path(save_as: str, query: str) -> str:
+    import re as _re
+
+    if save_as.strip():
+        path = save_as.strip()
+    else:
+        topic = _re.sub(r"[^\w\s-]", " ", _re.sub(r"\b(subject|from|to):", "", query)).strip()
+        path = f"Summaries/Emails - {' '.join(topic.split())[:60] or 'search'}.xlsx"
+    return path if path.lower().endswith(".xlsx") else path.rsplit(".", 1)[0] + ".xlsx" if "." in path.rsplit("/", 1)[-1] else path + ".xlsx"
+
+
+def mail_to_sheet(
+    state: dict[str, Any], query: str, category: str = "", folder: str = "", summarize: bool = True,
+    save_as: str = "", max_emails: int = 0,
+) -> str:
+    """EVERY email matching a search, as an Excel sheet (no page limit). Many emails are done in
+    the background, and the person is notified when the file is saved."""
+    from app import bigsummary, jobs
+    from app.mail import connector, export
+
+    if (err := _enforce(state, "write", "compute", "summarize")) is not None:
+        return err
+    cfg, err = _mailbox(state, category, folder, "read")
+    if cfg is None:
+        return err
+    if not query.strip():
+        return "ERROR: give a search, e.g. subject:invoice or from:bank.com or a few words"
+    box = folder or ""
+    got: list = []
+
+    def preview() -> str:
+        got.extend(connector.search_all(cfg, box, query, PREVIEW_ROWS))
+        return "ok"
+
+    if (failed := _mail_call(preview)) != "ok":
+        return failed
+    total, newest = got
+    if total == 0:
+        return f'No emails match "{query}" in that mailbox. Nothing was saved.'
+    limit = export.MAX_SUMMARIZED if summarize else export.MAX_EXPORT
+    count = min(total, max_emails if max_emails > 0 else limit, limit)
+    path = _sheet_path(save_as, query)
+    label = f"{category or 'mail'} search \"{query}\""
+    columns_note = ("date, sender, sender email, subject, a one-line summary, action needed, deadline, "
+                    "urgency, type and attachments" if summarize else "date, sender, sender email and subject")
+    table = "\n".join(["Date | From | Subject", *(f"{r['Date']} | {r['From']} | {r['Subject']}"
+                                                 for r in export.header_rows(newest))])
+    capped = (f" The sheet takes the newest {count} of the {total}: say so." if count < total else "")
+
+    def make(progress) -> str:
+        holder: list = []
+
+        def go() -> str:
+            holder.append(export.build(cfg, box, query, count, summarize, progress))
+            return "ok"
+
+        if (problem := _mail_call(go)) != "ok":
+            raise RuntimeError(problem.removeprefix("ERROR: "))
+        found, columns, rows = holder[0]
+        progress("Saving the sheet")
+        data = bigsummary.to_xlsx(f"Emails: {query}", columns, rows, [
+            ("Mailbox", category or "personal"), ("Search", query), ("Matching emails", str(found)),
+            ("In this sheet", str(len(rows))), ("Made", export.when(dt_now_header())),
+        ])
+        saved = _save(state, path, data)
+        if not saved.startswith(("Created", "Saved")):
+            raise RuntimeError(saved)
+        return f"{saved} {len(rows)} of {found} emails matching \"{query}\" are in it ({columns_note})."
+
+    if not summarize or count <= INLINE_SUMMARIZED:
+        try:
+            result = make(lambda _t: None)
+        except RuntimeError as e:
+            return f"ERROR: {e}"
+        return untrusted(f"a sheet made from the {label}", "\n".join([
+            f"DONE. {result}{capped}", f"Newest {len(newest)} for a table in your reply:", table,
+            "Tell the person the file name (in their Files) and show this table. Don't claim more rows than stated.",
+        ]))
+    try:
+        job = jobs.start(_subject(state).id, f"Sheet of {count} emails: {query}"[:120], make)
+    except jobs.Busy as e:
+        return f"ERROR: not started: {e}"
+    minutes = max(2, round(count / 80))  # ~80 summarized emails a minute on the Quadro (measured)
+    return untrusted(f"the {label}", "\n".join([
+        f"STARTED IN THE BACKGROUND (job {job.id}): {total} emails match \"{query}\"; the sheet will hold "
+        f"{count} of them with {columns_note}, saved as '{path}'.{capped} It takes about {minutes} minutes. The "
+        "person gets a notification (the bell) when it is saved; job_status shows progress.",
+        f"Newest {len(newest)} for a table in your reply now:", table,
+        "Tell the person exactly this: it is running in the background, the file name, roughly how long, and that "
+        "they'll be notified. Show the table. Do NOT say the sheet is ready or complete yet.",
+    ]))
+
+
+def dt_now_header() -> str:
+    from email.utils import format_datetime
+
+    return format_datetime(_dt.datetime.now(_dt.timezone.utc))
+
+
+def job_status(state: dict[str, Any]) -> str:
+    """The person's background jobs (e.g. mail_to_sheet) and how far along they are."""
+    from app import jobs
+
+    if (err := _enforce(state, "write", "compute", "summarize")) is not None:
+        return err
+    mine = jobs.of(_subject(state).id)
+    if not mine:
+        return ("No background jobs since the server last started. If one was running before that, it was "
+                "stopped by the restart: start it again.")
+    return "\n".join(
+        f"- {j.title}: {j.status}" + (f" ({j.progress})" if j.status == "running" else f". {j.result}")
+        for j in mine[:10])
 
 
 # ---- files: the person's own (private chat) or the department's (work) ----
@@ -1030,7 +1149,7 @@ def _search_api() -> tuple[str, str] | None:
 # Once a conversation holds someone's mail or files, an instruction hidden in an email or a web
 # page could tell the agent to put that data into a URL or a search query. After such data has
 # been read, web tools refuse links, searches and typed text long enough to carry much of it.
-PRIVATE_DATA_TOOLS = frozenset({"read_mail", "search_mail", "open_mail", "summarize_mail", "read_file", "summarize_large"})
+PRIVATE_DATA_TOOLS = frozenset({"read_mail", "search_mail", "open_mail", "summarize_mail", "read_file", "summarize_large", "mail_to_sheet"})
 MAX_QUERY_AFTER_PRIVATE = 150
 MAX_URL_DATA_AFTER_PRIVATE = 100  # characters of query string + fragment
 MAX_URL_AFTER_PRIVATE = 300
@@ -1649,6 +1768,8 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "mark_mail": mark_mail,
     "send_mail": send_mail,
     "summarize_mail": summarize_mail,
+    "mail_to_sheet": mail_to_sheet,
+    "job_status": job_status,
     "list_files": list_files,
     "read_file": read_file,
     "write_file": write_file,
@@ -1740,6 +1861,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                       "what the reader must do, and any deadline; urgent ones first. Best way to answer "
                       "'what's in my mail' or 'what do I need to do'. With query, it summarizes the emails "
                       "on that topic from every folder (set unread_only false to include read ones).",
+    "mail_to_sheet": "Put EVERY email matching a search into an Excel sheet in the person's files: date, "
+                     "sender, sender email, subject and (summarize true) a one-line summary, action, deadline "
+                     "and type for each. No page limit (up to 2,000 summarized, 5,000 without summaries). "
+                     "query: Gmail-style, e.g. subject:ai, from:bank.com, words. Many emails run in the "
+                     "background and the person is notified when the file is saved. ALWAYS use this for a "
+                     "sheet, table file or list of many emails; never write such a file yourself from "
+                     "search_mail pages.",
+    "job_status": "How far the person's background jobs (e.g. a mail_to_sheet export) have got, or whether "
+                  "they finished.",
     "search_mail": "Find ALL emails on a topic: every folder including archived mail, newest first, 50 "
                    "per page, with the total. The query is words that must all appear (Gmail also takes "
                    "from:, subject:, after:2026/01/01). If the result says there are more, call again with "

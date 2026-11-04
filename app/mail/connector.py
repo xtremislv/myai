@@ -187,6 +187,17 @@ def _terms(query: str) -> list[str]:
     return [t.strip('"') for t in re.findall(r'"[^"]+"|\S+', query) if t.strip('"')]
 
 
+_FIELDS = {"subject": "SUBJECT", "from": "FROM", "to": "TO"}
+
+
+def _criterion(term: str) -> tuple[str, str]:
+    """("SUBJECT", "ai") for "subject:ai" (Gmail-style, understood everywhere); TEXT otherwise."""
+    field, _, value = term.partition(":")
+    if value and field.lower() in _FIELDS:
+        return _FIELDS[field.lower()], value.strip('"')
+    return "TEXT", term
+
+
 def _search(conn, base: list[str], query: str) -> list[bytes]:
     if not query:
         _, data = conn.uid("SEARCH", *base)
@@ -198,9 +209,9 @@ def _search(conn, base: list[str], query: str) -> list[bytes]:
     elif not query.isascii():
         words, value = ["TEXT"], query
     else:
-        terms = _terms(query)
-        words = [w for t in terms[:-1] for w in ("TEXT", _quote(t))] + ["TEXT"]
-        value = terms[-1] if terms else query
+        pairs = [_criterion(t) for t in _terms(query)] or [("TEXT", query)]
+        words = [w for key, val in pairs[:-1] for w in (key, _quote(val))] + [pairs[-1][0]]
+        value = pairs[-1][1]
     if value.isascii():
         _, data = conn.uid("SEARCH", *base, *words, _quote(value))
     else:  # non-ASCII goes as a literal: imaplib only sends ASCII arguments
@@ -254,6 +265,71 @@ def list_messages(cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_o
         return "\n".join([head, *(found[u] for u in shown if u in found)])
     finally:
         conn.logout()
+
+
+def _select(conn, box: str, query: str) -> tuple[str, str]:
+    """Open the folder a search should look in: (folder, id prefix). With no folder given, a
+    search covers every folder (the archive) when the server has one."""
+    folder, prefix = _folder(box), ""
+    if query and (box or "inbox").strip().lower() in ("", "inbox", "all") and (archive := _all_mail(conn)):
+        folder, prefix = archive, ALL_PREFIX
+    status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+    if status != "OK":
+        raise ValueError(f"no mailbox folder named '{box}'")
+    return folder, prefix
+
+
+FETCH_CHUNK = 50  # messages per FETCH command
+
+
+def search_all(cfg: MailConfig, box: str, query: str, limit: int, body_bytes: int = 0,
+               progress=None) -> tuple[int, list[dict]]:
+    """(total matches, up to `limit` newest matching emails), on one connection. Each email is
+    {"id", "message_id", "from", "from_email", "subject", "date", "unread", "attachments", "body"};
+    with body_bytes 0 only the headers are fetched (fast), else the first body_bytes of each."""
+    conn = _imap(cfg)
+    try:
+        _, prefix = _select(conn, box, query)
+        uids = _search(conn, ["ALL"], query)[::-1]
+        total = len(uids)
+        wanted = uids[:max(0, limit)]
+        part = f"BODY.PEEK[]<0.{body_bytes}>" if body_bytes else "BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)]"
+        found: dict[bytes, dict] = {}
+        for start in range(0, len(wanted), FETCH_CHUNK):
+            chunk = wanted[start:start + FETCH_CHUNK]
+            _, rows = conn.uid("FETCH", b",".join(chunk), f"(UID FLAGS {part})")
+            for row in rows:
+                if not isinstance(row, tuple):
+                    continue
+                meta, raw = row
+                uid = re.search(rb"UID (\d+)", meta)
+                if uid:
+                    found[uid.group(1)] = _summary_of(prefix + uid.group(1).decode(), meta, raw, bool(body_bytes))
+            if progress:
+                progress(min(start + FETCH_CHUNK, len(wanted)), len(wanted))
+        return total, [found[u] for u in wanted if u in found]
+    finally:
+        conn.logout()
+
+
+def _summary_of(mail_id: str, meta: bytes, raw: bytes, with_body: bool) -> dict:
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    sender = _header(msg, "From")
+    body, files = "", []
+    if with_body:
+        try:
+            body = " ".join(_body(msg).split())
+        except Exception:  # noqa: BLE001 - an odd encoding must not stop the rest
+            body = ""
+        try:
+            files = [p.get_filename() for p in msg.iter_attachments() if p.get_filename()]
+        except Exception:  # noqa: BLE001 - a cut-off message may end mid-attachment
+            files = []
+    return {
+        "id": mail_id, "message_id": _header(msg, "Message-ID"), "from": sender,
+        "from_email": parseaddr(sender)[1], "subject": _header(msg, "Subject") or "(no subject)",
+        "date": _header(msg, "Date"), "unread": b"\\Seen" not in meta, "attachments": files, "body": body,
+    }
 
 
 def _body(msg) -> str:
