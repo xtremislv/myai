@@ -2101,6 +2101,7 @@ async function accountView() {
   return h("div", null,
     heading("Settings", "Your mailbox, reminders, saved details and password.", { eyebrow: ["Personal", "Settings"] }),
     await mailSettingsCard(),
+    ...(await Promise.all((await api("/v1/me/department-mailboxes")).map((d) => mailSettingsCard(d.box)))),
     await walletCard(),
     h("div", { class: "card" },
       h("h2", null, "Profile"),
@@ -2408,8 +2409,17 @@ async function remindersView(refresh) {
 }
 
 // ---- My account: mailbox and reminder settings ----
-async function mailSettingsCard() {
-  const [box, prefs] = await Promise.all([api("/v1/me/mailbox"), api("/v1/me/prefs")]);
+const BOX_TITLES = {
+  finance: ["Finance mailbox", "Accounts"], career: ["Careers mailbox", "HR"], contact: ["Contact mailbox", "Admin"],
+};
+
+// which: "personal" (your own) or a department's official mailbox (finance, career, contact),
+// which only that department's members see here and can connect.
+async function mailSettingsCard(which = "personal") {
+  const mine = which === "personal";
+  const q = `?box=${encodeURIComponent(which)}`;
+  const [box, prefs] = await Promise.all([api(`/v1/me/mailbox${q}`), mine ? api("/v1/me/prefs") : {}]);
+  const again = async () => card.replaceWith(await mailSettingsCard(which));
   const card = h("div", { class: "card" });
   const error = errorBox();
   const note = h("div");
@@ -2440,7 +2450,7 @@ async function mailSettingsCard() {
       error.clear();
       note.replaceChildren(h("div", { class: "notice" }, "Checking the login..."));
       try {
-        await api("/v1/me/mailbox", {
+        await api(`/v1/me/mailbox${q}`, {
           method: "PUT",
           body: {
             address: address.value, password: password.value,
@@ -2448,7 +2458,7 @@ async function mailSettingsCard() {
           },
         });
         password.value = "";
-        card.replaceWith(await mailSettingsCard());
+        await again();
       } catch (err) {
         note.replaceChildren();
         error.fail(err);
@@ -2481,20 +2491,24 @@ async function mailSettingsCard() {
     digestNow.disabled = false;
   });
 
+  const [title, team] = BOX_TITLES[which] || ["Mail and reminders", ""];
   fill(card,
-    h("h2", null, "Mail and reminders"),
-    h("p", { class: "muted" }, "Connect your own mailbox so the assistant can read, summarize and answer your mail in your private chats. "
-      + "Sending always asks you first."),
+    h("div", { class: "card-head" }, h("h2", null, mi(mine ? "mail" : "inbox"), title),
+      !mine && h("span", { class: "pill mono" }, `${team} only`)),
+    h("p", { class: "muted" }, mine
+      ? "Connect your own mailbox so the assistant can read, summarize and answer your mail in your private chats. Sending always asks you first."
+      : `The department's official mailbox. Only members of ${team} can see, connect or use it, at work in the ${team} department: `
+        + "nobody else, the administrator included."),
     box.connected && h("div", { class: "row spread" },
       h("span", null, h("span", { class: "pill good" }, "Connected"), ` ${box.username} (${box.imap_host}, ${box.method || "password"})`),
       h("button", {
         type: "button", class: "danger",
-        onclick: async () => { await api("/v1/me/mailbox", { method: "DELETE" }); card.replaceWith(await mailSettingsCard()); },
+        onclick: async () => { await api(`/v1/me/mailbox${q}`, { method: "DELETE" }); await again(); },
       }, "Disconnect"),
     ),
-    await signInBlock(box, address, async () => card.replaceWith(await mailSettingsCard())),
+    await signInBlock(box, address, again, which),
     connect,
-    h("form", {
+    mine && h("form", {
       class: "settings",
       onsubmit: async (event) => {
         event.preventDefault();
@@ -2536,7 +2550,8 @@ async function mailSettingsCard() {
 }
 
 // Sign in with Google (paste back the address the browser ends on) or Microsoft (a device code).
-async function signInBlock(box, address, done) {
+async function signInBlock(box, address, done, which = "personal") {
+  const q = `?box=${encodeURIComponent(which)}`;
   const error = errorBox();
   const step = h("div");
   const ready = box.sign_in || {};
@@ -2549,7 +2564,7 @@ async function signInBlock(box, address, done) {
   google.addEventListener("click", async () => {
     error.clear(); stop();
     try {
-      const start = await api("/v1/me/mailbox/oauth/google/start", { method: "POST", body: { address: address.value.trim() } });
+      const start = await api(`/v1/me/mailbox/oauth/google/start${q}`, { method: "POST", body: { address: address.value.trim() } });
       const pasted = h("input", { required: true, placeholder: "http://127.0.0.1:8765/?state=...&code=...", "aria-label": "Address from the browser" });
       const finish = h("form", {
         class: "card sunk",
@@ -2589,7 +2604,7 @@ async function signInBlock(box, address, done) {
   microsoft.addEventListener("click", async () => {
     error.clear(); stop();
     try {
-      const start = await api("/v1/me/mailbox/oauth/microsoft/start", { method: "POST" });
+      const start = await api(`/v1/me/mailbox/oauth/microsoft/start${q}`, { method: "POST" });
       const status = h("div", { class: "notice" }, "Waiting for you to sign in...");
       fill(step, h("div", { class: "card sunk" },
         h("ol", { class: "small" },

@@ -39,12 +39,13 @@ def classify(subject: Subject, message: str, explicit: str | None = None) -> Cla
     if explicit:
         if explicit not in KNOWN:
             return Classification(None, f"unknown department '{explicit}'")
-        if explicit in roles or is_admin:
+        if explicit in roles:
             return Classification(explicit, "explicit department")
         return Classification(None, f"not a member of '{explicit}'")
 
-    # Department roles the subject actually has (admin can act for any).
-    member_depts = KNOWN & roles if not is_admin else KNOWN
+    # Department roles the subject actually has. Being admin doesn't make someone a member of
+    # another department (owner's decision 2026-11-04): admin work runs as "admin".
+    member_depts = KNOWN & roles
     non_admin = member_depts - {"admin"}
 
     # 2. single department role

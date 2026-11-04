@@ -53,7 +53,7 @@ class CloseIn(BaseModel):
 def _scope_key(scope: str, subject: Subject, creds: HTTPAuthorizationCredentials) -> tuple[str, bytes | None]:
     if scope == "private":
         return logins.session_key(subject.id, scope), chat_key(creds)
-    if scope in subject.roles or "admin" in subject.roles:
+    if scope in subject.roles:  # a department's browser (its saved sign-ins) is for its members
         return logins.session_key(subject.id, scope), None
     raise HTTPException(status.HTTP_403_FORBIDDEN, "you are not in that department")
 

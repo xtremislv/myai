@@ -18,8 +18,9 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - `ARCHITECTURE.md` — design
 
 ## Conventions
-- Access control source of truth: `app/departments/packs.py` (grants → ACL via `registry.py`). Don't
-  hand-write ACL rows.
+- Access control source of truth: `app/departments/packs.py` (grants → ACL via `registry.py`, which also
+  removes built-in rows packs.py dropped). Don't hand-write ACL rows. A department's mail and documents are for
+  its members only: never add `"admin" in roles` shortcuts, and never give the admin role a department's data.
 - Departments: `account, hr, logistics, researcher, superuser, admin`. Governed entrypoint: `POST /v1/request`.
 - Every tool is ACL-gated and listed in `DEPARTMENT_TOOLS` (`app/orchestrator/tools.py`).
 - Keep logic testable without infra (inject `runner`/`quota`; back stores with a Session). Tests:

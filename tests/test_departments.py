@@ -95,11 +95,32 @@ def test_inventory_rules(eng):
 
 def test_admin_access_and_exclusions(eng):
     adm = _s("admin", uid="root")
-    # full access to business data
-    assert allow(eng, adm, Action.READ, "accounts", "ledger")
-    assert allow(eng, adm, Action.DELETE, "order", "o1")
-    assert allow(eng, adm, Action.WRITE, "inventory", "sku1")
+    # The admin's own: the contact mailbox, admin folders, company templates, reports, platform.
     assert allow(eng, adm, Action.READ, "mail", "contact/inbox")
+    assert allow(eng, adm, Action.WRITE, "shared", "admin/notes.md")
+    assert allow(eng, adm, Action.WRITE, "template", "global/Letterhead")
+    assert allow(eng, adm, Action.READ, "report", "nsfw/r1")
+    assert allow(eng, adm, Action.READ, "inventory", "sku1")
+    # Other departments' official mail and documents are for their members only (2026-11-04).
+    for rtype, rid in (("accounts", "ledger"), ("balance_sheet", "q3"), ("order", "o1"), ("payment", "p1"),
+                       ("mail", "finance/inbox"), ("mail", "career/inbox"), ("shared", "account/q3.xlsx"),
+                       ("shared", "hr/offers.docx"), ("template", "hr/Offer letter"), ("research", "notes"),
+                       ("shipments", "s1"), ("secret", "mail/finance")):
+        assert not allow(eng, adm, Action.READ, rtype, rid), (rtype, rid)
+    assert not allow(eng, adm, Action.WRITE, "inventory", "sku1")
+    # Being admin as well doesn't take a member's access away (no deny on department data).
+    both = Subject(id="root", roles=("admin", "account"))
+    assert allow(eng, both, Action.READ, "mail", "finance/inbox")
+    assert allow(eng, both, Action.READ, "accounts", "ledger")
+    # The superuser department has no way into Accounts or HR either.
+    sup = _s("superuser")
+    assert not allow(eng, sup, Action.READ, "mail", "finance/inbox")
+    assert not allow(eng, sup, Action.READ, "shared", "account/q3.xlsx")
+    assert not allow(eng, sup, Action.READ, "mail", "contact/inbox")
+    assert not allow(eng, sup, Action.READ, "mail", "career/inbox")
+    assert not allow(eng, sup, Action.READ, "shared", "hr/offers.docx")
+    assert not allow(eng, sup, Action.READ, "template", "hr/Offer letter")
+    assert not allow(eng, sup, Action.READ, "report", "nsfw/r1")
     # but NOT chat history or personal data (incl. personal mail)
     assert not allow(eng, adm, Action.READ, "chat_history", "someone/t1")
     assert not allow(eng, adm, Action.READ, "personal_info", "someone/p")
@@ -136,3 +157,23 @@ def test_researcher_can_read_research_documents_but_not_accounts(eng):
     assert eng.check(me, Action.LIST, resource_for("reports/", listing=True)).allowed
     assert not eng.check(me, Action.READ, resource_for("accounts/ledger.csv")).allowed
     assert not eng.check(me, Action.LIST, resource_for("", listing=True)).allowed
+
+
+def test_reseeding_removes_built_in_policies_that_were_dropped_but_keeps_hand_made_ones():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.db.session import ACLPolicy, Base
+    from app.departments.registry import _policy_id, seed_departments
+
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as s:
+        old = _policy_id("admin", "allow", "*", "*")  # the admin's old blanket grant
+        s.add(ACLPolicy(id=old, subject="admin", effect="allow", action="*", resource="*"))
+        s.add(ACLPolicy(id="a" * 32, subject="admin", effect="allow", action="read", resource="inventory:x"))
+        s.commit()
+        assert seed_departments(s)["policies_removed"] == 1
+        assert s.get(ACLPolicy, old) is None and s.get(ACLPolicy, "a" * 32) is not None
+        assert seed_departments(s)["policies_removed"] == 0

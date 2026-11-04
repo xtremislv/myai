@@ -142,7 +142,8 @@ def _mailbox(state: dict[str, Any], category: str, box: str, action: str):
             f"'{secret_name(category, owner)}')"
         )
     try:
-        return MailConfig.from_secret(raw, guarded=category == "personal", name=secret_name(category, owner)), None
+        # Guarded for every box: department mailboxes are connected by their members, not the server's operator.
+        return MailConfig.from_secret(raw, guarded=True, name=secret_name(category, owner)), None
     except (ValueError, KeyError):
         return None, f"ERROR: the {category} mailbox settings in the vault are incomplete"
 
@@ -1439,7 +1440,7 @@ def run_python(state: dict[str, Any], code: str, files: str = "", save_to: str =
 
 
 def summarize(state: dict[str, Any], text: str) -> str:
-    if (err := _enforce(state, "read", "research", "summarize")) is not None:
+    if (err := _enforce(state, "write", "compute", "summarize")) is not None:  # text in hand, no department data
         return err
     return f"[stub] summary of {len(text)} chars (agent will summarize inline)"
 

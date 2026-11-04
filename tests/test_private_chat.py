@@ -33,6 +33,8 @@ def _auth(user_id, *roles):
 ALICE = _auth("alice", "researcher")
 BOB = _auth("bob", "researcher")
 ADMIN = _auth("root", "admin")
+# An admin who is also in Accounts: only membership opens a department (2026-11-04).
+ADMIN_IN_ACCOUNTS = _auth("root", "admin", "account")  # same person: notices name "root"
 HR = _auth("hanna", "hr")
 ACCOUNTS = _auth("clerk", "account")
 LOGISTICS = _auth("lee", "logistics")
@@ -238,7 +240,10 @@ def _notices(db):
 
 
 def test_admin_request_in_account_department_notifies_accounts(client, db, prompts):
-    assert _request(client, "show the ACME balance", headers=ADMIN, department="account").json()["outcome"] == "ok"
+    # Admin alone isn't a member of Accounts, so can't work there.
+    denied = _request(client, "show the ACME balance", headers=ADMIN, department="account")
+    assert denied.status_code == 403 or denied.json().get("outcome") == "denied_auth"
+    assert _request(client, "show the ACME balance", headers=ADMIN_IN_ACCOUNTS, department="account").json()["outcome"] == "ok"
     [notice] = _notices(db)
     assert notice.subject_id == "root" and notice.message == "show the ACME balance"
     assert [r["kind"] for r in client.get("/v1/reports", headers=ACCOUNTS).json()] == ["finance_notice"]

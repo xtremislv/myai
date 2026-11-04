@@ -102,7 +102,6 @@ def real_acl(monkeypatch):
 
 CALLS = [
     (tools.send_notification, ("warehouse", "hello"), "logistics"),
-    (tools.summarize, ("some text",), "researcher"),
 ]
 
 

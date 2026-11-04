@@ -26,6 +26,7 @@ from app.request_manager.guards import (
 
 KEY = os.urandom(32)
 ADMIN = {"authorization": f"Bearer {issue_token('root', 'root', ['admin'], chat_key=os.urandom(32))}"}
+ADMIN_IN_ACCOUNTS = {"authorization": f"Bearer {issue_token('root2', 'root2', ['admin', 'account'], chat_key=os.urandom(32))}"}
 
 
 def _auth(user, *roles):
@@ -184,7 +185,8 @@ def test_order_goes_to_accounts_and_the_requester_can_follow_it(api, monkeypatch
     assert (item["kind"], item["label"], item["state"]) == ("task", "order", "queued")
 
     _sorted_as(monkeypatch, route="private")
-    api.client.post(f"/v1/inbox/{body['task_id']}/process", headers=ADMIN)
+    assert api.client.post(f"/v1/inbox/{body['task_id']}/process", headers=ADMIN).status_code == 403  # not in Accounts
+    api.client.post(f"/v1/inbox/{body['task_id']}/process", headers=ADMIN_IN_ACCOUNTS)
     [item] = api.client.get("/v1/chat/threads/t/requests", headers=LEE).json()
     assert (item["state"], item["result"]) == ("done", "assistant reply")
 
@@ -246,12 +248,12 @@ def test_flagged_message_is_reported_and_not_kept_on_any_route(api, monkeypatch)
 # ---- admin finance notices keep working through the chat box ----
 def test_admin_finance_work_notifies_accounts_but_private_finance_talk_does_not(api, monkeypatch):
     _sorted_as(monkeypatch, route="private")
-    _send(api, ADMIN, "my personal taxes worry me")
+    _send(api, ADMIN_IN_ACCOUNTS, "my personal taxes worry me")
     with api.Session() as s:
         assert s.query(Report).count() == 0
 
     _sorted_as(monkeypatch, route="work", department="account")
-    _send(api, ADMIN, "show the ACME balance")
+    _send(api, ADMIN_IN_ACCOUNTS, "show the ACME balance")
     with api.Session() as s:
         assert [r.kind for r in s.query(Report).all()] == ["finance_notice"]
 
@@ -261,8 +263,10 @@ def test_triage_only_offers_the_users_own_departments(api, monkeypatch):
     seen = _sorted_as(monkeypatch)
     _send(api, MULTI)
     assert set(seen["departments"]) == {"logistics", "researcher"}
-    _send(api, ADMIN)
-    assert {"account", "hr", "logistics", "researcher", "superuser", "admin"} == set(seen["departments"])
+    _send(api, ADMIN)  # admin is its own department, not a pass into the others (2026-11-04)
+    assert set(seen["departments"]) == {"admin"}
+    _send(api, ADMIN_IN_ACCOUNTS)
+    assert set(seen["departments"]) == {"admin", "account"}
 
 
 @pytest.mark.parametrize("department", ["logistics", "researcher"])

@@ -7,7 +7,7 @@ Resource type conventions (urn = "type:id"):
   balance_sheet:*            balance sheets           -> account only
   mail:finance/*             finance mail             -> account
   mail:career/*              career mail              -> hr
-  mail:contact/*             contact mail             -> admin
+  mail:contact/*             contact mail             -> admin (members of the admin role only)
   mail:personal/<owner>/*    personal mail            -> owner only ($self)
   personal_info:<owner>/*    personal info            -> owner only ($self)
   chat_history:<owner>/*     chat history             -> owner only ($self); non-text purged after 3d
@@ -30,7 +30,9 @@ Resource type conventions (urn = "type:id"):
 
 Owner-based access is modeled with the special subject "$self" and a "{owner}"
 placeholder in the resource (the ACL engine substitutes the requester's id).
-Admin gets everything EXCEPT chat history and personal data (explicit denies).
+Department data (its mail, shared files, templates, records) is for that department's members
+only. Admin gets an explicit list (platform, contact mail, admin folders, reports, credentials
+other than mailbox logins), never other departments' data and never personal data.
 """
 from __future__ import annotations
 
@@ -192,18 +194,37 @@ SUPERUSER = DepartmentSpec(
     max_concurrency=6,
 )
 
+# Owner's decision 2026-11-04: a department's official mail and documents are for its members
+# only. The admin runs the platform (people, credentials, approvals, alerts) and has the admin
+# department's own mailbox (contact@) and folders, but no way into another department's data
+# by being admin: an admin who should see Accounts' mail is added to Accounts like anyone else.
+# Deny rules would also block an admin who IS a member (deny wins over every role), so this is
+# an explicit allow list instead of "*" minus exceptions.
+MAILBOX_OWNERS = {"finance": "account", "career": "hr", "contact": "admin"}
 ADMIN = DepartmentSpec(
     name="admin",
-    description="Full control EXCEPT chat history and personal data.",
+    description="Runs the platform: people, credentials, approvals, alerts; the contact mailbox and "
+                "the admin folders. No access to other departments' mail or documents.",
     grants=(
-        Grant("*", ("*",)),                                  # everything...
-        Grant("chat_history:*", ("*",), effect="deny"),      # ...except history
-        Grant("personal_info:*", ("*",), effect="deny"),     # ...and personal info
-        Grant("mail:personal/*", ("*",), effect="deny"),     # ...and personal mail
-        Grant("secret:mail/personal/*", ("*",), effect="deny"),  # ...and people's mailbox logins
-        Grant("secret:system/*", ("*",), effect="deny"),     # ...and the server's own keys
-        Grant("secret:browser/*", ("*",), effect="deny"),    # ...and people's saved website logins
-        Grant("wallet:*", ("*",), effect="deny"),            # ...and people's saved cards and logins
+        Grant("system:*", ("*",)),                           # platform settings and policies
+        Grant("mail:contact/*", ("read", "list", "write")),  # the admin's own (contact@) mailbox
+        Grant("shared:admin/*", ("read", "write", "list", "delete")),
+        Grant("template:admin/*", ("read", "write", "list", "delete")),
+        Grant("template:global/*", ("read", "write", "list", "delete")),  # company-wide templates
+        Grant("report:*", ("read", "list", "write")),        # explicit/illegal content reports
+        Grant("inventory:*", ("read", "list")),
+        Grant("web:*", ("read", "write")),
+        Grant("compute:*", ("write",)),
+        Grant("notification:*", ("write",)),
+        Grant("object:*", ("read", "list")),                 # top-level keys with no department
+        Grant("secret:*", ("read", "write", "list")),        # API keys, payment gateway...
+        Grant("secret:mail/*", ("*",), effect="deny"),       # ...but no mailbox logins of any kind
+        Grant("secret:system/*", ("*",), effect="deny"),     # ...nor the server's own keys
+        Grant("secret:browser/*", ("*",), effect="deny"),    # ...nor saved website logins
+        Grant("chat_history:*", ("*",), effect="deny"),
+        Grant("personal_info:*", ("*",), effect="deny"),
+        Grant("mail:personal/*", ("*",), effect="deny"),
+        Grant("wallet:*", ("*",), effect="deny"),
     ),
     tools=("*",),
     quota_per_min=600,
@@ -226,6 +247,7 @@ GLOBAL = DepartmentSpec(
         # Running analysis code in the sandbox and showing dashboards.
         Grant("compute:python", ("write",), subject="*"),
         Grant("compute:dashboard", ("write",), subject="*"),
+        Grant("compute:summarize", ("write",), subject="*"),
     ),
     tools=(),
 )

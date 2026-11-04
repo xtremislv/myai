@@ -370,13 +370,10 @@ def chat_stream(
 
 
 def _departments_of(subject: Subject) -> dict[str, str]:
-    """The departments this person can work in, for triage. The admin can act for any."""
+    """The departments this person can work in, for triage: only those they belong to (the
+    admin role is its own department, not a pass into the others)."""
     roles = set(subject.roles)
-    return {
-        d.name: d.description
-        for d in DEFAULT_DEPARTMENTS
-        if "admin" in roles or d.name in roles
-    }
+    return {d.name: d.description for d in DEFAULT_DEPARTMENTS if d.name in roles}
 
 
 def _work_turns(history: list[dict]) -> list[dict]:

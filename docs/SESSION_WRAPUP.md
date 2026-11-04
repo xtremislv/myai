@@ -47,6 +47,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 |---|---|
 | Privacy | Private chat text kept forever, encrypted per person (only their password or recovery code unlocks it). Attachments deleted after 3 days. No logging or audit of private content. |
 | Triage | One chat box; the model sorts each message. When unsure, it stays private. NSFW = explicit or illegal: blocked and that one message reported to HR + admin. |
+| Department data | A department's official mailbox (finance@ = Accounts, careers = HR, contact@ = Admin) and its documents (shared files, templates, records) are for its members only: not the superuser department, and not the admin unless also a member (owner, 2026-11-04). Members connect their department mailbox under Settings. |
 | Admin | Exactly one admin, who may approve their own requests. Accounts is notified of the admin's finance work. The admin can't read anyone's private chats, personal files, personal mail, mailbox logins or saved website logins. |
 | Approvals | `initiate_payment`, `manage_bill`, `manage_order`, `book_service` always need approval. `send_mail`, `delete_file`, `browser_commit` always need a go-ahead: an approver at work, the person themselves in private chat. |
 | Logins | No limit on failed logins (owner declined it). |

@@ -542,6 +542,48 @@ def test_admin_cannot_touch_system_keys_or_personal_mail_logins(client, db):
     for name in ("system/notes-key", "mail/personal/alice"):
         assert client.put("/v1/admin/secrets", headers=admin, json={"name": name, "value": "x"}).status_code == 403
         assert client.delete(f"/v1/admin/secrets/{name}", headers=admin).status_code == 403
-    assert client.put("/v1/admin/secrets", headers=admin, json={"name": "mail/finance", "value": "{}"}).status_code == 204
-    assert client.get("/v1/admin/secrets", headers=admin).json() == ["mail/finance"]
-    assert client.delete("/v1/admin/secrets/mail/finance", headers=admin).status_code == 204
+    # Department mailboxes are connected by the department's members (Settings), not by the admin.
+    assert client.put("/v1/admin/secrets", headers=admin, json={"name": "mail/finance", "value": "{}"}).status_code == 403
+    assert client.put("/v1/admin/secrets", headers=admin, json={"name": "search/tavily", "value": "k"}).status_code == 204
+    assert client.get("/v1/admin/secrets", headers=admin).json() == ["search/tavily"]
+    assert client.delete("/v1/admin/secrets/search/tavily", headers=admin).status_code == 204
+
+
+# ---- department mailboxes and data are for members only (owner, 2026-11-04) ----
+def _hdr(user, *roles):
+    return {"authorization": "Bearer " + issue_token(user, user, list(roles), chat_key=os.urandom(32))}
+
+
+def test_a_department_mailbox_is_managed_by_its_members_only(client, db, monkeypatch):
+    from app.api import routes_me
+    from app.mail import connector
+
+    monkeypatch.setattr(connector, "check_servers", lambda cfg: None)
+    monkeypatch.setattr(connector, "check_login", lambda cfg: None)
+    body = {"address": "finance@techwiser.com", "password": "app-password",
+            "imap_host": "imap.example.com", "smtp_host": "smtp.example.com", "smtp_port": 465}
+    for outsider in (_hdr("root", "admin"), _hdr("sam", "superuser"), _hdr("hana", "hr")):
+        assert client.put("/v1/me/mailbox?box=finance", headers=outsider, json=body).status_code == 403
+        assert client.get("/v1/me/mailbox?box=finance", headers=outsider).status_code == 403
+        assert client.delete("/v1/me/mailbox?box=finance", headers=outsider).status_code == 403
+    accounts = _hdr("asha", "account")
+    assert client.put("/v1/me/mailbox?box=finance", headers=accounts, json=body).json()["connected"]
+    with db() as s:
+        assert AESGCMVault(s).get("mail/finance") is not None
+        assert AESGCMVault(s).get("mail/personal/asha") is None  # not mixed up with her own
+    assert [m["box"] for m in client.get("/v1/me/department-mailboxes", headers=accounts).json()] == ["finance"]
+    assert [m["box"] for m in client.get("/v1/me/department-mailboxes", headers=_hdr("root", "admin")).json()] == ["contact"]
+    assert client.get("/v1/me/department-mailboxes", headers=_hdr("sam", "superuser")).json() == []
+    assert client.put("/v1/me/mailbox?box=nonsense", headers=accounts, json=body).status_code == 404
+    assert routes_me._pending_box == {}
+
+
+def test_the_admin_cannot_grant_department_data_by_policy(client, db):
+    admin = _hdr("root", "admin")
+    for resource in ("mail:finance/*", "shared:account/*", "accounts:*", "template:hr/*", "*", "secret:mail/finance"):
+        r = client.post("/v1/admin/policies", headers=admin,
+                        json={"subject": "admin", "effect": "allow", "action": "read", "resource": resource})
+        assert r.status_code == 403, resource
+    ok = client.post("/v1/admin/policies", headers=admin,
+                     json={"subject": "admin", "effect": "allow", "action": "read", "resource": "inventory:widgets"})
+    assert ok.status_code == 201

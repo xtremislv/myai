@@ -99,6 +99,27 @@ def _secret(subject: Subject) -> str:
     return connector.secret_name("personal", subject.id)
 
 
+# Which mailbox an endpoint acts on: "personal" (the caller's own) or a department's official one
+# (finance, career, contact), which only that department's members may connect, change or remove
+# (owner's decision 2026-11-04; the admin is a member of "admin" only, so of contact@).
+def _box_secret(subject: Subject, box: str) -> str:
+    from app.departments.packs import MAILBOX_OWNERS
+
+    box = (box or "personal").strip().lower()
+    if box == "personal":
+        return _secret(subject)
+    owner = MAILBOX_OWNERS.get(box)
+    if owner is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no mailbox called '{box}'")
+    if owner not in subject.roles:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"the {box} mailbox belongs to {owner}: only its members can manage it")
+    return connector.secret_name(box, None)
+
+
+# A sign-in in progress remembers which mailbox it is for (in memory, like the sign-in itself).
+_pending_box: dict[str, str] = {}
+
+
 def _out(cfg: connector.MailConfig) -> MailboxOut:
     from app.mail import oauth
 
@@ -107,10 +128,11 @@ def _out(cfg: connector.MailConfig) -> MailboxOut:
 
 
 @router.get("/me/mailbox", response_model=MailboxOut)
-def get_mailbox(subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> MailboxOut:
+def get_mailbox(box: str = "personal", subject: Subject = Depends(current_subject),
+                session: Session = Depends(get_session)) -> MailboxOut:
     from app.mail import oauth
 
-    raw = AESGCMVault(session).get(_secret(subject))
+    raw = AESGCMVault(session).get(_box_secret(subject, box))
     if raw is None:
         return MailboxOut(connected=False, sign_in=oauth.configured())
     try:
@@ -142,9 +164,11 @@ def _refused(provider, error: Exception) -> str:
 
 
 @router.put("/me/mailbox", response_model=MailboxOut)
-def put_mailbox(body: MailboxIn, subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> MailboxOut:
+def put_mailbox(body: MailboxIn, box: str = "personal", subject: Subject = Depends(current_subject),
+                session: Session = Depends(get_session)) -> MailboxOut:
     from app.mail import providers
 
+    target = _box_secret(subject, box)
     address = (body.address or body.username).strip()
     if "@" not in address and not body.imap_host:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "enter your email address")
@@ -170,7 +194,7 @@ def put_mailbox(body: MailboxIn, subject: Subject = Depends(current_subject), se
             except Exception as e:  # noqa: BLE001 - the provider's own words help the person fix it
                 problems.append(_refused(provider, e))
                 continue
-        AESGCMVault(session).put(_secret(subject), raw)
+        AESGCMVault(session).put(target, raw)
         return _out(cfg)
     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, " ".join(dict.fromkeys(problems)) or "couldn't connect")
 
@@ -201,9 +225,10 @@ class MicrosoftPollOut(BaseModel):
     mailbox: MailboxOut | None = None
 
 
-def _save_signed_in(session: Session, subject_id: str, data: dict) -> MailboxOut:
-    """Check the new tokens actually open the mailbox, then keep them."""
-    name = connector.secret_name("personal", subject_id)
+def _save_signed_in(session: Session, subject_id: str, data: dict, name: str | None = None) -> MailboxOut:
+    """Check the new tokens actually open the mailbox, then keep them (under `name`: the
+    person's own mailbox unless a department's was chosen when the sign-in started)."""
+    name = name or connector.secret_name("personal", subject_id)
     raw = json.dumps(data)
     cfg = connector.MailConfig.from_secret(raw, guarded=True, name=name)
     release_connection(session)
@@ -230,9 +255,10 @@ def _oauth_call(fn, *args):
 
 
 @router.post("/me/mailbox/oauth/google/start", response_model=GoogleStartOut)
-def google_start(body: GoogleStartIn, subject: Subject = Depends(current_subject)) -> GoogleStartOut:
+def google_start(body: GoogleStartIn, box: str = "personal", subject: Subject = Depends(current_subject)) -> GoogleStartOut:
     from app.mail import oauth
 
+    _pending_box[subject.id] = _box_secret(subject, box)
     return GoogleStartOut(**_oauth_call(oauth.google_start, subject.id, body.address.strip()))
 
 
@@ -243,7 +269,7 @@ def google_finish(body: GoogleFinishIn, subject: Subject = Depends(current_subje
 
     code, state = _oauth_call(oauth.code_from, body.url)
     data = _oauth_call(oauth.google_finish, subject.id, code, state)
-    return _save_signed_in(session, subject.id, data)
+    return _save_signed_in(session, subject.id, data, _pending_box.pop(subject.id, None))
 
 
 @router.get("/me/mailbox/oauth/google/callback", include_in_schema=False)
@@ -263,7 +289,7 @@ def google_callback(state: str = "", code: str = "", error: str = "",
         return page(f"Google said: {error}. Go back to the app and try again.", 400)
     try:
         data = oauth.google_finish(owner, code, state)
-        _save_signed_in(session, owner, data)
+        _save_signed_in(session, owner, data, _pending_box.pop(owner, None))
     except oauth.OAuthError as e:
         return page(f"{e}. Go back to the app and try again.", 400)
     except HTTPException as e:
@@ -272,9 +298,10 @@ def google_callback(state: str = "", code: str = "", error: str = "",
 
 
 @router.post("/me/mailbox/oauth/microsoft/start", response_model=MicrosoftStartOut)
-def microsoft_start(subject: Subject = Depends(current_subject)) -> MicrosoftStartOut:
+def microsoft_start(box: str = "personal", subject: Subject = Depends(current_subject)) -> MicrosoftStartOut:
     from app.mail import oauth
 
+    _pending_box[subject.id] = _box_secret(subject, box)
     return MicrosoftStartOut(**_oauth_call(oauth.microsoft_start, subject.id))
 
 
@@ -285,12 +312,42 @@ def microsoft_poll(subject: Subject = Depends(current_subject), session: Session
     data = _oauth_call(oauth.microsoft_poll, subject.id)
     if data is None:
         return MicrosoftPollOut(done=False)
-    return MicrosoftPollOut(done=True, mailbox=_save_signed_in(session, subject.id, data))
+    return MicrosoftPollOut(done=True, mailbox=_save_signed_in(session, subject.id, data, _pending_box.pop(subject.id, None)))
 
 
 @router.delete("/me/mailbox", status_code=status.HTTP_204_NO_CONTENT)
-def delete_mailbox(subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> None:
-    AESGCMVault(session).delete(_secret(subject))
+def delete_mailbox(box: str = "personal", subject: Subject = Depends(current_subject),
+                   session: Session = Depends(get_session)) -> None:
+    AESGCMVault(session).delete(_box_secret(subject, box))
+
+
+class DepartmentMailboxOut(BaseModel):
+    box: str           # finance | career | contact
+    department: str
+    connected: bool
+    username: str = ""
+    method: str = ""
+
+
+@router.get("/me/department-mailboxes", response_model=list[DepartmentMailboxOut])
+def department_mailboxes(subject: Subject = Depends(current_subject),
+                         session: Session = Depends(get_session)) -> list[DepartmentMailboxOut]:
+    """The official mailboxes of the departments this person belongs to."""
+    from app.departments.packs import MAILBOX_OWNERS
+
+    out = []
+    vault = AESGCMVault(session)
+    for box, department in MAILBOX_OWNERS.items():
+        if department not in subject.roles:
+            continue
+        raw = vault.get(connector.secret_name(box, None))
+        try:
+            cfg = connector.MailConfig.from_secret(raw) if raw else None
+        except (ValueError, KeyError):
+            cfg = None
+        out.append(DepartmentMailboxOut(box=box, department=department, connected=cfg is not None,
+                                        username=cfg.username if cfg else "", method=cfg.method if cfg else ""))
+    return out
 
 
 class DigestOut(BaseModel):

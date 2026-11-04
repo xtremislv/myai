@@ -282,6 +282,23 @@ Found from the owner's live session (an Amazon headphones order that never got a
   cart -> no saved login -> live browser handed to the person to sign in. Placing the order needs a real
   signed-in account and was not done.
 
+## Department data for members only (2026-11-04, owner's decision)
+- `packs.ADMIN` is an explicit allow list (platform, `mail:contact/*`, admin folders and templates, company
+  templates, reports, inventory read, web, compute, credentials except `secret:mail/*`), not `*` minus
+  exceptions: a deny would also block an admin who IS a member, because deny wins across roles.
+- No more "admin can act for any department": triage (`_departments_of`), the classifier, the accounts
+  inbox, templates, the department live browser and the dashboard's inbox count all check membership.
+- Department mailboxes (`packs.MAILBOX_OWNERS`) are connected by members: `?box=finance|career|contact` on the
+  `/v1/me/mailbox` endpoints (password or OAuth), listed by `/v1/me/department-mailboxes`, shown in Settings.
+  The Credentials page refuses every `mail/*` secret except `mail/notify`; all mailboxes are `guarded`.
+- `/v1/admin/policies` refuses allow rules on department or personal data types, so access can't be
+  hand-granted around membership. `seed_departments` now also removes built-in policies that packs.py
+  dropped (id = hash of the fields; hand-made ids are random): the live run removed the admin's old `*`.
+- `summarize` is checked as `compute:summarize` (text in hand), not as research data.
+- Live check after reseeding: admin alone reaches only contact mail; superuser none of these; members their own.
+- People whose roles list every department (admin, techwiser, mrinal) still see everything through membership:
+  trimming that on the Users page is the owner's call.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

@@ -434,7 +434,8 @@ def _token(*roles, user="someone"):
 
 def test_each_role_sees_only_its_own_counts(api):
     admin = api.client.get("/v1/dashboard", headers=ADMIN).json()
-    assert {"pending_approvals", "users", "departments", "inbox_queued", "open_reports"} <= set(admin)
+    assert {"pending_approvals", "users", "departments", "open_reports"} <= set(admin)
+    assert "inbox_queued" not in admin  # the Accounts inbox is for Accounts members (2026-11-04)
 
     accounts = api.client.get("/v1/dashboard", headers=_token("account")).json()
     assert "inbox_queued" in accounts and "open_reports" in accounts
@@ -481,7 +482,8 @@ def test_people_are_shown_by_name_not_internal_id(api, monkeypatch):
 
     [report] = api.client.get("/v1/reports", headers=ADMIN).json()
     assert report["subject_name"] == "alice"
-    [task] = api.client.get("/v1/inbox", params={"department": "account"}, headers=ADMIN).json()
+    assert api.client.get("/v1/inbox", params={"department": "account"}, headers=ADMIN).status_code == 403
+    [task] = api.client.get("/v1/inbox", params={"department": "account"}, headers=_token("account")).json()
     assert task["requester_name"] == "alice"
 
 

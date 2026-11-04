@@ -46,11 +46,13 @@ def seed_departments(session: Session) -> dict:
         dept_count += 1
 
     # 2. ACL policies (all specs, incl. "*" and "$self")
+    wanted: set[str] = set()
     for spec in POLICY_SPECS:
         for grant in spec.grants:
             subject = grant.subject or spec.name
             for action in grant.actions:
                 pid = _policy_id(subject, grant.effect, action, grant.resource)
+                wanted.add(pid)
                 if session.get(ACLPolicy, pid) is None:
                     session.add(
                         ACLPolicy(
@@ -62,8 +64,17 @@ def seed_departments(session: Session) -> dict:
                         )
                     )
                     policy_count += 1
+    # 3. Built-in policies packs.py no longer has (e.g. the admin's old "*" grant, removed
+    # 2026-11-04) must go, or access would never shrink. A built-in policy's id is the hash of its
+    # own fields; hand-made ones (admin API) have random ids and are left alone.
+    removed = 0
+    for row in session.query(ACLPolicy).all():
+        built_in = row.id == _policy_id(row.subject, row.effect, row.action, row.resource)
+        if built_in and row.id not in wanted:
+            session.delete(row)
+            removed += 1
     session.commit()
-    return {"departments": dept_count, "policies_added": policy_count}
+    return {"departments": dept_count, "policies_added": policy_count, "policies_removed": removed}
 
 
 def get_department(session: Session, name: str) -> Department | None:

@@ -30,9 +30,8 @@ class TemplateOut(BaseModel):
 
 
 def _scopes(subject: Subject) -> list[str]:
-    if "admin" in subject.roles:
-        return [d.name for d in DEFAULT_DEPARTMENTS] + ["global"]
-    return [r for r in subject.roles if r != "admin"] + ["global"]
+    """A department's templates are for its members (the admin's own scope is "admin")."""
+    return [r for r in subject.roles if r in {d.name for d in DEFAULT_DEPARTMENTS}] + ["global"]
 
 
 def _out(row) -> TemplateOut:

@@ -54,7 +54,7 @@ def overview(
             {"name": d.name, "quota_per_min": d.quota_per_min, "tools": d.tools}
             for d in session.query(Department).order_by(Department.name).all()
         ]
-    if is_admin or "account" in roles:
+    if "account" in roles:
         out["inbox_queued"] = (
             session.query(func.count())
             .select_from(DepartmentTask)

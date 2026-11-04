@@ -197,8 +197,8 @@ def test_an_example_text_document_is_imitated(db, store_blobs, mine, monkeypatch
 
 def test_company_templates_follow_department_access(db, store_blobs):
     with db() as s:
-        store.save(s, Subject("root", ("admin",)), "hr", "Offer letter", "offer.md", b"Dear {{ name }}, welcome.\n")
-        store.save(s, Subject("root", ("admin",)), "account", "Invoice", "inv.md", b"Invoice {{ n }}\n")
+        store.save(s, Subject("root", ("admin", "hr")), "hr", "Offer letter", "offer.md", b"Dear {{ name }}, welcome.\n")
+        store.save(s, Subject("root", ("admin", "account")), "account", "Invoice", "inv.md", b"Invoice {{ n }}\n")
         store.save(s, Subject("root", ("admin",)), "global", "Letterhead", "lh.md", b"ACME\n{{ body }}\n")
         hr = Subject("alice", ("hr",))
         assert [r.name for r in store.visible(s, hr, ["hr", "account", "global"])] == ["Offer letter", "Letterhead"]
@@ -222,7 +222,7 @@ def test_private_chat_does_not_use_company_templates(db, store_blobs, mine):
 
 def test_a_name_copied_with_its_listing_details_still_finds_the_template(db):
     with db() as s:
-        store.save(s, Subject("root", ("admin",)), "hr", "Offer letter", "offer.docx", _docx(["{{ name }}"]))
+        store.save(s, Subject("root", ("admin", "hr")), "hr", "Offer letter", "offer.docx", _docx(["{{ name }}"]))
         hr = Subject("alice", ("hr",))
         for asked in ("Offer letter", "offer letter [hr, docx]", "Offer letter (for: hr; format: docx)", "offer"):
             assert store.find(s, hr, asked, ["hr", "global"]) is not None, asked

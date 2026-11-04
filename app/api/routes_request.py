@@ -138,8 +138,9 @@ class TaskOut(BaseModel):
     state: str
 
 
-def _member_or_admin(subject: Subject, department: str) -> bool:
-    return department in subject.roles or "admin" in subject.roles
+def _member(subject: Subject, department: str) -> bool:
+    """A department's inbox is for its members only, the admin included (2026-11-04)."""
+    return department in subject.roles
 
 
 @router.get("/v1/inbox", response_model=list[TaskOut])
@@ -148,7 +149,7 @@ def list_inbox(
     subject: Subject = Depends(current_subject),
     session: Session = Depends(get_session),
 ) -> list[TaskOut]:
-    if not _member_or_admin(subject, department):
+    if not _member(subject, department):
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a member of '{department}'")
     tasks = (
         session.query(DepartmentTask)
@@ -176,7 +177,7 @@ def process_task(
     task = session.get(DepartmentTask, task_id)
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
-    if not _member_or_admin(subject, task.department):
+    if not _member(subject, task.department):
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"not a member of '{task.department}'")
     # Atomic claim, so two members processing the same task cannot both run it.
     claimed = (

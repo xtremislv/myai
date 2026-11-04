@@ -2,7 +2,7 @@
 
 handle_request() runs the control-plane pipeline:
   1. classify the request to a department
-  2. authorize (subject must hold the department role; admin may act for any)
+  2. authorize (subject must hold the department role; the admin role is just its own department)
   3. quota check (per-department, per-minute)
   4. execute the department's agent graph; a critical tool call pauses the graph
      and parks an approval (see orchestrator.nodes.run_tool)
