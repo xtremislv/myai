@@ -32,11 +32,25 @@ def _record_usage(model: str, usage) -> None:
 
 
 # Gemma 4 sometimes emits its (empty) thinking channel as text: "<|channel>thought\n<channel|>".
+# Sometimes the block is never closed: the whole reply is "<|channel>thought" and the model stops
+# (seen 2026-11-04 mid-checkout, where it ended the run with that as the "answer").
 _THOUGHT = re.compile(r"<\|channel\>.*?<channel\|>\s*", re.DOTALL)
+_UNCLOSED = re.compile(r"<\|channel\>\s*(?:thought\b)?\s*", re.DOTALL)
+_MARKER = re.compile(r"<\|channel\>|<channel\|>")
+UNCLOSED_KEEP_CHARS = 40  # text after an unclosed marker longer than this is kept as the answer
 
 
 def strip_thoughts(text: str) -> str:
-    return _THOUGHT.sub("", text) if "<|channel>" in text else text
+    """The reply without Gemma's thinking-channel blocks or stray channel markers. An unclosed
+    block counts as thinking unless real text follows it; an empty result makes the agent retry."""
+    if "<|channel>" not in text and "<channel|>" not in text:
+        return text
+    text = _THOUGHT.sub("", text)
+    match = _UNCLOSED.search(text)
+    if match:
+        after = text[match.end():]
+        text = text[:match.start()] + (after if len(after.strip()) > UNCLOSED_KEEP_CHARS else "")
+    return _MARKER.sub("", text).strip()
 
 
 class _ThoughtFilter:

@@ -202,7 +202,7 @@ SPECIALISTS: dict[str, Specialist] = {
             name="shopping",
             core=("product_search",),
             title="Shopping",
-            about="finds and compares products on shopping sites (Amazon, Flipkart, Croma...): prices, "
+            about="finds and compares products on shopping sites (Flipkart, Reliance Digital, Amazon...): prices, "
                   "ratings, reviews, delivery; and buys them in the browser when asked (the order is "
                   "confirmed by a person first)",
             tools=(
@@ -216,15 +216,24 @@ SPECIALISTS: dict[str, Specialist] = {
                 "You are the SHOPPING specialist. To research: product_search, then product_page on the "
                 "best 2-4 candidates; compare price, rating and number of reviews, seller, delivery and "
                 "the features that matter for the request; prefer well-reviewed listings from reliable "
-                "sellers and say which results were sponsored. To ORDER (only when the task says to "
+                "sellers and say which results were sponsored. Some shops block the assistant's browser "
+                "from this server (Amazon, Croma, and Flipkart's product pages; Reliance Digital works): "
+                "when a result or page says BLOCKED or 'blocks the assistant's browser', don't retry it or "
+                "click Retry; report that, use the same product on Reliance Digital, and give the blocked "
+                "shop's link so the person can order there themselves if they prefer. To ORDER (only when the task says to "
                 "buy or order): if the task doesn't say whether it is for personal use or for work, stop "
                 "and report 'NEED INFO: personal or work?'. Open the chosen product page with "
-                "browser_open, set the quantity (1 unless told), click 'Add to cart', open the cart and "
+                "browser_open, set the quantity (1 unless told), click 'Add to cart' (never 'wishlist'; if it is "
+                "disabled the page first needs a delivery pincode: fill_saved the saved address's 'pincode', or "
+                "report 'NEED INFO: delivery pincode'), open the cart and "
                 "proceed to checkout. Sign in with the person's saved login (list_saved_details, then "
                 "fill_saved for username and password, then click the sign-in button). Fill the address "
                 "and payment the same way from saved details. For a value that isn't saved, a CVV or an "
                 "OTP, call ask_person_for_secret on that exact field and stop, reporting 'WAITING FOR "
-                "PERSON:'. For CAPTCHAs or app approvals use ask_person_to_browse. When the task says "
+                "PERSON:'. If no saved login fits, or the site signs in with an OTP, call ask_person_to_browse "
+                "('Sign in to <site> in the live browser, then tell me to carry on') and stop, reporting "
+                "'WAITING FOR PERSON: sign in'. For CAPTCHAs or app approvals use ask_person_to_browse too. "
+                "Never click Empty cart, Remove or Delete unless the task says so. When the task says "
                 "they are done, read the page: check the item, quantity, total price and delivery "
                 "address match the request, then call browser_commit on the final 'Place your order' "
                 "(or 'Pay') button with a summary: item, quantity, total, address, payment method. Never "
@@ -410,6 +419,32 @@ def _specialist_convo(state: dict[str, Any], spec: Specialist) -> list[dict[str,
     ]
 
 
+# An order is done only at one of these: the confirmation card (browser_commit), a hand-over to
+# the person, a question for them, or a blocked shop. Gemma tends to stop halfway ("added to the
+# cart") and report; then it is sent back, up to MAX_ORDER_NUDGES times per request.
+MAX_ORDER_NUDGES = 3
+ORDER_WORDS = re.compile(r"\b(order|buy|purchase|checkout|check out)\b", re.IGNORECASE)
+ORDER_ENDS = re.compile(r"WAITING FOR PERSON|NEED INFO|BLOCKED|blocks the assistant", re.IGNORECASE)
+ORDER_CONTINUE = (
+    "The order isn't finished: nothing is placed yet (no browser_commit) and you aren't waiting for the "
+    "person. Read the page and do the next step: delivery pincode, Add to cart, open the cart, Checkout "
+    "or 'Login to proceed', address, payment, then browser_commit on 'Place order' or 'Pay'. If the person "
+    "must act (sign in, an OTP, a CAPTCHA), call ask_person_to_browse; for a missing value call "
+    "ask_person_for_secret or report 'NEED INFO: ...'; if the shop blocks you, report 'BLOCKED'."
+)
+
+
+def _unfinished_order(name: str, state: dict[str, Any], own: list[dict[str, Any]], report: str) -> bool:
+    if name != "shopping" or state.get("order_nudges", 0) >= MAX_ORDER_NUDGES:
+        return False
+    task = (state.get("assignments") or [""])[-1]
+    if not ORDER_WORDS.search(task) or ORDER_ENDS.search(report):
+        return False
+    called = {tc["function"]["name"] for m in own if m.get("role") == "assistant" for tc in m.get("tool_calls") or []}
+    stopped_for_person = called & {"browser_commit", "ask_person_to_browse", "ask_person_for_secret"}
+    return bool(called & {"browser_open", "browser_click"}) and not stopped_for_person
+
+
 def make_specialist(name: str):
     spec = SPECIALISTS[name]
 
@@ -440,6 +475,16 @@ def make_specialist(name: str):
                     convo.append({"role": "user", "content": READ_SOURCES})
                     reply = llm.chat(convo, tools=tools)
                     calls = calls_in(reply)
+                nudges = state.get("order_nudges", 0)
+                if not calls and rounds < spec.max_rounds - 1 and _unfinished_order(name, state, own, str(reply)):
+                    step("Carrying on with the order")
+                    convo.append({"role": "assistant", "content": str(reply)})
+                    convo.append({"role": "user", "content": ORDER_CONTINUE})
+                    reply = llm.chat(convo, tools=tools)
+                    calls = calls_in(reply)
+                    if calls:
+                        return {"messages": [assistant_calls(reply, calls)], "agent_rounds": rounds + 1,
+                                "order_nudges": nudges + 1, "next": "tools"}
         if calls:
             return {"messages": [assistant_calls(reply, calls)], "agent_rounds": rounds + 1, "next": "tools"}
         report = str(reply).strip() or "(no report)"

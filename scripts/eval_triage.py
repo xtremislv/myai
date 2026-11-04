@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> None:
         persona, case = job
         depts = departments_for(PERSONAS[persona])
         others = {d.name: d.description for d in DEFAULT_DEPARTMENTS if d.name not in depts and d.name != "admin"}
-        got = guards.triage(case["msg"], depts, [], others)
+        got = guards.triage(case["msg"], depts, case.get("recent", []), others)
         return persona, case, got, judge(case, got, depts)
 
     with ThreadPoolExecutor(args.workers) as pool:

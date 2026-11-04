@@ -31,6 +31,44 @@ from app.config import get_settings
 
 NAV_TIMEOUT_MS = 30_000
 VIEWPORT = {"width": 1280, "height": 900}
+# Shown above a page that is a site's block or "unavailable" answer to an automated browser. Don't
+# retry or work around it: say so, and offer what still works.
+BLOCKED_NOTE = (
+    "BLOCKED: {site} refused this automated browser ({why}). This is not the real page: don't click "
+    "Retry or open it again. Tell the person {site} blocks the assistant's browser, and offer instead: "
+    "the same product on a shop that works (product_search with site='reliancedigital'), or the "
+    "product link so they can order it themselves."
+)
+
+
+async def _click(handle, ref: int) -> None:
+    """Click like a person would. Sticky headers often cover a button that was scrolled to the top
+    edge ("... intercepts pointer events"): then centre it and try again, and as a last resort
+    click the element itself."""
+    try:
+        await handle.click(timeout=6_000)
+        return
+    except Exception as first:  # noqa: BLE001
+        covered = "intercepts pointer events" in str(first) or "Timeout" in str(first)
+        if not covered:
+            raise BrowserError(f"could not click [{ref}]: {_short(first)}") from None
+    try:
+        await handle.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
+        await handle.click(timeout=4_000)
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await handle.evaluate("e => e.click()")
+    except Exception as e:  # noqa: BLE001
+        raise BrowserError(f"could not click [{ref}]: {_short(e)}") from None
+
+
+def _site_of(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    host = urlsplit(url).hostname or "this site"
+    return host.removeprefix("www.")
 HUMAN_KEYS = {"Enter", "Tab", "Backspace", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Delete"}
 CALL_TIMEOUT_S = 75
 MAX_ELEMENTS = 60
@@ -44,7 +82,11 @@ _MARK_JS = r"""
   document.querySelectorAll('[data-ai-ref]').forEach(e => e.removeAttribute('data-ai-ref'));
   const out = []; let i = 0;
   for (const el of document.querySelectorAll(sel)) {
-    if (el.type === 'hidden' || el.disabled) continue;
+    if (el.type === 'hidden') continue;
+    // Disabled buttons stay in the list, marked: "Add to cart" is often disabled until the page
+    // gets something first (a delivery pincode, a size), and the agent must know it's there.
+    const off = !!el.disabled || el.getAttribute('aria-disabled') === 'true';
+    if (off && !['button', 'input'].includes(el.tagName.toLowerCase()) && el.getAttribute('role') !== 'button') continue;
     const r = el.getBoundingClientRect(), st = getComputedStyle(el);
     if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
     i++; el.setAttribute('data-ai-ref', String(i));
@@ -62,7 +104,7 @@ _MARK_JS = r"""
     if (tag === 'select') value = (el.options[el.selectedIndex] || {}).text || '';
     const options = tag === 'select' ? Array.from(el.options).slice(0, 12).map(o => o.text.trim()) : [];
     out.push({ref: i, tag, kind: el.getAttribute('type') || el.getAttribute('role') || '', label, value, options,
-              href: tag === 'a' ? (el.href || '').slice(0, 100) : '',
+              href: tag === 'a' ? (el.href || '').slice(0, 100) : '', off,
               inView: r.bottom > 0 && r.top < innerHeight});
     if (i >= maxCount) break;
   }
@@ -102,6 +144,8 @@ SAFE_CLICK = re.compile(
 COMMIT_WORDS = re.compile(
     r"\b(book|booking|pay|payment|purchase|buy|place order|place your order|order now|confirm|"
     r"reserve|subscribe|send|submit|sign up|register|delete|transfer|donate|proceed to pay|"
+    # Undoing what the person asked for (seen 2026-11-04: the agent clicked "Empty Cart" mid-checkout).
+    r"empty (?:cart|bag|basket)|clear (?:cart|bag|basket)|remove|discard|"
     r"cancel (?:booking|order|subscription|reservation)|complete (?:booking|purchase|order))\b",
     re.IGNORECASE,
 )
@@ -289,10 +333,15 @@ class Browser:
                 line += " options=" + "/".join(e["options"])
             if e["href"] and not e["label"]:
                 line += f" -> {e['href']}"
+            if e.get("off"):
+                line += " (disabled: the page needs something first, e.g. a delivery pincode or a size)"
             if not e["inView"]:
                 line += " (below)"
             lines.append(line)
         more = f"\n…and {len(elements) - MAX_ELEMENTS} more controls (scroll to see them)" if len(elements) > MAX_ELEMENTS else ""
+        blocked = extract.block_reason(title, text)
+        if blocked:
+            note = (f"{note}\n" if note else "") + BLOCKED_NOTE.format(site=_site_of(page.url), why=blocked)
         return (
             (f"{note}\n" if note else "")
             + f"PAGE: {title}\nURL: {page.url}\n\nTEXT:\n{extract.clip(text, PAGE_TEXT_CHARS)}\n\n"
@@ -335,6 +384,11 @@ class Browser:
                         "so nothing was clicked. Read the page and ask again."
                     )
             else:
+                said, wanted = info["text"].lower(), expect.strip().lower()
+                if wanted and wanted not in said and said not in wanted:
+                    raise BrowserError(
+                        f"control [{ref}] says '{info['text']}', not '{expect}': read the page again for the right number"
+                    )
                 why = commit_reason(info)
                 if why:
                     return (
@@ -342,10 +396,12 @@ class Browser:
                         "If the person asked for this, call browser_commit with this ref and its label; "
                         "a person must approve it."
                     )
-            try:
-                await handle.click(timeout=10_000)
-            except Exception as e:  # noqa: BLE001
-                raise BrowserError(f"could not click [{ref}]: {_short(e)}") from None
+            if await handle.evaluate("e => !!e.disabled || e.getAttribute('aria-disabled') === 'true'"):
+                raise BrowserError(
+                    f"[{ref}] '{info['text']}' is disabled: the page needs something first. Look for what it asks "
+                    "for (often a delivery pincode: use the saved address's pincode, or ask the person) and do that."
+                )
+            await _click(handle, ref)
             await self._settle(s.page)
             note = f"Clicked [{ref}] '{info['text']}'." + (" (committed after approval)" if commit else "")
             return await self._snapshot(s.page, note)

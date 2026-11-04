@@ -257,6 +257,31 @@ A self-hosted AI platform. Users get one chat box (`/ui/`). `guards.triage` sort
   labels, model picker, microphone, "hardware enclaves". Status lines use the real `/readyz`.
 - Checked with a mocked-API Playwright run of every page in both themes and at phone width (no script errors).
 
+## Ordering workflow fixes (2026-11-04, later)
+Found from the owner's live session (an Amazon headphones order that never got anywhere):
+- **Amazon and Croma refuse the agents' browser** from this server (Amazon: a "503 rush hour" page);
+  **Flipkart's search works but its product pages answer 429** ("looks like all of India is here").
+  **Reliance Digital works** through to sign-in. Working around bot detection was refused as bot-check
+  circumvention and is not done. Instead: those pages are recognised as blocks (`extract._BLOCK_SIGNS`),
+  every browser snapshot of one starts with a `BLOCKED:` note (don't retry, offer Reliance Digital or the link),
+  and `product_search` on a blocked shop falls back to `products.WORKING_SITES` and gives the shop's search link.
+- **Gemma 4 sometimes answers just `<|channel>thought`** and stops; it ended runs mid-order. `strip_thoughts`
+  now removes unclosed markers, so the empty reply triggers the existing retry.
+- **Triage sent a product follow-up ("list of available models with specs") to superuser** (inventory).
+  The prompt now says follow-ups about products being discussed stay private and inventory means company
+  stock; 4 eval cases with conversation context (`recent`), eval 474/474, 0 personal as work. The exact
+  misroute couldn't be reproduced without the (encrypted) original context.
+- Browser: disabled buttons are listed as "(disabled: ...)" (Reliance's Add to Cart needs a pincode first)
+  and clicking one explains why; clicks recover from sticky headers covering the button; `browser_click`
+  takes an optional checked `label`; Empty cart / Remove / Clear now need a go-ahead like Buy and Pay.
+- Agents: explicit order steps in the private prompt and the shopping specialist (pincode, cart, checkout or
+  "Login to proceed", saved details, else `ask_person_to_browse` for sign-in/OTP, `browser_commit` last); a call
+  that already failed this turn isn't rerun (page actions excepted); a shopping specialist that stops mid-order
+  is sent back up to 3 times (`specialists._unfinished_order`).
+- Live on Gemma (multi-agent graph, in memory): Reliance Digital search -> product -> pincode -> Add to Cart ->
+  cart -> no saved login -> live browser handed to the person to sign in. Placing the order needs a real
+  signed-in account and was not done.
+
 ## Not verified yet: check these first
 1. **`docker compose up --build` has never run.** Check that the Dockerfile builds, that multi-word `VLLM_EXTRA_ARGS`
    splits into separate flags, and that the non-root app user works.

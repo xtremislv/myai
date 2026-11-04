@@ -1184,10 +1184,29 @@ def product_search(state: dict[str, Any], query: str, site: str = "") -> str:
     sites = tuple(products.SITES) if wanted == "all" else (wanted,) if wanted else products.DEFAULT_SITES
 
     def go() -> str:
+        from urllib.parse import quote_plus
+
         found, problems = products.search(query, sites)
+        refused = [p.split(":", 1)[0] for p in problems if "refused automated access" in p]
+        fallback = ""
+        if not found and refused:
+            # The shop asked for blocks this server's browser: show the same search on one that works.
+            spare = tuple(x for x in products.WORKING_SITES if x not in sites)[:1]
+            if spare:
+                found, more = products.search(query, spare)
+                problems += more
+                if found:
+                    fallback = f"\n(Results from {spare[0]} instead, because {', '.join(refused)} blocks the assistant's browser.)"
         lines = [f"{i}. {p.line()}" + (" (sponsored)" if p.extra.get("sponsored") else "") for i, p in enumerate(found, 1)]
         note = ("\nNot available: " + "; ".join(problems)) if problems else ""
-        return ("\n".join(lines) or "No products found.") + note + (
+        links = "".join(
+            f"\nThe person can search {name} themselves: {products.SITES[name].format(q=quote_plus(query))}"
+            for name in refused if name in products.SITES
+        )
+        if refused:
+            links += ("\n" + ", ".join(refused) + " blocks this server's automated browser, so the assistant can't open "
+                      "its pages or order there: don't retry it. Order through a shop that works, or give the link.")
+        return ("\n".join(lines) or "No products found.") + fallback + note + links + (
             "\nPrices and stock change: open a product with product_page before relying on it." if lines else "")
 
     return untrusted("shopping search results", _web_call(go))
@@ -1285,8 +1304,10 @@ def browser_read(state: dict[str, Any]) -> str:
     return _browse(state, "read", "read")
 
 
-def browser_click(state: dict[str, Any], ref: int) -> str:
-    return _browse(state, "read", "click", ref, False, "")
+def browser_click(state: dict[str, Any], ref: int, label: str = "") -> str:
+    """label (optional): the control's text as the agent read it; if the page changed and [ref] now
+    says something else, nothing is clicked."""
+    return _browse(state, "read", "click", ref, False, label)
 
 
 def browser_type(state: dict[str, Any], ref: int, text: str, press_enter: bool = False) -> str:
@@ -1572,11 +1593,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "restore_file": "Undo: bring back a deleted file, or return a file to its version before the last "
                     "change.",
     "web_search": "Search the web. Returns titles, links and snippets: open the best links with "
-                  "fetch_page before relying on a fact.",
+                  "fetch_page before relying on a fact. For products to buy, use product_search instead.",
     "news_search": "Search recent news and media coverage, newest first, with dates. Use it for anything "
                    "current. source: one outlet's site, e.g. moneycontrol.com.",
-    "product_search": "Search shopping sites for products: title, price, rating, reviews, link. site: amazon, "
-                      "flipkart, croma, reliancedigital or all (default amazon + flipkart).",
+    "product_search": "Search shopping sites for products: title, price, rating, reviews, link. Use this (not "
+                      "web_search) for anything about products to buy, prices or models. site: amazon, flipkart, "
+                      "croma, reliancedigital or all (default amazon + flipkart). It says which shops block the "
+                      "assistant's browser; Reliance Digital is the one whose checkout works from this server.",
     "product_page": "Read one product page: price, rating, reviews, availability, seller, delivery, key "
                     "features. Use it before recommending or ordering.",
     "ask_person_to_browse": "Hand the whole live browser to the person (e.g. a CAPTCHA, an app approval, "
@@ -1598,8 +1621,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "browser_open": "Open a URL in a real browser (runs JavaScript, keeps cookies for this task). "
                     "Shows the page text and numbered controls.",
     "browser_read": "Show the current browser page again with its numbered controls.",
-    "browser_click": "Click control [ref] on the current page. Buttons that book, pay, send or submit "
-                     "are refused: use browser_commit for those.",
+    "browser_click": "Click control [ref] on the current page (label: its text, optional, checked so a "
+                     "changed page isn't clicked by mistake). Buttons that book, pay, send or submit are "
+                     "refused: use browser_commit for those.",
     "browser_type": "Type text into field [ref]. press_enter=true runs a search box. Never used for "
                     "passwords or card details.",
     "browser_select": "Choose an option in dropdown [ref] by its visible text.",

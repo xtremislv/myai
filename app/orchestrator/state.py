@@ -33,3 +33,4 @@ class AgentState(TypedDict, total=False):
     handoffs: int                   # tasks handed out so far (bounded)
     agent_rounds: int               # tool rounds in the current task (bounded per specialist)
     agent_start: int                # index in messages where the current task's own work begins
+    order_nudges: int               # times a shopping specialist was sent back to finish an order

@@ -94,6 +94,10 @@ _BLOCK_SIGNS = (
     "enable javascript and cookies", "403 forbidden", "forbidden", "you don't have permission",
     "please complete the security check", "request unsuccessful", "incapsula", "cloudflare ray id",
     "automated access to amazon data", "api-services-support@amazon.com", "robot check",
+    # Amazon's answer to automated browsers: a "503 - Service Unavailable" page about rush hour.
+    "it's rush hour and traffic is piling up", "service unavailable error",
+    # Flipkart's: "Wow, looks like all of India is here! Hang in there... Retry Now" (an HTTP 429).
+    "looks like all of india is here", "hang in there, the offers are worth the wait",
 )
 BLOCK_PAGE_MAX_CHARS = 1500
 
@@ -106,7 +110,7 @@ def block_reason(title: str, text: str) -> str | None:
     sign = next((s for s in _BLOCK_SIGNS if s in head), None)
     if sign:
         return sign
-    if title.strip().lower() == "error" or title.lower().startswith(("error |", "error -", "403", "404")):
+    if title.strip().lower() == "error" or title.lower().startswith(("error |", "error -", "403", "404", "429", "503")):
         return f"an error page ('{title.strip()}')"
     if not title.strip() and len(text.strip()) < 150:
         return "an empty page with no title"

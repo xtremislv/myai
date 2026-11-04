@@ -73,3 +73,7 @@
 {"id": "p73", "msg": "Order me a phone cover for my Pixel 9 on Amazon, under 500", "route": "private"}
 {"id": "p74", "msg": "Which running shoes have the best reviews right now?", "route": "private"}
 {"id": "w65", "msg": "Buy 5 office chairs for the new team from Amazon", "route": "work", "action": "order"}
+{"id": "p75", "msg": "get me the list of available models with specs", "route": "private", "recent": [{"role": "user", "content": "Which wireless headphones under 5000 rupees are good on Amazon?"}, {"role": "assistant", "content": "Here are good options: Sony WH-CH720N, JBL Tune 770NC and Soundcore Q30, with prices and ratings."}]}
+{"id": "p76", "msg": "order the second one for me", "route": "private", "recent": [{"role": "user", "content": "Compare the best phone covers for a Pixel 9 on Flipkart"}, {"role": "assistant", "content": "1. Spigen Liquid Air (₹699) 2. Ringke Fusion (₹549) 3. Generic TPU case (₹199)"}]}
+{"id": "p77", "msg": "is it in stock and how fast is delivery?", "route": "private", "recent": [{"role": "user", "content": "Show me the Boat Rockerz 450 on Flipkart"}, {"role": "assistant", "content": "Boat Rockerz 450 is ₹1,299 with a 4.1 rating from 300k reviews."}]}
+{"id": "p78", "msg": "What specs does the Sony WH-1000XM6 have and where is it cheapest?", "route": "private"}

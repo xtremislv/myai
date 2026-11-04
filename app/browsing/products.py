@@ -21,6 +21,10 @@ SITES = {
     "reliancedigital": "https://www.reliancedigital.in/products?q={q}",
 }
 DEFAULT_SITES = ("amazon", "flipkart")
+# Shops whose product pages and checkout the assistant's browser could open from this server
+# (2026-11-04: Reliance Digital yes; Flipkart's search yes but its product pages answer 429; Amazon
+# and Croma refuse). A blocked search falls back to the first of these that wasn't asked for.
+WORKING_SITES = ("reliancedigital", "flipkart")
 PRICE = re.compile(r"(?:₹|Rs\.?|INR)\s?([\d,]+(?:\.\d{1,2})?)")
 MAX_RESULTS = 8
 
