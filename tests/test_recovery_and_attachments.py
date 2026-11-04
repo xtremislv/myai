@@ -326,8 +326,9 @@ def test_attachment_text_is_capped(api, monkeypatch):
     _upload(api, headers, name="b.txt", data=b"y" * 50)
     _chat(api, headers, "read them")
     system = api.prompts[-1][0]["content"]
-    assert "x" * 10 + "\n[truncated]" in system
-    assert "b.txt: not included" in system
+    assert "x" * 10 + "\n[truncated: only part of this file fits here" in system
+    assert 'summarize_large with source "a.txt"' in system
+    assert "b.txt: not included" in system and 'source "b.txt"' in system
 
 
 def test_unavailable_file_does_not_block_the_chat(api, monkeypatch):

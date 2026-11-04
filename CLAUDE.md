@@ -78,6 +78,8 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Agent code runs only through `app/sandbox.py` (as `nobody`, no network, copies of files). Never `exec` model
   code in the gateway. Dashboards are JSON specs checked by `app/dashboards.py` and drawn by `renderDashboard`
   (app.js); they ride on the final assistant message via `context.with_dashboards`, never in a `str` state field.
+- Data bigger than the context goes through `app/bigsummary.py` (`summarize_large`): parts in a private temp
+  folder under `WORK_DIR`, always deleted; never put the whole text in a prompt or in graph state.
 - Web tools must never pass a block/CAPTCHA page off as content (`extract.block_reason`, `tools._readable`).
   `scripts/check_connectivity.py` shows what this network lets through; it changes over time.
 

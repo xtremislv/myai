@@ -125,13 +125,16 @@ def delete(session: Session, owner_id: str, attachment_id: str) -> bool:
     return True
 
 
-def extract_text(name: str, content_type: str, data: bytes) -> str | None:
-    """The file's text, or None if this kind of file cannot be read as text."""
+def extract_text(name: str, content_type: str, data: bytes, *, max_pdf_pages: int = MAX_PDF_PAGES) -> str | None:
+    """The file's text, or None if this kind of file cannot be read as text. A spreadsheet
+    comes out as CSV, each sheet after a "## Sheet: <name>" line."""
     lower = name.lower()
     if content_type == "application/pdf" or lower.endswith(".pdf"):
-        return _pdf_text(data)
+        return _pdf_text(data, max_pdf_pages)
     if lower.endswith(".docx") or content_type == DOCX_TYPE:
         return _docx_text(data)
+    if lower.endswith((".xlsx", ".xlsm")) or content_type == XLSX_TYPE:
+        return _xlsx_text(data)
     suffix = lower[lower.rfind("."):] if "." in lower else ""
     if content_type.startswith("text/") or content_type in _TEXT_TYPES or suffix in _TEXT_SUFFIXES:
         return data.decode("utf-8", errors="replace")
@@ -139,6 +142,31 @@ def extract_text(name: str, content_type: str, data: bytes) -> str | None:
 
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MAX_SHEET_ROWS = 200_000
+
+
+def _xlsx_text(data: bytes) -> str | None:
+    import csv
+
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\n")
+        for sheet in wb.worksheets:
+            out.write(f"## Sheet: {sheet.title}\n")
+            for n, row in enumerate(sheet.iter_rows(values_only=True)):
+                if n >= MAX_SHEET_ROWS:
+                    break
+                if any(v not in (None, "") for v in row):
+                    writer.writerow(["" if v is None else v for v in row])
+        wb.close()
+        return out.getvalue().strip() or None
+    except Exception:  # noqa: BLE001 - a broken file is still a valid attachment to store
+        logger.warning("could not read a spreadsheet attachment")
+        return None
 
 
 def _docx_text(data: bytes) -> str | None:
@@ -165,11 +193,11 @@ def files_for_thread(session: Session, key: bytes, owner_id: str, thread_id: str
     return out
 
 
-def _pdf_text(data: bytes) -> str | None:
+def _pdf_text(data: bytes, max_pages: int = MAX_PDF_PAGES) -> str | None:
     from pypdf import PdfReader
 
     try:
-        pages = PdfReader(io.BytesIO(data)).pages[:MAX_PDF_PAGES]
+        pages = PdfReader(io.BytesIO(data)).pages[:max_pages]
         return "\n".join(page.extract_text() or "" for page in pages).strip() or None
     except Exception:  # noqa: BLE001 - a broken PDF is still a valid attachment to store
         logger.warning("could not read a PDF attachment")
@@ -192,10 +220,13 @@ def context_for_thread(session: Session, key: bytes, owner_id: str, thread_id: s
         if text is None:
             parts.append(f"[{meta['name']}: this file type cannot be read]")
         elif remaining <= 0:
-            parts.append(f"[{meta['name']}: not included, the attachment limit was reached]")
+            parts.append(f"[{meta['name']}: not included, the attachment limit was reached. To read it, "
+                         f"use summarize_large with source \"{meta['name']}\"]")
         else:
             shown = text[:remaining]
             remaining -= len(shown)
-            cut = "" if len(shown) == len(text) else "\n[truncated]"
+            cut = "" if len(shown) == len(text) else (
+                f"\n[truncated: only part of this file fits here. To summarize or extract from all of it, "
+                f"use summarize_large with source \"{meta['name']}\"]")
             parts.append(f"--- {meta['name']} ---\n{shown}{cut}")
     return "\n\n".join(parts) or None

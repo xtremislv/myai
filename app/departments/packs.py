@@ -56,7 +56,7 @@ FILE_TOOLS = (
 REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
 # Analysing data with code (app/sandbox.py: no network, copies of files only) and showing the
 # results as a dashboard under the reply (app/dashboards.py). Everyone, private chat included.
-DATA_TOOLS = ("run_python", "make_dashboard")
+DATA_TOOLS = ("run_python", "make_dashboard", "summarize_large")
 # Documents from templates: company templates (database) at work; in private chat the person's
 # own templates (My files, templates/) and files attached to the chat.
 TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "save_template")

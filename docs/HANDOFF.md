@@ -378,3 +378,22 @@ Found from the owner's live session (an Amazon headphones order that never got a
   "call again with page=N" line; the agents are told to fetch every page. `read_mail` pages too (limit up to 100).
   `summarize_mail(query=...)` summarizes up to 40 emails on a topic. Tested against a fake IMAP server
   (`tests/test_mail_search.py`), not against a real Gmail account.
+
+## Summaries of data bigger than the context; recent chats (2026-11-04)
+- `summarize_large(source, instructions, output=auto|chat|doc|sheet|csv, save_as, columns)` in all
+  departments and private chat (`DATA_TOOLS`, ACL `compute:summarize`). `app/bigsummary.py`: split at line
+  breaks into 24k-char parts (tables repeat the sheet name and header row), notes per part (4 at once),
+  combining rounds while notes exceed one part, then a final summary (up to 12k tokens). Parts, notes and
+  rows live in `WORK_DIR/summary-*` (default `/var/lib/ai-platform/work`, 0700), deleted when the job ends;
+  leftovers older than a day are swept. Output: chat if short, else `Summaries/<name> summary.docx`; sheet
+  mode writes `Summaries/<name> extract.xlsx` (Data + About sheets; cells starting = + - @ are escaped).
+  Reads PDF (2,000 pages), Word, text, CSV and Excel (`attachments._xlsx_text`, needs `openpyxl`).
+- Live test (Gemma, 209k-char ledger, 9 parts, ~4 min): sheet mode found all 278 unpaid invoices with none
+  wrong; text mode with the old 4,096-token final cap found 242 and invented 7; with the 12k cap and the
+  keep-important prompt, 269 of 278 with none invented and the contract warning kept (~5 min). The tool
+  steers "list every X" to sheet mode, which is exact. Truncated attachments now point the model at the tool.
+- The new-chat screen lists recent chats under the box (`recentChats` in app.js).
+- GPU (2026-11-04): vLLM is the only GPU process: 43.7 of 48 GB, of which ~16.6 GiB weights and ~25 GiB a
+  pre-reserved KV cache (`VLLM_GPU_UTIL=0.90`); idle at 0% / 27 W. Peak KV use seen in the logs is 14.7%
+  (16 parallel requests), so `VLLM_GPU_UTIL` could drop to ~0.70 with no visible effect if the GPU is needed
+  for something else. Not changed.

@@ -1013,7 +1013,7 @@ def _search_api() -> tuple[str, str] | None:
 # Once a conversation holds someone's mail or files, an instruction hidden in an email or a web
 # page could tell the agent to put that data into a URL or a search query. After such data has
 # been read, web tools refuse links, searches and typed text long enough to carry much of it.
-PRIVATE_DATA_TOOLS = frozenset({"read_mail", "search_mail", "open_mail", "summarize_mail", "read_file"})
+PRIVATE_DATA_TOOLS = frozenset({"read_mail", "search_mail", "open_mail", "summarize_mail", "read_file", "summarize_large"})
 MAX_QUERY_AFTER_PRIVATE = 150
 MAX_URL_DATA_AFTER_PRIVATE = 100  # characters of query string + fragment
 MAX_URL_AFTER_PRIVATE = 300
@@ -1521,6 +1521,88 @@ def run_python(state: dict[str, Any], code: str, files: str = "", save_to: str =
     return "\n\n".join(parts)
 
 
+INLINE_SUMMARY_CHARS = 6000  # longer summaries go into a Word document unless the chat was asked for
+
+
+def summarize_large(
+    state: dict[str, Any], source: str, instructions: str = "", output: str = "auto", save_as: str = "",
+    columns: str = "",
+) -> str:
+    """Summarize (or extract a table from) a file of any size: split into parts that fit the model,
+    condensed part by part in a temporary folder on the server, then combined."""
+    from app import bigsummary
+    from app.orchestrator.progress import step
+    from app.storage.attachments import extract_text
+    from app.storage.userfiles import guess_type
+
+    if (err := _enforce(state, "write", "compute", "summarize")) is not None:
+        return err
+    output = (output or "auto").strip().lower()
+    if output in ("word", "docx", "document"):
+        output = "doc"
+    if output in ("excel", "xlsx", "spreadsheet", "table", "csv"):
+        output = "sheet" if output != "csv" else "csv"
+    if output not in ("auto", "chat", "doc", "sheet", "csv"):
+        return "ERROR: output must be auto, chat, doc, sheet or csv"
+    got = _input_bytes(state, source)
+    if isinstance(got, str):
+        return got
+    name, data = got
+    text = extract_text(name, guess_type(name), data, max_pdf_pages=2000)
+    if not text or not text.strip():
+        return f"ERROR: '{name}' has no text that can be read (a scan, an image, or an unsupported format)."
+    table = name.lower().endswith((".csv", ".tsv", ".xlsx", ".xlsm"))
+    kind = "rows" if output in ("sheet", "csv") else "text"
+    wanted = [c.strip() for c in columns.split(",") if c.strip()]
+    step(f"Reading {name} ({len(text):,} characters)")
+    try:
+        result = bigsummary.run(text, name, instructions, kind=kind, columns=wanted, table=table, progress=step)
+    except OSError as e:
+        return f"ERROR: the server could not make its temporary work folder ({type(e).__name__})."
+    stem = name.rsplit("/", 1)[-1].rsplit(".", 1)[0] or "data"
+    facts = [f"Read {len(text):,} characters of '{name}' in {result.parts} part(s)"
+             + (f" and {result.rounds} combining round(s)" if result.rounds else "") + "."]
+    if result.truncated:
+        facts.append(f"Only the first {bigsummary.MAX_INPUT_CHARS:,} characters were read (or the table "
+                     f"was cut at {bigsummary.MAX_ROWS:,} rows): say so.")
+    if result.failed:
+        facts.append(f"Parts {', '.join(map(str, result.failed[:20]))} could not be read: say the result may "
+                     "miss something.")
+
+    if kind == "rows":
+        about = [("Source", name), ("Request", instructions or "(all records)"), ("Rows", str(len(result.rows))),
+                 ("Parts read", str(result.parts))]
+        if output == "csv":
+            path = save_as or f"Summaries/{stem} extract.csv"
+            body = bigsummary.to_csv(result.columns, result.rows)
+        else:
+            path = save_as or f"Summaries/{stem} extract.xlsx"
+            if not path.lower().endswith(".xlsx"):
+                path = path.rsplit(".", 1)[0] + ".xlsx" if "." in path.rsplit("/", 1)[-1] else path + ".xlsx"
+            body = bigsummary.to_xlsx(f"{stem}: {instructions or 'extract'}"[:200], result.columns, result.rows, about)
+        saved = _save(state, path, body)
+        preview = "\n".join(" | ".join(str(r.get(c, "")) for c in result.columns) for r in result.rows[:10])
+        return untrusted(f"a table extracted from {name}", "\n".join([
+            *facts, saved, f"{len(result.rows)} rows; columns: {', '.join(result.columns)}.",
+            "First rows:", " | ".join(result.columns), preview,
+            "Tell the person the file name and where it is (their Files); don't paste the whole table.",
+        ]))
+
+    summary = result.text
+    if output == "chat" or (output == "auto" and len(summary) <= INLINE_SUMMARY_CHARS):
+        return untrusted(f"a summary of {name}", "\n".join([*facts, "", summary]))
+    path = save_as or f"Summaries/{stem} summary.docx"
+    if not path.lower().endswith(".docx"):
+        path = path.rsplit(".", 1)[0] + ".docx" if "." in path.rsplit("/", 1)[-1] else path + ".docx"
+    note = f"Summary of {name}" + (f" — {instructions}" if instructions else "")
+    saved = _save(state, path, bigsummary.to_docx(f"{stem} summary", summary, note[:300]))
+    return untrusted(f"a summary of {name}", "\n".join([
+        *facts, saved, "The full summary is in that Word document. Its opening:", "",
+        summary[:1500] + (" …" if len(summary) > 1500 else ""), "",
+        "Tell the person where the document is and give the key points in a few lines.",
+    ]))
+
+
 def summarize(state: dict[str, Any], text: str) -> str:
     if (err := _enforce(state, "write", "compute", "summarize")) is not None:  # text in hand, no department data
         return err
@@ -1594,6 +1676,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "list_mailboxes": list_mailboxes,
     "review_report": review_report,
     "run_python": run_python,
+    "summarize_large": summarize_large,
     "make_dashboard": make_dashboard,
 }
 
@@ -1733,6 +1816,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                       "title, labels [...], series [{name, values [numbers]}], unit}] (one value per label, up to 8 "
                       "series, hbar for rankings and shares, line for time); tables [{title, columns [...], rows "
                       "[[...]]}]; notes (short Markdown). Use real numbers you looked up or computed, never invented.",
+    "summarize_large": "Summarize a file or attachment of ANY size (PDF, Word, text, CSV, Excel), even one too "
+                       "big to read here: it is split into parts, each condensed, then combined. source: the "
+                       "file or attachment name. instructions: what the person wants (a focus, a length, a "
+                       "form). output: auto (in the chat if short, else a Word document), chat, doc (Word), "
+                       "sheet (Excel table of records; give columns as comma-separated names if the person "
+                       "named them) or csv. To list every matching record (all unpaid invoices, all orders from "
+                       "X), use sheet: it is exact, while a written summary may skip some. save_as: a file "
+                       "name if the person gave one. For calculations on "
+                       "a spreadsheet use run_python instead.",
     "run_python": "Run Python 3 code to analyse data: pandas and numpy are available; no internet. files: "
                   "comma-separated files to copy into input/ (the person's or department's files, or ones "
                   "attached to the chat), e.g. 'sales.csv' -> pd.read_csv('input/sales.csv'). print() what you "

@@ -147,10 +147,12 @@ SPECIALISTS: dict[str, Specialist] = {
             core=("list_files",),
             title="Working on files",
             about="finds, reads, creates, edits, organizes and deletes files and documents (notes, "
-                  "lists, CSVs, reports); deleting needs a go-ahead",
+                  "lists, CSVs, reports); summarizes files of any size, even huge ones, into the chat, a "
+                  "Word document or a spreadsheet; deleting needs a go-ahead",
             tools=(
                 "list_files", "read_file", "write_file", "append_file", "edit_file", "move_file",
                 "copy_file", "delete_file", "restore_file", "read_document", "list_documents",
+                "summarize_large",
             ),
             max_rounds=10,
             prompt=(
@@ -159,7 +161,9 @@ SPECIALISTS: dict[str, Specialist] = {
                 "text; to rewrite a file use write_file with the complete new content (never "
                 "placeholders like '...rest unchanged'). Keep the file's format (CSV columns, Markdown "
                 "headings, JSON validity). Every change keeps the old version, and restore_file undoes "
-                "it. Only delete when the task clearly asks, and then just call delete_file: the person "
+                "it. To summarize a long file, or pull a table of records out of one, use "
+                "summarize_large (output doc or sheet when a document or spreadsheet is wanted). "
+                "Only delete when the task clearly asks, and then just call delete_file: the person "
                 "is asked to confirm it before it runs. Report "
                 "exactly which files you created or changed."
             ),
@@ -274,7 +278,7 @@ SPECIALISTS: dict[str, Specialist] = {
             title="Analysing the data",
             about="analyses data with Python (CSV/JSON files, numbers from other reports) and shows the "
                   "result to the person as a dashboard of headline numbers, charts and tables",
-            tools=("run_python", "make_dashboard", "list_files", "read_file", "write_file"),
+            tools=("run_python", "make_dashboard", "summarize_large", "list_files", "read_file", "write_file"),
             max_rounds=6,
             prompt=(
                 "You are the ANALYST. Work out the numbers with run_python (pandas, numpy; files go in "

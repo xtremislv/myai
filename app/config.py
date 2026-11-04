@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # --- Web access for agents (app/browsing) ---
     # Bing market for search and news, e.g. en-IN, en-US.
     search_market: str = "en-IN"
+    # Private temporary folder for long jobs (summaries of data bigger than the context).
+    work_dir: str = "/var/lib/ai-platform/work"
     # Most characters of one page or tool result handed to the model.
     web_max_chars: int = 20000
     # Route the agents' web traffic (pages, search APIs, Chromium) through this proxy, e.g.

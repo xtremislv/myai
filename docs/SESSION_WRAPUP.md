@@ -86,7 +86,10 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - One box; replies stream and render as formatted Markdown (tables, lists, links). Modes: `single` agent,
   `agents` (supervisor + specialists, chosen automatically for multi-step requests), `team` (on request).
 - Live progress steps ("Searching the web for…", "Reading…").
-- Attachments (text, PDF, Word): read for 3 days, encrypted.
+- Attachments (text, PDF, Word, Excel): read for 3 days, encrypted.
+- New chat shows "Recent chats" under the box (6 newest, "Show all", search); click to reopen.
+- Files of any size: `summarize_large` splits them into parts (24k chars), condenses each, combines, and
+  answers in chat, as a Word document, or as an Excel/CSV table of records (`app/bigsummary.py`).
 
 **Research** (all departments with web access, and private chat)
 - `web_search` (Tavily/Serper if a key is in the vault; else DuckDuckGo HTML → Bing RSS → Bing News → rendered

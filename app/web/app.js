@@ -768,7 +768,7 @@ function shell() {
     toggleSide(false);
     paint();
     try {
-      view.replaceChildren(await chatView(threadId, { reloadThreads, paint }));
+      view.replaceChildren(await chatView(threadId, { reloadThreads, paint, open: openChat }));
     } catch (err) {
       if (state.token) view.replaceChildren(h("div", { class: "page" }, h("div", { class: "notice error", role: "alert" }, err.message)));
     }
@@ -893,7 +893,54 @@ function heading(text, subtitle, { eyebrow, chip, actions } = {}) {
 }
 
 // ---- chat ----
-async function chatView(thread, { reloadThreads, paint }) {
+// Earlier conversations under the message box of a new chat, newest first, to pick up again.
+const RECENT_SHOWN = 6;
+
+function whenText(iso) {
+  const then = new Date(iso);
+  const mins = Math.round((Date.now() - then.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 24 * 60) return `${Math.round(mins / 60)} h ago`;
+  if (mins < 7 * 24 * 60) return then.toLocaleDateString(undefined, { weekday: "long" });
+  return then.toLocaleDateString(undefined, { day: "numeric", month: "short", year: then.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+
+function recentChats(current, open) {
+  const others = state.threads.filter((t) => t.thread_id !== current);
+  if (!others.length || !open) return null;
+  let showAll = false;
+  let query = "";
+  const list = h("ul", { class: "recent-list" });
+  const more = h("button", { type: "button", class: "recent-more" });
+  const filter = h("input", {
+    type: "search", class: "recent-filter", placeholder: "Search your chats", "aria-label": "Search your chats",
+    oninput: () => { query = filter.value.trim().toLowerCase(); showAll = true; paintList(); },
+  });
+  const paintList = () => {
+    const matching = others.filter((t) => !query || (t.title || "").toLowerCase().includes(query));
+    const shown = showAll ? matching : matching.slice(0, RECENT_SHOWN);
+    fill(list, shown.length ? shown.map((t) => h("li", null, h("button", {
+      type: "button", class: "recent-item", onclick: () => open(t.thread_id),
+    },
+    mi("chat_bubble"),
+    h("span", { class: "recent-title", title: t.title }, t.title || "Untitled chat"),
+    h("span", { class: "recent-when" }, whenText(t.updated_at))))) : h("li", { class: "recent-none" }, "No chats match."));
+    more.hidden = query !== "" || matching.length <= RECENT_SHOWN;
+    more.textContent = showAll ? "Show fewer" : `Show all ${matching.length} chats`;
+  };
+  more.onclick = () => { showAll = !showAll; paintList(); };
+  paintList();
+  return h("section", { class: "recent column", "aria-label": "Recent chats" },
+    h("div", { class: "recent-head" },
+      h("h3", null, "Recent chats"),
+      others.length > RECENT_SHOWN ? filter : null),
+    list,
+    more,
+  );
+}
+
+async function chatView(thread, { reloadThreads, paint, open }) {
   const known = () => state.threads.some((t) => t.thread_id === thread);
   const messages = h("div", { class: "messages column", "aria-live": "polite" });
   const requests = h("div", { class: "reqs column" });
@@ -1199,6 +1246,7 @@ async function chatView(thread, { reloadThreads, paint }) {
           },
         }, mi(iconName), h("span", null, text), mi("north_east")))),
       ),
+      recentChats(thread, open),
     ),
     h("p", { class: "fineprint column" }, mi("shield"), "Private chats are encrypted with your key. Work is seen only by the team that handles it."),
   );

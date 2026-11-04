@@ -259,6 +259,12 @@ When a private reply needs your go-ahead, `/v1/chat` answers `"outcome":"confirm
 (the exact email or file). Answer with `POST /v1/chat/threads/<id>/confirm {"approve": true|false}`;
 `GET /v1/chat/threads/<id>/pending` shows it again. Sending a new message instead counts as "no".
 
+### Big files
+Ask the assistant to summarize a file or attachment of any size (PDF, Word, text, CSV, Excel), for example
+"summarize the July ledger, focus on unpaid invoices" or "put every unpaid invoice from ledger.xlsx in a
+sheet". It reads it part by part. Short answers come in the chat; long ones are saved to your Files as a
+Word document (`Summaries/...docx`); ask for a sheet to get an Excel table. Large files take a few minutes.
+
 ### Python
 ```python
 import requests

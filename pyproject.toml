@@ -28,6 +28,7 @@ dependencies = [
     "pypdf>=5.0",
     # document templates (app/templates): Word files and {{ placeholders }} in a sandbox
     "python-docx>=1.1",
+    "openpyxl>=3.1",
     "jinja2>=3.1",
     # agents' web access (app/browsing); Chromium: `playwright install --with-deps chromium`
     "playwright>=1.48",

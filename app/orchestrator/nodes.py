@@ -95,7 +95,10 @@ def _system_prompt(state: dict[str, Any]) -> str:
 DATA_HINT = (
     "For data (a CSV or spreadsheet, numbers from mail, files or the web): compute with run_python rather "
     "than by hand, and when the answer has several numbers, a comparison, a trend or many rows, show it "
-    "with make_dashboard (headline numbers, a chart, a table) and keep your reply to the takeaways."
+    "with make_dashboard (headline numbers, a chart, a table) and keep your reply to the takeaways. "
+    "For a file or attachment too long to read in full (or marked truncated), use summarize_large: it "
+    "reads all of it in parts. If the person wants the result as a document or sheet, set output to doc "
+    "or sheet; long summaries are saved as a Word document anyway."
 )
 
 
