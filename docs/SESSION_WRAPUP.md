@@ -94,7 +94,9 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - Agents that only searched are made to open 2-3 sources before answering.
 
 **Shopping**
-- `product_search` (Amazon, Flipkart, Reliance Digital work; Croma blocks), `product_page`.
+- `product_search`, `product_page`. From this server (2026-11-04): Reliance Digital works to checkout;
+  Flipkart search works but its product pages are blocked (429); Amazon and Croma block the browser. Blocked
+  shops are reported as such, with a fallback to Reliance Digital and the shop's link for the person.
 - A shopping specialist asks "personal or work?", fills the cart, signs in and pays with the person's **saved
   details** (`list_saved_details`, `fill_saved`: values never reach the model; logins only on their own site,
   cards/UPI only on known shops and payment gateways), asks for CVV/OTP/unsaved passwords through a **secure box**
