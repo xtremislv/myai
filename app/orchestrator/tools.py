@@ -224,21 +224,35 @@ def _mailbox(state: dict[str, Any], category: str, box: str, action: str):
 def _mail_call(fn, *args) -> str:
     import imaplib
     import smtplib
+    import socket
+    import ssl
 
+    from app.mail import connector
     from app.mail.oauth import OAuthError
 
-    try:
-        return fn(*args)
-    except (ValueError, OAuthError) as e:
-        return f"ERROR: {e}"
-    except (imaplib.IMAP4.error, smtplib.SMTPAuthenticationError) as e:
-        said = " ".join(str(e).strip("b'\"").split())[:160]
-        logger.warning("mail login refused: %s", type(e).__name__)
-        return (f"ERROR: the mail server refused the login ({said}). The person should reconnect their "
-                "mailbox under My account > Mail and reminders.")
-    except Exception as e:  # noqa: BLE001 - network/auth problems come back as text
-        logger.warning("mail call failed: %s", type(e).__name__)
-        return f"ERROR: the mail server could not be reached ({type(e).__name__}). Try again in a moment."
+    dropped = (imaplib.IMAP4.abort, socket.timeout, TimeoutError, ConnectionError, ssl.SSLError, EOFError)
+    # A dropped connection is retried once on a fresh one; sending never is (it could go twice).
+    tries = 1 if fn is connector.send else 2
+    for attempt in range(tries):
+        try:
+            return fn(*args)
+        except dropped as e:
+            logger.warning("mail connection dropped (attempt %s): %s", attempt + 1, type(e).__name__)
+            if attempt + 1 < tries:
+                continue
+            return ("ERROR: the connection to the mail server dropped in the middle of this step "
+                    f"({type(e).__name__}). The mailbox is fine (this was retried once already): try again with fewer emails or a narrower search.")
+        except (ValueError, OAuthError) as e:
+            return f"ERROR: {e}"
+        except (imaplib.IMAP4.error, smtplib.SMTPAuthenticationError) as e:
+            said = " ".join(str(e).strip("b'\"").split())[:160]
+            logger.warning("mail login refused: %s", type(e).__name__)
+            return (f"ERROR: the mail server refused the login ({said}). The person should reconnect their "
+                    "mailbox under My account > Mail and reminders.")
+        except Exception as e:  # noqa: BLE001 - network/auth problems come back as text
+            logger.warning("mail call failed: %s", type(e).__name__)
+            return f"ERROR: the mail server could not be reached ({type(e).__name__}). Try again in a moment."
+    return "ERROR: the mail server could not be reached. Try again in a moment."
 
 
 def read_mail(
@@ -317,7 +331,10 @@ def summarize_mail(
         if not messages:
             what = f' matching "{query}"' if query else ""
             return f"No unread messages{what}." if unread_only else f"No messages{what}."
-        return summary.render(summary.analyse(messages))
+        from app.orchestrator.progress import step
+
+        step(f"Reading {len(messages)} emails")
+        return summary.render(summary.analyse(messages, progress=step))
 
     return untrusted(f"a summary of the {category} mailbox", _mail_call(go))
 

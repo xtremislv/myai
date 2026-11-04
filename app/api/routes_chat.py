@@ -289,6 +289,18 @@ def _event(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+# An SSE comment: readers ignore it, but it keeps proxies from closing a quiet stream.
+PING = ": ping\n\n"
+
+
+def _next(source: queue.Queue):
+    """The next event, or None after KEEPALIVE_SECONDS of silence."""
+    try:
+        return source.get(timeout=execution.KEEPALIVE_SECONDS)
+    except queue.Empty:
+        return None
+
+
 def _stream_response(events: Iterator[str]) -> StreamingResponse:
     # X-Accel-Buffering stops proxies holding the words back until the reply ends.
     return StreamingResponse(
@@ -332,10 +344,14 @@ def chat_stream(
         raise first[1]  # nothing sent yet: a refusal keeps its HTTP status
 
     def events() -> Iterator[str]:
+        yield PING  # headers and a first byte now, even if the first step takes a while
         event = first
-        while event[0] == "step":  # live, while the work runs
-            yield _event({"type": "step", "text": event[1]})
-            event = prepared.get()
+        while event is None or event[0] == "step":  # live, while the work runs
+            if event is None:
+                yield PING
+            else:
+                yield _event({"type": "step", "text": event[1]})
+            event = _next(prepared)
         if event[0] == "fail":
             # The type only: an exception's text could quote the message.
             logger.error("chat stream failed: %s", type(event[1]).__name__)
@@ -358,7 +374,9 @@ def chat_stream(
             for kind, value in execution.stream_private(
                 subject, body.message, body.thread_id, mode, key, context, files
             ):
-                if kind == "delta":
+                if kind == "ping":
+                    yield PING
+                elif kind == "delta":
                     yield _event({"type": "delta", "text": value})
                 elif kind == "step":
                     yield _event({"type": "step", "text": value})

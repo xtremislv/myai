@@ -7,11 +7,14 @@ fields are kept.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from app.llm import client as llm
 from app.orchestrator.clock import now_line
+
+logger = logging.getLogger(__name__)
 
 BATCH = 4
 
@@ -66,19 +69,37 @@ def _parse(reply: str, batch: list[dict]) -> list[dict[str, Any]]:
     return out
 
 
-def analyse(messages: list[dict], chat=None) -> list[dict[str, Any]]:
+PARALLEL = 4  # batches read at once (vLLM serves them together)
+
+
+def analyse(messages: list[dict], chat=None, progress=None) -> list[dict[str, Any]]:
+    """Each email's gist, action, deadline and kind. A batch the model fails on keeps its
+    emails with their opening lines, rather than failing the whole summary."""
+    from concurrent.futures import ThreadPoolExecutor
+
     chat = chat or llm.chat
+    batches = [messages[i:i + BATCH] for i in range(0, len(messages), BATCH)]
+
+    def one(batch: list[dict]) -> list[dict[str, Any]]:
+        try:
+            reply = chat(
+                [
+                    {"role": "system", "content": f"{PROMPT}\n\n{now_line()}"},
+                    {"role": "user", "content": _batch_prompt(batch)},
+                ],
+                temperature=0, max_tokens=900,
+            )
+        except Exception:  # noqa: BLE001 - one bad batch must not lose the others
+            logger.warning("mail summary batch failed")
+            reply = ""
+        return _parse(str(reply), batch)
+
     items: list[dict[str, Any]] = []
-    for i in range(0, len(messages), BATCH):
-        batch = messages[i:i + BATCH]
-        reply = chat(
-            [
-                {"role": "system", "content": f"{PROMPT}\n\n{now_line()}"},
-                {"role": "user", "content": _batch_prompt(batch)},
-            ],
-            temperature=0, max_tokens=900,
-        )
-        items.extend(_parse(str(reply), batch))
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+        for done, got in enumerate(pool.map(one, batches), 1):
+            items.extend(got)
+            if progress and len(batches) > 1:
+                progress(f"Read {min(done * BATCH, len(messages))} of {len(messages)} emails")
     return items
 
 

@@ -157,6 +157,11 @@ def _missing(graph, config, context: list[dict[str, Any]]) -> list[dict[str, Any
     ]
 
 
+# A stream says something at least this often. Cloudflare (and other proxies) close a response
+# that sends nothing for ~100 s, which cut off long mail summaries mid-run (2026-11-04).
+KEEPALIVE_SECONDS = 15
+
+
 def stream_private(
     subject: Subject, message: str, thread_id: str, mode: str, chat_key: bytes, attachments: str | None,
     files: list[dict] | None = None,
@@ -178,7 +183,11 @@ def stream_private(
 
     threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
     while True:
-        event = events.get()
+        try:
+            event = events.get(timeout=KEEPALIVE_SECONDS)
+        except queue.Empty:  # still working (a long model call): tell the reader so
+            yield ("ping", None)
+            continue
         yield event
         if event[0] not in ("delta", "step"):
             return

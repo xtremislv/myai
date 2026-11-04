@@ -461,8 +461,30 @@ async function streamChat(body, onDelta, onStep = () => {}) {
       else if (event.type === "done") finished = event;
     }
   }
-  if (!finished) throw new Error("The reply was cut off. Try again.");
+  if (!finished) {
+    // The connection dropped (network or proxy), but the server finishes the run and saves it.
+    const err = new Error("The connection dropped while the assistant was working.");
+    err.cutOff = true;
+    throw err;
+  }
   return finished;
+}
+
+// After a dropped stream: wait for the reply the server is still producing and saved to the chat.
+// Resolves with {reply, handled_by, dashboards}, {pending} for a confirmation, or null on giving up.
+async function waitForSavedReply(thread, text, { every = 5000, limit = 20 * 60 * 1000 } = {}) {
+  const until = Date.now() + limit;
+  while (Date.now() < until && state.token) {
+    await new Promise((resolve) => setTimeout(resolve, every));
+    try {
+      const history = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/messages`);
+      const asked = history.map((m) => m.role === "user" && m.content === text).lastIndexOf(true);
+      if (asked >= 0 && history[asked + 1] && history[asked + 1].role === "assistant") return history[asked + 1];
+      const pending = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/pending`).catch(() => null);
+      if (pending && asked >= 0) return { pending };
+    } catch { /* a blip: keep waiting */ }
+  }
+  return null;
 }
 
 function useToken(result, username) {
@@ -1181,12 +1203,28 @@ async function chatView(thread, { reloadThreads, paint, open }) {
           toBottom();
         }
       } catch (err) {
-        thinking.remove();
-        mine.remove();
-        input.value = text;
-        grow();
-        error.fail(err);
-        if (!messages.children.length) setEmpty(true);
+        if (err.cutOff) {
+          // Keep the question; the answer is still coming. Don't invite a second, duplicate run.
+          onStep("The connection dropped, but the assistant is still working. The reply will appear here when it's ready.");
+          const saved = await waitForSavedReply(thread, text);
+          thinking.remove();
+          if (saved && saved.pending) {
+            confirmCard(saved.pending);
+          } else if (saved) {
+            bubble("assistant", saved.content, saved.handled_by, saved.dashboards);
+            toBottom();
+          } else {
+            error.fail(new Error("No reply yet. Reopen this chat later to see it; there's no need to ask again."));
+          }
+          await reloadThreads().catch(() => {});
+        } else {
+          thinking.remove();
+          mine.remove();
+          input.value = text;
+          grow();
+          error.fail(err);
+          if (!messages.children.length) setEmpty(true);
+        }
       }
       send.disabled = false;
       input.focus();

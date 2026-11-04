@@ -397,3 +397,18 @@ Found from the owner's live session (an Amazon headphones order that never got a
   pre-reserved KV cache (`VLLM_GPU_UTIL=0.90`); idle at 0% / 27 W. Peak KV use seen in the logs is 14.7%
   (16 parallel requests), so `VLLM_GPU_UTIL` could drop to ~0.70 with no visible effect if the GPU is needed
   for something else. Not changed.
+
+## Long chats cut off by the tunnel; mail drops misreported (2026-11-04)
+- Symptom: "summarize all mails with subject X" streamed steps, then the UI said "The reply was cut off".
+  `app-tunnel.log`: `stream ... canceled by remote` 3m22s into the request, while the run kept going on the
+  server. Cloudflare closes responses that send nothing for ~100 s; long model calls sent nothing.
+- Fix: `/v1/chat/stream` sends an SSE comment (`: ping`) at least every 15 s (`execution.KEEPALIVE_SECONDS`,
+  `stream_private` yields `("ping", None)`; the work-route loop uses `routes_chat._next`). If a stream still
+  drops, the UI no longer says "try again" (that started a duplicate run): it keeps the question and polls
+  the chat's messages/pending until the saved reply appears (`waitForSavedReply`, up to 20 min).
+- `imaplib.IMAP4.abort` (connection dropped) is a subclass of `IMAP4.error`, so drops were reported as "the
+  server refused the login, reconnect your mailbox". `_mail_call` now retries a drop once on a fresh
+  connection (never for `send`) and says the mailbox is fine. Summaries fetch only the first 256 KB of each
+  email (attachments were downloaded whole); IMAP timeout 20 -> 60 s. `summary.analyse` runs 4 batches at
+  once, reports "Read N of M emails", and a failed batch keeps its emails instead of failing the summary.
+- Not verified through Cloudflare itself (opening a test tunnel was not permitted); covered by unit tests.

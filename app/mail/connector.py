@@ -26,7 +26,9 @@ from email.utils import make_msgid, parseaddr
 
 from app.browsing import extract
 
-TIMEOUT = 20
+TIMEOUT = 60  # seconds per network read: a big mailbox search or message can take a while
+# A summary reads at most this much of each email: the text comes first, attachments after it.
+SUMMARY_FETCH_BYTES = 256 * 1024
 _ADDR = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 
 
@@ -306,7 +308,7 @@ def fetch_messages(
         uids = _search(conn, criteria, query)[-max(1, min(limit, MAX_SUMMARY)):][::-1]
         out = []
         for uid in uids:
-            _, rows = conn.uid("FETCH", uid, "(UID FLAGS BODY.PEEK[])")
+            _, rows = conn.uid("FETCH", uid, f"(UID FLAGS BODY.PEEK[]<0.{SUMMARY_FETCH_BYTES}>)")
             for row in rows:
                 if not isinstance(row, tuple):
                     continue
