@@ -318,6 +318,22 @@ Causes and fixes:
 - Replayed the owner's 100-message thread: agents ran, the reply announced the job, and the sheet held 31
   mass-audience apps (Play Best of 2025 winners, free alternatives to paid tools, ...).
 
+## Leaving the chat no longer loses a request (2026-11-05)
+
+Switching to another page (or a phone switching browser tabs) mid-request looked like the request had
+stopped, and people sent it again. Causes: the chat page was rebuilt from saved history, which has
+neither the question nor the reply until the run ends; a new chat was listed only after its reply had
+been read; and a private reply was started by the HTTP response itself, so a reader gone during
+"Thinking..." meant the reply never started.
+- `routes_chat.chat_stream`: the whole request (sorting, work or private reply, saving) runs in its own
+  thread; the response only relays events. The chat is listed as soon as it's sorted.
+- `app/inflight.py` + `GET /v1/chat/running`, `GET /v1/chat/threads/{id}/running`: the question and
+  steps of requests still running (memory only, dropped when they end).
+- UI: requests live in `state.running`; `attach` draws one into whichever page shows its chat, and a
+  reopened or reloaded chat shows the question, live steps and then the reply (`watchServerRun`).
+  Checked in Chromium against a fake API (leave and return; reload mid-request); test
+  `test_a_private_reply_finishes_and_is_saved_when_the_reader_leaves_mid_reply`.
+
 ## Department data for members only (2026-11-04, owner's decision)
 - `packs.ADMIN` is an explicit allow list (platform, `mail:contact/*`, admin folders and templates, company
   templates, reports, inventory read, web, compute, credentials except `secret:mail/*`), not `*` minus

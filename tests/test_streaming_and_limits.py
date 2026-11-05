@@ -416,3 +416,46 @@ def test_steps_reach_the_reader_while_the_work_is_still_running(api, monkeypatch
         rest = [json.loads(x[6:]) for x in lines if x.startswith("data: ")]
     assert seen_before_release
     assert rest[-1]["type"] == "done" and rest[-1]["reply"] == "42 laptops"
+
+
+# ---- leaving the chat must not stop the request (2026-11-05) ----
+def test_a_private_reply_finishes_and_is_saved_when_the_reader_leaves_mid_reply(api, monkeypatch):
+    """The reader goes away during sorting ("Thinking..."): the reply must still be made and saved,
+    and the chat must be listed with the request shown as running meanwhile."""
+    import threading
+    import time
+
+    from app import inflight
+    from app.api import routes_chat
+
+    release = threading.Event()
+    real = routes_chat.execution.run
+
+    def slow_reply(*a, **k):
+        assert release.wait(5)
+        return real(*a, **k)
+
+    monkeypatch.setattr(routes_chat.execution, "run", slow_reply)
+    _sorted_as(monkeypatch)
+    from app.acl.models import Subject
+
+    with api.Session() as session:  # the response is made but never read: the reader has gone
+        routes_chat.chat_stream(routes_chat.ChatIn(message="LEFT EARLY", thread_id="gone"),
+                                Subject(id="alice", roles=["logistics"]), KEY, session)
+    for _ in range(100):
+        if api.client.get("/v1/chat/threads/gone/running", headers=ALICE).json():
+            break
+        time.sleep(0.02)
+    running = api.client.get("/v1/chat/threads/gone/running", headers=ALICE).json()
+    assert running["message"] == "LEFT EARLY"
+    assert "gone" in api.client.get("/v1/chat/running", headers=ALICE).json()
+    release.set()
+    for _ in range(100):
+        history = api.client.get("/v1/chat/threads/gone/messages", headers=ALICE).json()
+        if len(history) == 2:
+            break
+        time.sleep(0.05)
+    assert [m["content"] for m in history] == ["LEFT EARLY", "Hello there, friend"]
+    assert api.client.get("/v1/chat/threads/gone/running", headers=ALICE).json() is None
+    assert any(t["thread_id"] == "gone" for t in api.client.get("/v1/chat/threads", headers=ALICE).json())
+    assert inflight.threads("alice") == []

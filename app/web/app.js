@@ -5,6 +5,7 @@
 const state = {
   token: null, username: "", roles: [], view: "chat", thread: null, threads: [], counts: {}, poll: null,
   bellPoll: null, unread: 0,
+  running: {},  // thread id -> the request being worked on there (see chatView: attach)
 };
 const root = document.getElementById("app");
 
@@ -1146,24 +1147,21 @@ async function chatView(thread, { reloadThreads, paint, open }) {
     input.style.height = `${input.scrollHeight}px`;
   };
 
-  const composer = h("form", {
-    class: "composer",
-    onsubmit: async (event) => {
-      event.preventDefault();
-      const text = input.value.trim();
-      if (!text || send.disabled) return;
-      error.clear();
-      input.value = "";
-      grow();
-      send.disabled = true;
-      setEmpty(false);
-      const mine = bubble("user", text);
-      const thinking = h("div", { class: "msg assistant thinking" }, "Thinking...");
-      messages.append(thinking);
-      toBottom();
-      // What the agents are doing, as it happens: earlier steps get a tick, the current one pulses.
-      const steps = h("ol", { class: "steps", "aria-live": "polite" });
-      const onStep = (textOfStep) => {
+  // A request in progress belongs to the chat, not to this page: it lives in state.running and
+  // draws into whichever page shows the chat now. Leaving the chat (another page, a reload) and
+  // coming back shows the question, the steps so far and then the reply (2026-11-05: switching
+  // pages lost the request from view, and people sent it again).
+  const attach = (run, { haveQuestion = false } = {}) => {
+    if (!haveQuestion) bubble("user", run.text);
+    const thinking = h("div", { class: "msg assistant thinking" }, "Thinking...");
+    messages.append(thinking);
+    setEmpty(false);
+    const steps = h("ol", { class: "steps", "aria-live": "polite" });
+    let drawing = false;
+    run.ui = {
+      thinking, bubble, confirmCard, handover, error, toBottom, setEmpty, messages,
+      step(textOfStep) {
+        if (run.streamed) return;
         if (!steps.isConnected) {
           thinking.classList.remove("thinking");
           thinking.replaceChildren(steps);
@@ -1171,63 +1169,115 @@ async function chatView(thread, { reloadThreads, paint, open }) {
         steps.querySelectorAll("li.now").forEach((li) => li.classList.replace("now", "done"));
         steps.append(h("li", { class: "now" }, textOfStep));
         toBottom();
-      };
+      },
+      draw() {
+        if (drawing) return;  // at most one redraw per frame
+        drawing = true;
+        requestAnimationFrame(() => {
+          drawing = false;
+          thinking.classList.remove("thinking");
+          thinking.classList.add("md");
+          thinking.replaceChildren(md(run.streamed));
+          toBottom();
+        });
+      },
+      busy(on) { send.disabled = on; },
+      restore() { input.value = run.text; grow(); },
+    };
+    run.steps.forEach((t) => run.ui.step(t));
+    if (run.streamed) run.ui.draw();
+    run.ui.busy(true);
+    toBottom();
+  };
+
+  // The server is still working on a request this page didn't send (the page was reloaded, or it
+  // was sent from another tab): show it and wait for the saved reply.
+  const watchServerRun = async (running, haveQuestion) => {
+    const run = { text: running.message, steps: [], streamed: "", fromServer: true };
+    state.running[thread] = run;
+    attach(run, { haveQuestion });
+    running.steps.forEach((t) => { run.steps.push(t); run.ui.step(t); });
+    try {
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        if (!state.token) return;
+        const now = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/running`).catch(() => running);
+        if (!now) break;
+        now.steps.slice(run.steps.length).forEach((t) => { run.steps.push(t); run.ui.step(t); });
+      }
+      const saved = await waitForSavedReply(thread, run.text, { every: 1000, limit: 30000 });
+      run.ui.thinking.remove();
+      if (saved && saved.pending) run.ui.confirmCard(saved.pending);
+      else if (saved) run.ui.bubble("assistant", saved.content, saved.handled_by, saved.dashboards);
+    } finally {
+      delete state.running[thread];
+      run.ui.busy(false);
+    }
+  };
+
+  const composer = h("form", {
+    class: "composer",
+    onsubmit: async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text || send.disabled || state.running[thread]) return;
+      error.clear();
+      input.value = "";
+      grow();
+      const run = { text, steps: [], streamed: "" };
+      state.running[thread] = run;
+      attach(run);
+      const ui = () => run.ui;  // the page showing this chat now (it may have been reopened)
+      // The chat is listed (Recent chats) as soon as the server has it, not only after the reply.
+      setTimeout(() => { if (state.token) reloadThreads().catch(() => {}); }, 4000);
       try {
-        let started = false;
-        let streamed = "";
-        let drawing = false;
         const result = await streamChat({ message: text, thread_id: thread }, (piece) => {
-          if (!started) {
-            started = true;
-            thinking.classList.remove("thinking");
-            thinking.classList.add("md");
-          }
-          streamed += piece;
-          if (!drawing) {  // at most one redraw per frame
-            drawing = true;
-            requestAnimationFrame(() => { drawing = false; thinking.replaceChildren(md(streamed)); toBottom(); });
-          }
-        }, onStep);
-        thinking.remove();
+          run.streamed += piece;
+          ui().draw();
+        }, (textOfStep) => { run.steps.push(textOfStep); ui().step(textOfStep); });
+        ui().thinking.remove();
         if (result.outcome === "flagged_nsfw") {
-          mine.remove();
-          bubble("flagged", "This message was blocked and reported to HR and the admin. It wasn't saved in this chat.");
+          const mine = [...ui().messages.querySelectorAll(".msg.user")].pop();
+          if (mine) mine.remove();
+          ui().bubble("flagged", "This message was blocked and reported to HR and the admin. It wasn't saved in this chat.");
         } else if (result.outcome === "confirm") {
-          confirmCard(result.confirm);
+          ui().confirmCard(result.confirm);
           await reloadThreads();
         } else {
-          bubble("assistant", result.reply, result.route === "work" ? result.department : null, result.dashboards);
-          handover(result.browser);
+          ui().bubble("assistant", result.reply, result.route === "work" ? result.department : null, result.dashboards);
+          ui().handover(result.browser);
           await reloadThreads();
-          if (result.route === "work") await watchRequests();
-          toBottom();
+          if (result.route === "work" && state.thread === thread) await watchRequests();
+          ui().toBottom();
         }
       } catch (err) {
         if (err.cutOff) {
           // Keep the question; the answer is still coming. Don't invite a second, duplicate run.
-          onStep("The connection dropped, but the assistant is still working. The reply will appear here when it's ready.");
+          ui().step("The connection dropped, but the assistant is still working. The reply will appear here when it's ready.");
           const saved = await waitForSavedReply(thread, text);
-          thinking.remove();
+          ui().thinking.remove();
           if (saved && saved.pending) {
-            confirmCard(saved.pending);
+            ui().confirmCard(saved.pending);
           } else if (saved) {
-            bubble("assistant", saved.content, saved.handled_by, saved.dashboards);
-            toBottom();
+            ui().bubble("assistant", saved.content, saved.handled_by, saved.dashboards);
+            ui().toBottom();
           } else {
-            error.fail(new Error("No reply yet. Reopen this chat later to see it; there's no need to ask again."));
+            ui().error.fail(new Error("No reply yet. Reopen this chat later to see it; there's no need to ask again."));
           }
           await reloadThreads().catch(() => {});
         } else {
-          thinking.remove();
-          mine.remove();
-          input.value = text;
-          grow();
-          error.fail(err);
-          if (!messages.children.length) setEmpty(true);
+          ui().thinking.remove();
+          const mine = [...ui().messages.querySelectorAll(".msg.user")].pop();
+          if (mine) mine.remove();
+          ui().restore();
+          ui().error.fail(err);
+          if (!ui().messages.children.length) ui().setEmpty(true);
         }
+      } finally {
+        delete state.running[thread];
+        ui().busy(false);
+        if (state.thread === thread && input.isConnected) input.focus();
       }
-      send.disabled = false;
-      input.focus();
     },
   },
     files,
@@ -1289,13 +1339,24 @@ async function chatView(thread, { reloadThreads, paint, open }) {
     h("p", { class: "fineprint column" }, mi("shield"), "Private chats are encrypted with your key. Work is seen only by the team that handles it."),
   );
 
+  let history = [];
   if (known()) {
-    const history = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/messages`);
+    history = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/messages`);
     history.forEach((m) => bubble(m.role, m.content, m.handled_by, m.dashboards));
     if (history.length) setEmpty(false);
     const pending = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/pending`).catch(() => null);
     if (pending) confirmCard(pending);
     await watchRequests();
+  }
+  // A request still being worked on in this chat: show it again, live.
+  const last = history[history.length - 1];
+  const asked = (text) => Boolean(last && last.role === "user" && last.content === text);
+  const local = state.running[thread];
+  if (local) {
+    attach(local, { haveQuestion: asked(local.text) });
+  } else {
+    const running = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/running`).catch(() => null);
+    if (running) watchServerRun(running, asked(running.message));
   }
   await paintFiles();
   setTimeout(() => { input.focus(); toBottom(); }, 0);

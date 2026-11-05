@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **603 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **604 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -355,6 +355,8 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 - **Don't `source .env` in shell scripts:** `VLLM_EXTRA_ARGS` has spaces. Read KEY=value lines (see `backup.sh`).
 - **After changing the triage prompt**, rerun `scripts/eval_triage.py` (~3 min). Watch "personal sorted as WORK":
   it must stay 0.
+- **Chat requests run independently of the browser** (`routes_chat.chat_stream` worker thread,
+  `app/inflight.py`): never start work from inside the streaming generator again.
 - **Per-request graph state** (counters, reports, tasks) is reset on every new message in `execution.run`
   (`state.TURN_COUNTERS`/`TURN_LISTS`). Add any new per-request field there, or long threads stop working.
 - **Python edits with `str.replace` can silently miss.** Assert the old text exists. And watch apostrophes inside
