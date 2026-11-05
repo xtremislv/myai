@@ -168,7 +168,7 @@ SPECIALISTS: dict[str, Specialist] = {
             tools=(
                 "list_files", "read_file", "write_file", "append_file", "edit_file", "move_file",
                 "copy_file", "delete_file", "restore_file", "read_document", "list_documents",
-                "summarize_large",
+                "summarize_large", "list_people", "share_with", "shared_with_me", "open_shared",
             ),
             max_rounds=10,
             prompt=(
@@ -180,7 +180,9 @@ SPECIALISTS: dict[str, Specialist] = {
                 "it. To summarize a long file, or pull a table of records out of one, use "
                 "summarize_large (output doc or sheet when a document or spreadsheet is wanted). "
                 "Only delete when the task clearly asks, and then just call delete_file: the person "
-                "is asked to confirm it before it runs. Report "
+                "is asked to confirm it before it runs. To send findings, a list or files to a colleague "
+                "on the platform (by name, e.g. 'send it to sayan'), use share_with: never ask for their "
+                "email address. Things shared with the person are in shared_with_me / open_shared. Report "
                 "exactly which files you created or changed."
             ),
         ),

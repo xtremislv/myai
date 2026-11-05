@@ -695,3 +695,74 @@ def reveal_wallet(item_id: str, body: RevealIn, subject: Subject = Depends(curre
     except wallet.WalletError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from None
     return {"kind": kind, **data}
+
+
+# ---- shared with me (app/sharing.py) ----
+class SharedFileOut(BaseModel):
+    n: int
+    name: str
+    size: int
+
+
+class ShareOut(BaseModel):
+    id: str
+    sender: str
+    at: str
+    note: str
+    files: list[SharedFileOut]
+
+
+@router.get("/shared", response_model=list[ShareOut])
+def shared_with_me(subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> list[ShareOut]:
+    """What colleagues have shared with this person, newest first."""
+    from app import sharing
+
+    return [ShareOut(id=m["id"], sender=m["from"], at=m["at"], note=m["note"],
+                     files=[SharedFileOut(**f) for f in m["files"]]) for m in sharing.received(session, subject.id)]
+
+
+@router.get("/shared/{share_id}/files/{n}")
+def download_shared(
+    share_id: str, n: int, subject: Subject = Depends(current_subject), session: Session = Depends(get_session),
+) -> Response:
+    from app import sharing
+
+    try:
+        name, data = sharing.file_of(session, subject.id, share_id, n)
+    except sharing.ShareError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from None
+    # Always a download of opaque bytes, so a shared file can never run as a page here.
+    return Response(
+        content=data, media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.post("/shared/{share_id}/files/{n}/save", response_model=FileOut)
+def save_shared(
+    share_id: str, n: int, subject: Subject = Depends(current_subject), key: bytes = Depends(chat_key),
+    session: Session = Depends(get_session),
+) -> FileOut:
+    """Copy a shared file into My files (encrypted with the person's own key), under Shared/."""
+    from app import sharing
+
+    try:
+        name, data = sharing.file_of(session, subject.id, share_id, n)
+    except sharing.ShareError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from None
+    try:
+        info, _ = userfiles.write(session, key, subject.id, f"Shared/{name}", data, userfiles.guess_type(name),
+                                  overwrite=False)
+    except userfiles.FileError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from None
+    return FileOut(**info.as_dict())
+
+
+@router.delete("/shared/{share_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_shared(share_id: str, subject: Subject = Depends(current_subject), session: Session = Depends(get_session)) -> None:
+    from app import sharing
+
+    try:
+        sharing.delete(session, subject.id, share_id)
+    except sharing.ShareError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from None

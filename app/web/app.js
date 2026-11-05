@@ -2590,9 +2590,52 @@ async function filesView(refresh, { trash = false } = {}) {
       trash ? "The trash is empty." : "No files yet. Upload some, or ask the assistant to write one.",
     )),
     preview,
+    !trash && await sharedWithMeSection(() => redraw({ trash })),
     !trash && await departmentFilesSection(),
   );
   return page;
+}
+
+// What colleagues shared with this person (a note and files): download, keep in My files, remove.
+async function sharedWithMeSection(redraw) {
+  let shares;
+  try {
+    shares = await api("/v1/shared");
+  } catch {
+    return null;
+  }
+  const error = errorBox();
+  const run = (fn) => async () => { error.clear(); try { await fn(); } catch (err) { error.fail(err); } };
+  const download = (share, f) => run(async () => {
+    const blob = await api(`/v1/shared/${share.id}/files/${f.n}`, { raw: true });
+    const link = h("a", { href: URL.createObjectURL(blob), download: f.name });
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+  return h("section", { class: "dept-files" },
+    h("h2", { class: "section-title" }, "Shared with me"),
+    h("p", { class: "small muted" }, "Notes and files colleagues sent you. Save a file to keep it in My files (under Shared/), encrypted with your key."),
+    error,
+    shares.length ? shares.map((share) => h("div", { class: "card" },
+      h("div", { class: "row spread" },
+        h("strong", null, `From ${share.sender}`),
+        h("div", { class: "row" },
+          h("span", { class: "small muted" }, new Date(share.at).toLocaleString()),
+          h("button", { type: "button", class: "danger", "aria-label": `Remove what ${share.sender} shared`,
+            onclick: run(async () => { await api(`/v1/shared/${share.id}`, { method: "DELETE" }); redraw(); }) }, "Remove"))),
+      share.note && mdBlock(share.note),
+      share.files.length > 0 && table(["File", "Size", ""], share.files.map((f) => [
+        h("span", { class: "mono" }, f.name),
+        formatSize(f.size),
+        h("div", { class: "row" },
+          h("button", { type: "button", onclick: download(share, f) }, "Download"),
+          h("button", { type: "button", onclick: run(async () => {
+            await api(`/v1/shared/${share.id}/files/${f.n}/save`, { method: "POST" });
+            redraw();
+          }) }, "Save to My files")),
+      ]), ""),
+    )) : h("p", { class: "muted" }, "Nothing has been shared with you."),
+  );
 }
 
 // The shared folders of the person's departments: what department work saves (a sheet made from

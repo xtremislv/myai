@@ -12,7 +12,7 @@ from typing import Any
 from langgraph.types import interrupt
 
 from app.db.session import SessionLocal
-from app.departments.packs import critical_tools, is_finance_call
+from app.departments.packs import critical_tools, is_finance_call, needs_go_ahead
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
 from app.orchestrator.clock import with_now
@@ -113,7 +113,9 @@ DATA_HINT = (
     "other task too big for one reply (many pages, a long report), use start_background_task with the "
     "whole request: the result is saved as a Word document and/or sheet and the person is notified (also by "
     "email or with a reminder if they ask). To save a table you compiled yourself as a sheet, use save_table. "
-    "Never answer that a site can't be reached or that nothing exists after one failed search: try these tools."
+    "Never answer that a site can't be reached or that nothing exists after one failed search: try these tools. "
+    "To send findings, a list or files to a colleague on this platform (\"send it to sayan\"), use share_with with "
+    "their name: write the findings out in full in note and attach the files; never ask for an email address."
 )
 
 
@@ -166,7 +168,11 @@ def run_tool(state: dict[str, Any], name: str | None, args: Any) -> Any:
         expected = list(signature.parameters)[1:]
         return f"ERROR: invalid arguments for '{name}': {e}. Expected: {expected}"
 
-    if name in critical_tools():
+    if needs_go_ahead(name, _department(state)):
+        from app.orchestrator.tools import PRECHECKS
+
+        if name in PRECHECKS and (refused := PRECHECKS[name](state, **args)) is not None:
+            return refused  # would be refused anyway: don't ask the person to confirm it
         decision = interrupt({
             "tool": name, "args": args, "department": _department(state),
             "mode": (state.get("scratchpad") or {}).get("mode"),
@@ -403,8 +409,7 @@ def execute_calls(state: dict[str, Any], calls: list[dict[str, Any]]) -> tuple[l
     before the first gated one run now and the rest are answered DEFERRED; a gated call that
     comes first runs alone.
     """
-    gated = critical_tools()
-    first_gated = next((i for i, c in enumerate(calls) if c["name"] in gated), None)
+    first_gated = next((i for i, c in enumerate(calls) if needs_go_ahead(c["name"], _department(state))), None)
     if first_gated is None:
         now, later = calls, []
     elif first_gated == 0:

@@ -47,11 +47,14 @@ BROWSE_TOOLS = (
     "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",
     "browser_scroll", "browser_back", "ask_person_to_browse",
 )
+# Sharing with another person on the platform (app/sharing.py): a note and files, delivered as a
+# notification and under Files > Shared with me. Not an approval request (owner, 2026-11-05).
+SHARE_TOOLS = ("list_people", "share_with", "shared_with_me", "open_shared")
 # Files: in private chat the person's own encrypted "My files"; at work the department's shared
 # folder (shared/<department>/) and the data areas its grants reach. delete_file needs approval.
 FILE_TOOLS = (
     "list_files", "read_file", "write_file", "append_file", "edit_file", "move_file", "copy_file",
-    "delete_file", "restore_file",
+    "delete_file", "restore_file", *SHARE_TOOLS,
 )
 REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
 # Analysing data with code (app/sandbox.py: no network, copies of files only) and showing the
@@ -73,6 +76,12 @@ PRIVATE_TOOLS = (
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
 ALWAYS_CRITICAL = ("send_mail", "delete_file", "browser_commit")
+# Confirmed by the person themselves in private chat only (their encrypted data leaves their account);
+# at work no one is asked: it goes only to members of the department doing the work.
+PRIVATE_CONFIRM = ("share_with",)
+# Accounts members may share notifications only, never files, and nothing crucial in them (owner,
+# 2026-11-05): see app/sharing.py screen().
+NOTE_ONLY_ROLES = ("account",)
 
 
 @dataclass(frozen=True)
@@ -273,6 +282,12 @@ DEFAULT_DEPARTMENTS: tuple[DepartmentSpec, ...] = (ACCOUNT, HR, LOGISTICS, RESEA
 
 # All specs whose grants become ACL policies (includes GLOBAL + SELF pseudo-roles).
 POLICY_SPECS: tuple[DepartmentSpec, ...] = (*DEFAULT_DEPARTMENTS, GLOBAL, SELF)
+
+
+def needs_go_ahead(name: str | None, department: str | None) -> bool:
+    """Whether a call pauses for a decision: always for critical tools; for PRIVATE_CONFIRM ones only
+    in private chat (department None)."""
+    return name in critical_tools() or (department is None and name in PRIVATE_CONFIRM)
 
 
 def critical_tools() -> frozenset[str]:

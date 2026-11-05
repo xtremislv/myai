@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **611 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **619 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -118,6 +118,11 @@ the web, read and answer mail, manage files, make documents from templates, set 
   extraction), merges duplicates across sources and saves an Excel sheet ranked by how many sources
   mention each item, with links. `criteria=` (plus the person's own words) filters sources, rows and the
   final list. Live 2026-11-05: "android apps", 20 sources -> 58 apps in ~5 min.
+
+**Sharing with colleagues** (2026-11-05)
+- "Send this to sayan": `share_with` delivers a note and files to another user (notification + Files > Shared
+  with me). Private chat: the sender confirms; work: same-department members only. Accounts: notifications
+  only, no files, nothing crucial (patterns + model check). Nobody shares passwords, OTPs or card numbers.
 
 **Long tasks in the background** (2026-11-05)
 - `start_background_task` (`app/background.py`): any big task; the agent works alone for up to 30 tool

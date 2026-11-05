@@ -334,6 +334,21 @@ been read; and a private reply was started by the HTTP response itself, so a rea
   Checked in Chromium against a fake API (leave and return; reload mid-request); test
   `test_a_private_reply_finishes_and_is_saved_when_the_reader_leaves_mid_reply`.
 
+## Sharing with people on the platform (2026-11-05)
+
+"Send the findings and list to sayan" got "what's Sayan's email?": the assistant couldn't reach other users.
+- `app/sharing.py` + tools `list_people`, `share_with`, `shared_with_me`, `open_shared` (in FILE_TOOLS, so every
+  department and private chat). A share is a note and/or files, stored under `inbox/<recipient>/<id>/` in MinIO
+  encrypted with the notes key; the recipient gets a notification (kind "share"; email with `email=true`) and
+  Files > Shared with me (download, Save to My files under Shared/, Remove): `GET/DELETE /v1/shared...`.
+- Not an approval request (owner): in private chat the sender confirms on a card (`packs.PRIVATE_CONFIRM`,
+  `needs_go_ahead`); at work no one is asked, but only members of the working department receive.
+- Owner's rule: Accounts members (`NOTE_ONLY_ROLES`) send notifications only, never files, and nothing crucial:
+  `sharing.screen` (IFSC, PAN, GSTIN, UPI, account/card numbers, amounts, payment words) then a model check
+  (`sharing.crucial`, fails closed). Everyone: no passwords/OTPs/PINs or card numbers.
+- `tools.PRECHECKS` run before a confirmation card, so a share that would be refused is never offered.
+- Live: the model answered "send the findings and list to sayan" with a share_with card holding the findings.
+
 ## Glitch sweep (2026-11-05, owner: "fix all the issues")
 
 1. Confirm runs like a message: `POST /v1/chat/threads/{id}/confirm/stream` (steps, keepalive, survives

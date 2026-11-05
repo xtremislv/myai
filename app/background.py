@@ -32,7 +32,7 @@ NOT_IN_BACKGROUND = frozenset({
     "browser_open", "browser_read", "browser_click", "browser_type", "browser_select", "browser_scroll",
     "browser_back", "browser_commit", "send_mail", "delete_file", "initiate_payment", "manage_bill",
     "manage_order", "book_service", "mail_to_sheet", "start_background_task", "web_research", "job_status",
-    "make_dashboard",
+    "make_dashboard", "share_with",
 })
 
 BACKGROUND_NOTE = (

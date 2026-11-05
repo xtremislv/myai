@@ -96,6 +96,7 @@ CONFIRM_TITLES = {
     "send_mail": "Send this email?",
     "delete_file": "Delete this file?",
     "browser_commit": "Go ahead on the website?",
+    "share_with": "Share this?",
 }
 
 
@@ -111,6 +112,8 @@ def confirm_out(pending: dict) -> ConfirmOut:
         shown = {"from": MAILBOX_LABELS.get(box, "your own mailbox"), **shown}
     purchase = pending["tool"] == "browser_commit" and bool(PURCHASE_WORDS.search(f"{args.get('label', '')} {args.get('summary', '')}"))
     title = "Place this order?" if purchase else CONFIRM_TITLES.get(pending["tool"], f"Allow {pending['tool']}?")
+    if pending["tool"] == "share_with":
+        title = f"Share this with {args.get('to', 'them')}?"
     return ConfirmOut(tool=pending["tool"], title=title, details=shown, purchase=purchase)
 
 

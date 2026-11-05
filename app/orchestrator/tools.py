@@ -1676,6 +1676,145 @@ def save_table(state: dict[str, Any], path: str, rows: str, columns: str = "", t
     return f"{saved} {len(records)} rows, columns: {', '.join(cols)}. The person finds it under {where}."
 
 
+# ---- sharing with people on the platform (app/sharing.py) ----
+def list_people(state: dict[str, Any]) -> str:
+    """Usernames and departments of everyone on the platform."""
+    from app import sharing
+
+    with SessionLocal() as session:
+        everyone = sharing.people(session)
+    me = _subject(state).id
+    return "\n".join(f"- {p.username}" + (f" ({', '.join(p.departments)})" if p.departments else "")
+                     + (" (you)" if p.id == me else "") for p in everyone) or "No one else yet."
+
+
+def share_precheck(state: dict[str, Any], to: str = "", note: str = "", files: str = "", email: bool = False) -> str | None:
+    """Why this share may not go (an ERROR line), or None. No side effects: run_tool calls it before
+    the person's confirmation card, so a share that would be refused is never offered."""
+    from app import sharing
+    from app.db.session import User
+    from app.departments.packs import NOTE_ONLY_ROLES
+
+    owner = _subject(state).id
+    if (err := _enforce(state, "write", "personal_info", f"{owner}/shares")) is not None:
+        return err
+    dept = (state.get("scratchpad") or {}).get("department")
+    try:
+        with SessionLocal() as session:
+            recipient = sharing.find_person(session, to)
+            sender = session.get(User, owner)
+            roles = set(sender.roles or []) if sender is not None else set(_subject(state).roles)
+    except sharing.ShareError as e:
+        return f"ERROR: {e}"
+    if dept and dept not in recipient.departments:
+        return (f"ERROR: {recipient.username} isn't in {dept}, and a department's data is for its members "
+                "only. Tell the person; they can share their own copy from their private chat.")
+    strict = bool(roles & set(NOTE_ONLY_ROLES))
+    if strict and files.strip():
+        return ("ERROR: not sent. Members of Accounts can send a notification only, never files (company rule). "
+                "Tell the person; they can send a short notice without the file.")
+    problems = sharing.screen(note, strict)
+    if strict and not problems and (why := sharing.crucial(note)):
+        problems = [why]
+    if problems:
+        return ("ERROR: not sent: the message contains " + "; ".join(problems) + ", which may not be shared"
+                + (" by Accounts" if strict else "") + ". Tell the person, and offer a version without it "
+                "(e.g. 'the details are ready, please check with Accounts').")
+    return None
+
+
+def share_with(state: dict[str, Any], to: str, note: str = "", files: str = "", email: bool = False) -> str:
+    """Send a note (e.g. findings) and/or files to another person here. In private chat the person
+    confirms first (run_tool); at work only to members of the department doing the work. Accounts
+    members: a note only, with nothing crucial in it (share_precheck)."""
+    from app import sharing
+    from app.db.session import User
+    from app.reminders import delivery, service
+
+    owner = _subject(state).id
+    if (err := share_precheck(state, to, note, files, email)) is not None:
+        return err
+    with SessionLocal() as session:
+        recipient = sharing.find_person(session, to)
+    attached: list[tuple[str, bytes]] = []
+    for path in [p.strip() for p in files.split(",") if p.strip()][: sharing.MAX_FILES + 1]:
+        got = _input_bytes(state, path)
+        if isinstance(got, str):
+            return got
+        attached.append(got)
+    try:
+        with SessionLocal() as session:
+            sender = session.get(User, owner)
+            if sender is None:
+                return "ERROR: your account wasn't found"
+            manifest = sharing.share(session, sender, recipient, note, attached)
+            names = [f["name"] for f in manifest["files"]]
+            what = (f"{len(names)} file{'s' if len(names) != 1 else ''}" if names else "a note")
+            title = f"{sender.username} shared {what} with you"
+            body = (note.strip()[:4000] if note.strip() else "")
+            if names:
+                body += ("\n\n" if body else "") + "Files: " + ", ".join(names) + ". Find them under Files > Shared with me."
+            service.notify(session, recipient.id, "share", title, body)
+            emailed = ""
+            if email:
+                user = session.get(User, recipient.id)
+                try:
+                    sent = user is not None and delivery.email_person(session, user, title, body)
+                except Exception:  # noqa: BLE001 - the notification went out anyway
+                    sent = False
+                emailed = " Also emailed to them." if sent else " (No email: they have no address or no mail is set up.)"
+    except sharing.ShareError as e:
+        return f"ERROR: {e}"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("share failed: %s", type(e).__name__)
+        return f"ERROR: couldn't share it ({type(e).__name__})"
+    return (f"Shared with {recipient.username}: " + (f"a note ({len(note.strip())} characters)" if note.strip() else "no note")
+            + (f" and {', '.join(names)}" if names else "") + f". They were notified (bell and pop-up).{emailed}")
+
+
+def shared_with_me(state: dict[str, Any]) -> str:
+    """What other people have shared with this person, newest first."""
+    from app import sharing
+
+    owner = _subject(state).id
+    if (err := _enforce(state, "read", "personal_info", f"{owner}/inbox")) is not None:
+        return err
+    with SessionLocal() as session:
+        shares = sharing.received(session, owner)
+    if not shares:
+        return "Nothing has been shared with you."
+    return untrusted("things colleagues shared", "\n\n".join(
+        sharing.describe({**m, "note": m["note"][:1500]}) for m in shares[:20]))
+
+
+def open_shared(state: dict[str, Any], share_id: str, file: str = "", save_to: str = "") -> str:
+    """One share in full; or one of its files: its text, or saved into the person's files."""
+    from app import sharing
+
+    owner = _subject(state).id
+    if (err := _enforce(state, "read", "personal_info", f"{owner}/inbox")) is not None:
+        return err
+    try:
+        with SessionLocal() as session:
+            if not file.strip():
+                found = next((m for m in sharing.received(session, owner) if m["id"] == share_id.strip()), None)
+                if found is None:
+                    return "ERROR: no such share (see shared_with_me)"
+                return untrusted(f"a share from {found['from']}", sharing.describe(found))
+            name, data = sharing.file_of(session, owner, share_id.strip(), file.strip())
+    except sharing.ShareError as e:
+        return f"ERROR: {e}"
+    if save_to.strip():
+        target = save_to.strip()
+        if target.endswith("/"):
+            target += name
+        return _save(state, target, data, overwrite=False)
+    text = _as_text(name, "", data)
+    if text is None:
+        return f"'{name}' isn't text ({_size(len(data))}). Save it with save_to (e.g. 'Shared/{name}') to use it."
+    return untrusted(f"'{name}' shared with the person", _show(name, text, 0))
+
+
 # ---- long tasks in the background (app/jobs.py) ----
 def _alerts(email: bool, remind_at: str):
     from app import jobs
@@ -2163,6 +2302,9 @@ def review_report(state: dict[str, Any], report_id: str) -> str:
 
 
 # Full tool table.
+# Checks that run before a call pauses for a go-ahead (no side effects: they re-run on resume).
+PRECHECKS: dict[str, Callable[..., str | None]] = {"share_with": share_precheck}
+
 TOOLS: dict[str, Callable[..., Any]] = {
     "read_document": read_document,
     "list_documents": list_documents,
@@ -2211,6 +2353,10 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "read_thread": read_thread,
     "save_table": save_table,
     "web_research": web_research,
+    "list_people": list_people,
+    "share_with": share_with,
+    "shared_with_me": shared_with_me,
+    "open_shared": open_shared,
     "start_background_task": start_background_task,
     "product_search": product_search,
     "product_page": product_page,
@@ -2372,6 +2518,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                   "objects, one per row, e.g. [{\"App\": \"Gander\", \"Platform\": \"Android\", \"What's "
                   "special\": \"...\", \"Source\": \"https://...\"}]. columns: the order of the columns "
                   "(optional). Use it whenever the person asks for a sheet, spreadsheet or Excel of results.",
+    "list_people": "Everyone on this platform: usernames and departments. Use it to find a colleague by name.",
+    "share_with": "Send a note and/or files to another person on this platform by their username or name (e.g. "
+                  "'sayan'): they get a notification (bell and pop-up) and the files under Files > Shared with "
+                  "me. note: the message, e.g. the findings or the list written out in full (Markdown is fine). "
+                  "files: comma-separated paths of files to send (the person's or department's files, or chat "
+                  "attachments), e.g. 'Research/android apps.xlsx'. email=true also emails the note to them. Use "
+                  "this whenever the person says send/share/forward something to a colleague: never ask for an "
+                  "email address. In private chat the person confirms it on a card first.",
+    "shared_with_me": "What colleagues have shared with the person: who, when, the note and file names, with ids.",
+    "open_shared": "Open one share by id (its full note and files); with file (a name or number) read that file, "
+                   "or save it into the person's files with save_to (a path or folder).",
     "web_research": "Research a topic across MANY websites at once in the background and get one merged Excel "
                     "sheet: it searches forums (Hacker News incl. launches, Reddit, Lemmy and any other forum or "
                     "site), GitHub, the web and news, reads up to max_sources pages and threads (default 25, most "

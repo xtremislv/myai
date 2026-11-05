@@ -42,6 +42,8 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   no third-party assets. The token stays in JS memory because it can open private chats; a reload renews it
   from the HttpOnly `tw_session` cookie (Path `/v1/auth/session`, SameSite=Strict, `x-tw-session` header).
   Never put the token in localStorage or a readable cookie.
+- Person-to-person sharing goes only through `app/sharing.py` (`share_with`): Accounts (`NOTE_ONLY_ROLES`) may
+  send notifications only, never files, and `sharing.screen`/`crucial` must pass; at work, same department only.
 - Chat work runs through `routes_chat._run_and_relay` (own thread, one run per chat via `app/inflight.py`,
   run ids and outcomes for `followRun` in app.js). Never start work inside a streaming generator.
 - `tests/test_postgres.py` runs only with `POSTGRES_INTEGRATION=1` and a throwaway `POSTGRES_DSN`.
