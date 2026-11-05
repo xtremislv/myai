@@ -460,6 +460,78 @@ def test_alerts_are_emailed_and_a_mail_failure_keeps_the_bell_notice(db, monkeyp
         assert service.notifications(s, "root")[0]["title"] == "Server alert (warning): DiskAlmostFull"
 
 
+def test_official_mailbox_sends_when_there_is_no_notify_box(db, monkeypatch):
+    from app.reminders import delivery
+
+    sent = []
+    monkeypatch.setattr(delivery, "send", lambda cfg, to, subject, body: sent.append((cfg.sender, to)))
+    with db() as s:
+        AESGCMVault(s).put("mail/contact", NOTIFY_BOX.replace("platform@gmail.com", "contact@corp.com"))
+        assert delivery.email_admins(s, "alert", "x") == 1
+    assert sent == [("contact@corp.com", "contact@corp.com")]
+
+
+def test_welcome_goes_once_to_each_new_address(db, monkeypatch):
+    from app.reminders import delivery
+
+    sent = []
+    monkeypatch.setattr(delivery, "send", lambda cfg, to, subject, body: sent.append((to, subject, body)))
+    with db() as s:
+        s.get(User, "alice").prefs = {"email": "alice@example.com"}
+        s.commit()
+        assert delivery.welcome_new_addresses(s) == 0  # no official mailbox yet: nothing marked
+        AESGCMVault(s).put("mail/notify", NOTIFY_BOX)
+        assert delivery.welcome_new_addresses(s) == 1
+        assert delivery.welcome_new_addresses(s) == 0  # once
+        to, subject, body = sent[0]
+        assert (to, subject) == ("alice@example.com", delivery.WELCOME_SUBJECT) and "Hi alice" in body
+        assert "server alerts" not in body  # only the admin's mentions alerts
+        s.get(User, "alice").prefs = {**s.get(User, "alice").prefs, "email": "new@example.com"}
+        s.commit()
+        assert delivery.welcome_new_addresses(s) == 1 and sent[-1][0] == "new@example.com"
+
+
+def test_one_failed_welcome_does_not_stop_the_others(db, monkeypatch):
+    from app.reminders import delivery
+
+    def send(cfg, to, subject, body):
+        if to.startswith("alice"):
+            raise OSError("mailbox full")
+
+    monkeypatch.setattr(delivery, "send", send)
+    with db() as s:
+        AESGCMVault(s).put("mail/notify", NOTIFY_BOX)
+        s.get(User, "alice").prefs = {"email": "alice@example.com"}
+        s.get(User, "root").prefs = {"email": "root@example.com"}
+        s.commit()
+        assert delivery.welcome_new_addresses(s) == 1
+        assert "welcomed" not in s.get(User, "alice").prefs  # tried again next time
+
+
+def test_smtp_wrong_password_is_reported_as_such():
+    import smtplib
+
+    from app.mail import connector
+
+    class Server:
+        esmtp_features = {"auth": " LOGIN PLAIN XOAUTH2"}
+
+        def ehlo_or_helo_if_needed(self):
+            pass
+
+        def auth_plain(self, challenge=None):
+            return ""
+
+        def auth(self, mechanism, authobject, initial_response_ok=True):
+            raise smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+        def login(self, *a):  # what Gmail hangs up on after a rejected PLAIN
+            raise smtplib.SMTPServerDisconnected("Connection unexpectedly closed")
+
+    with pytest.raises(smtplib.SMTPAuthenticationError):
+        connector._login(Server(), "u@gmail.com", "wrong")
+
+
 def test_links_email_names_both_links():
     from scripts.notify_links import body
 

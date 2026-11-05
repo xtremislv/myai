@@ -4,7 +4,8 @@
     python -m scripts.scheduler --once   # one pass of every job, then exit
 
 Every TICK seconds: reminders that came due become notifications (and emails if asked).
-Every DIGEST_EVERY seconds: digests for people whose digest hour has come.
+Every DIGEST_EVERY seconds: digests for people whose digest hour has come, and a welcome email to
+every address someone has newly added or linked.
 Every hour: emptied trash, old undo copies and old read notifications are removed.
 """
 from __future__ import annotations
@@ -14,7 +15,7 @@ import logging
 import time
 
 from app.db.session import SessionLocal
-from app.reminders import digest, service
+from app.reminders import delivery, digest, service
 from app.storage import deptfiles, userfiles
 
 TICK = 30
@@ -42,6 +43,10 @@ def digests(session) -> int:
     return digest.run_due(session)
 
 
+def welcomes(session) -> int:
+    return delivery.welcome_new_addresses(session)
+
+
 def housekeeping(session) -> int:
     return (
         userfiles.purge_trash(session)
@@ -57,7 +62,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
     if args.once:
-        for name, fn in (("reminders", reminders), ("digests", digests), ("housekeeping", housekeeping)):
+        for name, fn in (("reminders", reminders), ("digests", digests), ("welcomes", welcomes),
+                         ("housekeeping", housekeeping)):
             _job(name, fn)
         return
 
@@ -67,6 +73,7 @@ def main() -> None:
         _job("reminders", reminders)
         if started - last_digest >= DIGEST_EVERY:
             _job("digests", digests)
+            _job("welcomes", welcomes)
             last_digest = started
         if started - last_housekeeping >= HOUSEKEEPING_EVERY:
             _job("housekeeping", housekeeping)

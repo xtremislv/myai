@@ -2,7 +2,7 @@
 
     python -m scripts.notify_links APP_URL GRAFANA_URL [--note TEXT]
 
-Sent from the notification mailbox (vault secret `mail/notify`, set on the admin Credentials page).
+Sent from the notification mailbox: vault secret `mail/notify`, else the official `mail/contact`.
 Exits 1 if nothing could be sent, so the watchdog tries again on its next round.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ def main() -> int:
     with SessionLocal() as session:
         sent = email_admins(session, "AI Platform: new links", body(args.app_url, args.grafana_url, args.note))
     if not sent:
-        print("no notification mailbox: add mail/notify on the Credentials page", file=sys.stderr)
+        print("no mailbox to send from: add mail/notify or mail/contact on the Credentials page", file=sys.stderr)
         return 1
     print(f"links emailed to {sent} address(es)")
     return 0

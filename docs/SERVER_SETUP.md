@@ -295,11 +295,14 @@ The container has no systemd or cron, and a quick tunnel's link changes on every
 2. **Watchdog:** `start_native.sh` starts `scripts/watchdog.sh` (log: `watchdog.log`). Every minute it restarts
    whatever is down, restarts a tunnel whose link has failed for 10 minutes, and emails the admin the links
    when they change (`links.sent` holds the last ones emailed; delete it to resend).
-3. **The sender:** a Gmail account with 2-step verification and an app password. On the admin Credentials page add
-   the secret `mail/notify`:
+3. **The sender:** the admin department's official mailbox `mail/contact` (set on the Credentials page). To send
+   from a separate account instead, add `mail/notify` there, which wins when present (Gmail needs an app password:
+   2-step verification on, then Security > App passwords):
    `{"imap_host": "imap.gmail.com", "username": "<address>", "password": "<app password>", "smtp_host": "smtp.gmail.com", "smtp_port": 465}`.
-   The same mailbox sends reminder emails, morning digests and Prometheus alerts. Mail goes to each admin's
-   address (My account email, or their connected mailbox), else to the notification mailbox itself.
+   The same mailbox sends reminder emails, morning digests and Prometheus alerts. Admin mail goes to each admin's
+   address (My account email, or their connected mailbox), else to the sender's own inbox.
+4. **Welcome emails:** the scheduler welcomes every address a person adds (My account email) or links (their
+   mailbox), once per address (`prefs.welcomed`), within 5 minutes.
 
 ### Outbound proxy (when this network blocks sites)
 Agents' web traffic can leave through another server, over SSH, so this network only sees one encrypted

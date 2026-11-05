@@ -132,11 +132,25 @@ def _smtp(cfg: MailConfig) -> smtplib.SMTP:
             server.ehlo()
             server.auth("XOAUTH2", lambda challenge=None: auth, initial_response_ok=True)
         else:
-            server.login(cfg.username, cfg.password)
+            _login(server, cfg.username, cfg.password)
     except Exception:
         server.close()
         raise
     return server
+
+
+def _login(server: smtplib.SMTP, username: str, password: str) -> None:
+    """Sign in with AUTH PLAIN when offered. smtplib's login() tries the next method after a
+    rejected password, and Gmail hangs up on that, so a wrong password surfaced as "Connection
+    unexpectedly closed" instead of the server's own 535 answer."""
+    server.ehlo_or_helo_if_needed()
+    if "plain" not in server.esmtp_features.get("auth", "").lower().split():
+        server.login(username, password)
+        return
+    server.user, server.password = username, password
+    code, resp = server.auth("PLAIN", server.auth_plain, initial_response_ok=True)
+    if code not in (235, 503):
+        raise smtplib.SMTPAuthenticationError(code, resp)
 
 
 def _folder(box: str) -> str:
