@@ -172,15 +172,32 @@ def _rows_prompt(instructions: str, columns: list[str]) -> str:
     )
 
 
+_BARE_KEY = re.compile(r'(?m)^(\s*)"([^"\n]+)"\s*(,?)\s*$')
+
+
 def _parse_rows(reply: str) -> list[dict]:
+    """The rows in a model's JSON reply. A reply that isn't valid JSON as a whole (the model left a
+    key without a value, or was cut off) still gives every object that can be read or repaired,
+    instead of nothing (2026-11-05: one bare key lost 23 sources' worth of rows)."""
     match = re.search(r"\[.*\]", reply, re.DOTALL)
-    if not match:
-        return []
-    try:
-        data = json.loads(match.group())
-    except json.JSONDecodeError:
-        return []
-    return [d for d in data if isinstance(d, dict)]
+    if match:
+        try:
+            data = json.loads(match.group())
+            if isinstance(data, list):
+                return [d for d in data if isinstance(d, dict)]
+        except json.JSONDecodeError:
+            pass
+    out = []
+    for obj in re.findall(r"\{[^{}]*\}", reply, re.DOTALL):
+        for text in (obj, _BARE_KEY.sub(lambda m: f'{m.group(1)}"{m.group(2)}": ""{m.group(3)}', obj)):
+            try:
+                data = json.loads(re.sub(r",\s*}", "}", text))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                out.append(data)
+            break
+    return out
 
 
 def _clean_rows(rows: list[dict], columns: list[str]) -> list[dict]:

@@ -247,3 +247,62 @@ def test_the_model_picks_sources_that_name_items_over_popular_news():
     assert [s.url for s in research.choose(srcs, 3, lambda listing: "no idea")] == ["https://s0", "https://s1", "https://s2"]
     assert research.merge([{"Name": "A", "Price": "None", "_source": "x"}, {"Name": "a", "Price": "Free", "_source": "y"}],
                           "Name", ["Name", "Price"])[0]["Price"] == "Free"
+
+
+# ---- every new message is a new request (2026-11-05: a long thread stopped using its agents) ----
+def test_per_turn_lists_reset_on_a_new_message_and_add_up_within_it():
+    from app.orchestrator.state import TURN_RESET, per_turn
+
+    old = ["[research] nothing found"] * 4
+    assert per_turn(old, [TURN_RESET]) == []
+    assert per_turn(per_turn(old, [TURN_RESET]), ["[research] 58 apps"]) == ["[research] 58 apps"]
+    assert per_turn(["a"], ["b"]) == ["a", "b"]
+
+
+def test_a_thread_past_its_handoff_budget_gets_agents_again(monkeypatch):
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from app.orchestrator import agents_graph, execution, specialists
+    from app.orchestrator.state import TURN_COUNTERS, TURN_LISTS, TURN_RESET
+
+    graph = agents_graph.build_agents_graph().compile(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "t"}}
+    graph.update_state(config, {"messages": [{"role": "user", "content": "old"}], "handoffs": 4,
+                                "research_notes": ["[research] I cannot provide"] * 3}, as_node="writer")
+    seen = {}
+    monkeypatch.setattr(specialists, "available", lambda state: ["research"])
+    monkeypatch.setattr(specialists.llm, "chat", lambda messages, **k: '{"next": "finish"}')
+
+    def fake_writer(state):
+        seen.update(handoffs=state.get("handoffs"), notes=list(state.get("research_notes", [])))
+        return {"messages": [{"role": "assistant", "content": "ok"}], "next": "__end__"}
+
+    monkeypatch.setattr(agents_graph, "writer", fake_writer)
+    graph = agents_graph.build_agents_graph().compile(checkpointer=graph.checkpointer)
+    graph.invoke({"messages": [{"role": "user", "content": "try again"}], **{k: 0 for k in TURN_COUNTERS},
+                  **{k: [TURN_RESET] for k in TURN_LISTS}}, config=config)
+    assert seen == {"handoffs": 0, "notes": []}
+    assert "TURN_RESET" in open(execution.__file__).read()
+
+
+def test_rows_survive_a_key_without_a_value():
+    from app import bigsummary
+
+    reply = '''[
+  {
+    "Name": "HabitKit",
+    "Why it fits (Mass Audience/Value)",
+    "Why": "Pretty habit tracker."
+  },
+  {"Name": "Pensum", "Why": "Task manager"}
+]'''
+    rows = bigsummary._parse_rows(reply)
+    assert [r["Name"] for r in rows] == ["HabitKit", "Pensum"] and rows[0]["Why it fits (Mass Audience/Value)"] == ""
+
+
+def test_the_criteria_check_drops_items_that_do_not_fit_and_keeps_all_on_a_bad_answer():
+    rows = [{"Name": "Paseo", "What": "agent orchestration for developers"}, {"Name": "Bloom", "What": "pretty notes"}]
+    kept, dropped = research.judge(rows, ["Name", "What"], lambda listing: "1")
+    assert [r["Name"] for r in kept] == ["Bloom"] and dropped == 1
+    assert research.judge(rows, ["Name", "What"], lambda listing: "hmm")[0] == rows
+    assert research.judge(rows, ["Name", "What"], lambda listing: "NONE")[0] == []

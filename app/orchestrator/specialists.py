@@ -543,6 +543,27 @@ WRITER_PROMPT = (
 )
 
 
+# Reports come after a long conversation; without this the model can continue the pattern of its
+# own earlier replies (2026-11-05: a background job had started, and the writer repeated the
+# previous turn's "I cannot provide ..." word for word).
+WRITER_BRIEF = (
+    "[instructions] Write your reply to the person's LATEST message now, from the reports of THIS "
+    "request above. Your earlier replies in this conversation may be out of date or wrong (tools and "
+    "results change): never copy or repeat them."
+)
+
+
+def writer_brief(state: dict[str, Any]) -> str:
+    from app.orchestrator.nodes import this_turn
+
+    brief = WRITER_BRIEF
+    if not state.get("research_notes"):
+        brief += " No specialist worked on this message: answer it yourself, briefly."
+    if started_background(this_turn(state.get("messages", []))):
+        brief += " " + JOB_NOTE
+    return brief
+
+
 def writer(state: dict[str, Any]) -> dict[str, Any]:
     graph_node_total.labels(node="agents_writer").inc()
     step("Writing the answer")
@@ -551,6 +572,7 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
             {"role": "system", "content": with_now(WRITER_PROMPT)},
             *_conversation(state),
             *_reports(state),
+            {"role": "user", "content": writer_brief(state)},
         ]
         answer = llm.chat(with_attachments(convo), stream=True)
     return {"messages": [with_dashboards({"role": "assistant", "content": answer})], "next": "__end__"}

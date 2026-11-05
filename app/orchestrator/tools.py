@@ -1667,7 +1667,7 @@ def _started(job, what: str, files: list[str], state: dict[str, Any], minutes: s
 
 
 def web_research(
-    state: dict[str, Any], topic: str, what: str = "", columns: str = "", sites: str = "all",
+    state: dict[str, Any], topic: str, what: str = "", criteria: str = "", columns: str = "", sites: str = "all",
     period: str = "year", max_sources: int = 25, save_as: str = "", email: bool = False, remind_at: str = "",
 ) -> str:
     """Many websites at once -> one merged, ranked Excel sheet, in the background."""
@@ -1678,12 +1678,23 @@ def web_research(
         return err
     if (err := _enforce(state, "write", "compute", "summarize")) is not None:
         return err
-    if _leaks(state, text=topic + what + sites):
+    if _leaks(state, text=topic + what + sites + criteria):
         return LEAK_REFUSAL
     if not topic.strip():
         return "ERROR: give the topic, e.g. 'android apps'"
     cols = [c.strip() for c in columns.split(",") if c.strip()][:bigsummary.MAX_COLUMNS] or [
         "Name", "Category", "Platform", "What it does", "What makes it special", "Price", "Link"]
+    criteria = " ".join(criteria.split())[:500]
+    # The model's paraphrase can lose a condition ("not just for the geeky guys" became "user-friendly"),
+    # so the person's own words go along with it.
+    asked = next((str(m.get("content") or "") for m in reversed(state.get("messages", []))
+                  if m.get("role") == "user"), "")
+    asked = " ".join(asked.split())[:600]
+    if criteria and asked:
+        criteria += f' (the person asked: "{asked}")'
+    if criteria and not any("fit" in c.lower() or c.lower().startswith("why") for c in cols):
+        cols.insert(min(len(cols), 5), "Why it fits")
+    fits = next((c for c in cols if "fit" in c.lower() or c.lower().startswith("why")), "Why it fits")
     picked = [x.strip().lower() for x in re.split(r"[,\s]+", sites or "") if x.strip()]
     if not picked or "all" in picked:
         picked = [p for p in picked if p != "all"] + [*community.SITES, "github", "web", "news"]
@@ -1702,12 +1713,22 @@ def web_research(
     focus = (f"Topic: {topic}. Find every {kind} mentioned (one row each) that fits the topic. Only things that "
              f"are themselves a {kind}: skip other kinds of things the text mentions (companies, people, "
              f"platforms or stores, operating systems, news events) unless they are a {kind}. Describe what "
-             f"makes each one special as the source says it (features, why people like it).")
+             f"makes each one special as the source says it (features, why people like it)."
+             + (f" Include ONLY {kind}s that meet these criteria: {criteria}. Say in '{fits}' how each one "
+                "meets them, from what the source says; leave out any that don't, or that the source says "
+                "too little about to tell." if criteria else ""))
+
+    def check(listing: str) -> str:
+        return bigsummary._ask(
+            f"You check a list of {kind}s against the person's criteria: {criteria}. Keep only the ones that "
+            "clearly meet ALL of them, judged from the descriptions. Reply with ONLY the numbers to keep, "
+            "comma-separated, or NONE. " + bigsummary.UNTRUSTED, listing, 600)
 
     def pick(listing: str) -> str:
         return bigsummary._ask(
             f"You choose which sources to read for research. Topic: {topic}. Wanted: as many different "
-            f"{kind}s as possible, each with what makes it special. Prefer sources likely to name and "
+            f"{kind}s as possible, each with what makes it special"
+            + (f", that meet these criteria: {criteria}" if criteria else "") + ". Prefer sources likely to name and "
             f"describe many specific {kind}s (recommendation threads, lists, launches, reviews, roundups); "
             "avoid news or policy stories that only mention the topic. Reply with ONLY the numbers of the "
             f"best {n} sources, best first, comma-separated. " + bigsummary.UNTRUSTED, listing, 200)
@@ -1731,11 +1752,13 @@ def web_research(
             reddit_creds=reddit_creds, gh_token=gh_token, github_created_after=created_after)
         if not found and not listings:
             raise RuntimeError("no sources found for that topic; try broader words")
-        report = research.collect(topic, what, cols, found, listings, reader, extract, progress, n, pick)
+        report = research.collect(topic, what, cols, found, listings, reader, extract, progress, n, pick,
+                                  check if criteria else None)
         report.notes = notes + report.notes
         progress("Saving the sheet")
         data = bigsummary.to_xlsx(f"{topic}: {what or 'findings'}", report.columns, report.rows, [
-            ("Topic", topic), ("Looking for", what or "items"), ("Sites", ", ".join(chosen)), ("Period", when),
+            ("Topic", topic), ("Looking for", what or "items"), ("Criteria", criteria or "-"),
+            ("Sites", ", ".join(chosen)), ("Period", when),
             ("Sources read", str(len(report.read))), ("Could not read", str(len(report.failed))),
             ("Notes", "; ".join(report.notes)[:2000] or "-"),
             ("Made", dt_now_header()),
@@ -2316,7 +2339,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                     "site), GitHub, the web and news, reads up to max_sources pages and threads (default 25, most "
                     "60), picks out every matching item, merges duplicates and ranks them by how many sources "
                     "mention them, with links. Use it for 'find all / list of / collect' requests over many sites "
-                    "(new apps, tools, products, companies, events). topic: 2-4 key words. what: the kind of item "
+                    "(new apps, tools, products, companies, events). topic: 2-4 key words to search for, no years "
+                    "or conditions (e.g. 'android apps', 'free photo editor'). criteria: every condition the person "
+                    "set, in their words (who it's for, price, features, look), e.g. 'easy for everyday users, not "
+                    "technical; premium features for free or a very visual feature'. what: the kind of item "
                     "('apps'). columns: comma-separated, first is the name (default Name, Category, Platform, What "
                     "it does, What makes it special, Price, Link). sites: all, or a mix of hackernews, reddit, "
                     "lemmy, github, web, news and any domains (e.g. 'reddit, xda-developers.com'). period: week, "

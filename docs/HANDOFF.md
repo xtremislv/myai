@@ -302,6 +302,22 @@ Measured through the proxy: HN Algolia, GitHub API, Lemmy API and Reddit RSS ans
 - Live: web_research "android apps" (20 sources) -> 58 apps in ~5 min; background.run (10 rounds) -> 14 rows.
 - Not done: no UI for job alerts beyond the bell; jobs are in memory (lost on restart).
 
+Later the same day, the owner's real thread still answered "I cannot provide ..." with no tool calls.
+Causes and fixes:
+- **Per-request state never reset** (all modes, since the start): `handoffs`, `tool_rounds`, etc. and the
+  `operator.add` lists `research_notes`/`assignments`/`review_notes` lived for the whole thread. A thread
+  that had used 4 handoffs (or 8 tool rounds in single mode) never ran an agent again; the writer rewrote
+  the old reports. Now `execution.run` zeroes `TURN_COUNTERS` and clears `TURN_LISTS` (reducer
+  `state.per_turn` with `TURN_RESET`) on every new message. Approval resumes are unaffected.
+- **Writer copied its earlier replies**: it now ends with `writer_brief` (answer the latest message from
+  this request's reports; never repeat earlier replies; JOB_NOTE when a background job started).
+- **`bigsummary._parse_rows`** recovers objects from invalid JSON (a key without a value had emptied a
+  whole sheet).
+- **`web_research(criteria=...)`**: the person's conditions, plus their own latest message verbatim; used
+  to choose sources, filter per source, and a final check of the merged list (`research.judge`).
+- Replayed the owner's 100-message thread: agents ran, the reply announced the job, and the sheet held 31
+  mass-audience apps (Play Best of 2025 winners, free alternatives to paid tools, ...).
+
 ## Department data for members only (2026-11-04, owner's decision)
 - `packs.ADMIN` is an explicit allow list (platform, `mail:contact/*`, admin folders and templates, company
   templates, reports, inventory read, web, compute, credentials except `secret:mail/*`), not `*` minus

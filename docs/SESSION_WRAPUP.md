@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **599 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **603 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -116,7 +116,8 @@ the web, read and answer mail, manage files, make documents from templates, set 
   sources (forums, any named domains, GitHub, 4 web-search phrasings, news), the model picks the most
   useful from their titles, reads up to 60 (4 at a time), extracts rows from each (bigsummary's row
   extraction), merges duplicates across sources and saves an Excel sheet ranked by how many sources
-  mention each item, with links. Live 2026-11-05: "android apps", 20 sources -> 58 apps in ~5 min.
+  mention each item, with links. `criteria=` (plus the person's own words) filters sources, rows and the
+  final list. Live 2026-11-05: "android apps", 20 sources -> 58 apps in ~5 min.
 
 **Long tasks in the background** (2026-11-05)
 - `start_background_task` (`app/background.py`): any big task; the agent works alone for up to 30 tool
@@ -354,6 +355,8 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 - **Don't `source .env` in shell scripts:** `VLLM_EXTRA_ARGS` has spaces. Read KEY=value lines (see `backup.sh`).
 - **After changing the triage prompt**, rerun `scripts/eval_triage.py` (~3 min). Watch "personal sorted as WORK":
   it must stay 0.
+- **Per-request graph state** (counters, reports, tasks) is reset on every new message in `execution.run`
+  (`state.TURN_COUNTERS`/`TURN_LISTS`). Add any new per-request field there, or long threads stop working.
 - **Python edits with `str.replace` can silently miss.** Assert the old text exists. And watch apostrophes inside
   single-quoted prompt strings (broke `guards.py` once).
 - **The network flaps.** If many sites fail at once, check `start_native.sh status` (proxy-tunnel) and

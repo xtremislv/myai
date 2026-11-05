@@ -199,7 +199,7 @@ def test_supervisor_hands_to_research_which_uses_tools_then_writer_answers(monke
                 return _call("fetch_page", url="https://news.example/a")
             return "Sensex rose 1% (news.example, 3 Nov 2026)."
         if system.startswith("You are the assistant answering"):
-            assert "Sensex rose" in messages[-1]["content"]
+            assert "Sensex rose" in messages[-2]["content"] and "LATEST message" in messages[-1]["content"]
             return "Sensex rose 1% today."
         raise AssertionError(system[:60])
 

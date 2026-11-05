@@ -22,6 +22,7 @@ from app.acl.models import Subject
 from app.llm.client import token_sink
 from app.orchestrator.context import attachment_files, attachment_text, user_key
 from app.orchestrator.progress import progress_sink
+from app.orchestrator.state import TURN_COUNTERS, TURN_LISTS, TURN_RESET
 from app.vault import user_keys
 
 
@@ -123,6 +124,9 @@ def run(
         "subject_id": subject.id,
         "subject_roles": list(subject.roles),
         "scratchpad": {"department": department, "mode": mode} if department else {"mode": mode},
+        # A new message is a new request: its budgets and reports start from zero.
+        **{k: 0 for k in TURN_COUNTERS},
+        **{k: [TURN_RESET] for k in TURN_LISTS},
     }
     if chat_key:
         # A private run still waiting on the person's go-ahead: they moved on, so it's a no.

@@ -109,6 +109,32 @@ def merge(rows: list[dict], name_col: str, columns: list[str]) -> list[dict]:
     return sorted(out, key=lambda r: -r["Mentions"])
 
 
+JUDGE_BATCH = 60
+
+
+def judge(rows: list[dict], columns: list[str], check: Callable[[str], str] | None) -> tuple[list[dict], int]:
+    """Drop rows that don't meet the person's criteria, judged on the merged list (each source was
+    read alone, so one that only mentions a developer tool can still let it in). Returns (kept,
+    dropped). An unusable answer keeps the batch rather than losing it."""
+    if check is None or not rows:
+        return rows, 0
+    kept: list[dict] = []
+    for start in range(0, len(rows), JUDGE_BATCH):
+        batch = rows[start:start + JUDGE_BATCH]
+        listing = "\n".join(f"{i}. " + " | ".join(str(r.get(c, ""))[:160] for c in columns if r.get(c))
+                            for i, r in enumerate(batch))
+        try:
+            reply = check(listing)
+            keep = {int(x) for x in re.findall(r"\d+", reply)}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("criteria check failed: %s", type(e).__name__)
+            keep = set(range(len(batch)))
+        if not keep and "none" not in reply.lower():
+            keep = set(range(len(batch)))
+        kept += [r for i, r in enumerate(batch) if i in keep]
+    return kept, len(rows) - len(kept)
+
+
 def find_sources(topic: str, sites: tuple[str, ...], period: str, *, web: Callable[[str], list],
                  news: Callable[[str], list] | None, reddit_creds: dict | None, gh_token: str | None,
                  github_created_after: str = "") -> tuple[list[Source], list[Source], list[str]]:
@@ -180,7 +206,7 @@ def find_sources(topic: str, sites: tuple[str, ...], period: str, *, web: Callab
 def collect(topic: str, what: str, columns: list[str], sources: list[Source], listings: list[Source],
             reader: Callable[[str], str], extract: Callable[[str, str], list[dict]],
             progress: Callable[[str], None], max_sources: int = DEFAULT_SOURCES,
-            pick: Callable[[str], str] | None = None) -> Report:
+            pick: Callable[[str], str] | None = None, check: Callable[[str], str] | None = None) -> Report:
     """Read the best sources, extract records from each (and from the listings), merge."""
     progress("Choosing the most useful sources")
     chosen = choose(sources, max(1, min(max_sources, MAX_SOURCES)), pick)
@@ -215,5 +241,10 @@ def collect(topic: str, what: str, columns: list[str], sources: list[Source], li
             logger.warning("extraction failed: %s", type(e).__name__)
             report.notes.append(f"couldn't read the model's table for {s.url}")
     report.rows = merge(rows, columns[0], columns)
+    if check is not None and report.rows:
+        progress("Checking every item against the criteria")
+        report.rows, dropped = judge(report.rows, columns, check)
+        if dropped:
+            report.notes.append(f"{dropped} items dropped for not meeting the criteria")
     report.columns = [*columns, "Mentions", "Sources"]
     return report
