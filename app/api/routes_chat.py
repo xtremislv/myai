@@ -265,6 +265,22 @@ def chat(
     key: bytes = Depends(chat_key),
     session: Session = Depends(get_session),
 ) -> ChatOut:
+    from app import inflight
+
+    try:
+        running = inflight.start(subject.id, body.thread_id, body.message)
+    except inflight.Busy as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Still working on your last message in this chat.") from e
+    ok = False
+    try:
+        out = _chat_now(body, subject, key, session)
+        ok = True
+        return out
+    finally:
+        inflight.finish(running, ok)
+
+
+def _chat_now(body: ChatIn, subject: Subject, key: bytes, session: Session) -> ChatOut:
     handover: dict = {}
     browser_request.set(handover)  # this request's context only
     made: list = []
@@ -310,6 +326,87 @@ def _stream_response(events: Iterator[str]) -> StreamingResponse:
     )
 
 
+class _Refused(Exception):
+    """A refusal to show the person as it is (e.g. too many replies at once)."""
+
+
+FIRST_WAIT = 10  # seconds to wait for a refusal with its own HTTP status before the stream starts
+
+
+def _run_and_relay(subject: Subject, thread_id: str, message: str, kind: str, work) -> StreamingResponse:
+    """Run work(handover, made, emit) in its own thread and relay what it does as server-sent
+    events. The work goes on to the end, and is saved, whatever the browser does; its steps and
+    outcome are kept in app/inflight.py for a page that comes back. One run per chat at a time.
+
+    Events: {"type":"run","id"} first, then "step"/"delta", then "done" (work's return value) or
+    "error". A refusal raised in the first FIRST_WAIT seconds keeps its HTTP status."""
+    from app import inflight
+
+    try:
+        running = inflight.start(subject.id, thread_id, message, kind)
+    except inflight.Busy as e:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Still working on your last message in this chat. Its reply will appear here; "
+                            "wait for it, or start a new chat.") from e
+    handover: dict = {}  # filled in by the worker: a browser hand-over, dashboards it made
+    made: list = []
+    events_q: queue.Queue = queue.Queue()
+
+    def emit(kind_: str, value) -> None:
+        events_q.put((kind_, value))
+
+    def run() -> None:
+        def on_step(text: str) -> None:
+            emit("step", text)
+            inflight.step(running, text)
+
+        progress_sink.set(on_step)
+        browser_request.set(handover)  # this thread's own context (a copy): nothing leaks to the caller
+        dashboards.set(made)
+        ok = False
+        try:
+            emit("done", work(handover, made, emit))
+            ok = True
+        except Exception as e:  # noqa: BLE001 - re-raised or reported below
+            emit("fail", e)
+        finally:
+            inflight.finish(running, ok)
+
+    threading.Thread(target=contextvars.copy_context().run, args=(run,), daemon=True).start()
+    try:
+        first = events_q.get(timeout=FIRST_WAIT)
+    except queue.Empty:
+        first = None  # still sorting the message: start the stream now so no proxy gives up on it
+    if first is not None and first[0] == "fail" and isinstance(first[1], HTTPException):
+        raise first[1]  # nothing sent yet: a refusal keeps its HTTP status
+
+    def events() -> Iterator[str]:
+        yield PING  # headers and a first byte now
+        yield _event({"type": "run", "id": running.id})
+        event = first
+        while True:
+            if event is None or event[0] == "sorted":
+                yield PING
+            elif event[0] == "step":
+                yield _event({"type": "step", "text": event[1]})
+            elif event[0] == "delta":
+                yield _event({"type": "delta", "text": event[1]})
+            elif event[0] == "fail":
+                if isinstance(event[1], _Refused):
+                    yield _event({"type": "error", "detail": str(event[1])})
+                else:
+                    # The type only: an exception's text could quote the message.
+                    logger.error("chat stream failed: %s", type(event[1]).__name__)
+                    yield _event({"type": "error", "detail": "That request failed on the server. Try again."})
+                return
+            elif event[0] == "done":
+                yield _event({"type": "done", **event[1]})
+                return
+            event = _next(events_q)
+
+    return _stream_response(events())
+
+
 @router.post("/stream")
 def chat_stream(
     body: ChatIn,
@@ -322,91 +419,34 @@ def chat_stream(
     private reply arrive, then {"type":"done",...the ChatOut fields...} or {"type":"error",...}.
     Work replies arrive whole, after their steps."""
     # The whole request runs in its own thread, start to finish, whether or not anyone is still
-    # reading: the response only relays what it does. Before 2026-11-05 the private reply was started
-    # by the response itself, so leaving the page (or a phone switching tabs) while it said
-    # "Thinking..." meant the reply never started; and a new chat appeared in the list only once
-    # the reply had been read. Now the chat is listed as soon as it's sorted, and the request's
-    # steps are kept in app/inflight.py for whoever opens the chat again.
-    from app import inflight
-    from app.llm.client import token_sink
+    # reading: the response only relays what it does (see _run_and_relay).
 
-    handover: dict = {}
-    browser_request.set(handover)  # copied into the worker thread below, which fills it in
-    made: list = []
-    dashboards.set(made)  # likewise: tools add the dashboards they make
+    def work(handover: dict, made: list, emit) -> dict:
+        with Session(bind=bind) as own:
+            mode, finished = _before_the_model(body, subject, key, own)
+        emit("sorted", None)  # the response can start now
+        if finished is not None:
+            return {**finished.model_dump(), "browser": handover or None}
+        with Session(bind=bind) as own:
+            _remember_thread(own, key, subject.id, body.thread_id, body.message)  # listed from now on
+            context = attachments.context_for_thread(own, key, subject.id, body.thread_id)
+            files = attachments.files_for_thread(own, key, subject.id, body.thread_id)
+        with _private_slot(subject) as free:
+            if not free:
+                raise _Refused(BUSY_MESSAGE)
+            token_sink.set(lambda text: emit("delta", text))
+            reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key,
+                                  attachments=context, files=files)
+        with Session(bind=bind) as later:
+            _remember_thread(later, key, subject.id, body.thread_id, body.message)
+        return {**_private_reply(body.thread_id, mode, reply).model_dump(), "browser": handover or None,
+                "dashboards": made}
+
     bind = session.get_bind()
     release_connection(session)
-    events_q: queue.Queue = queue.Queue()
-    running = inflight.start(subject.id, body.thread_id, body.message)
+    from app.llm.client import token_sink
 
-    def work() -> None:
-        def on_step(text: str) -> None:
-            events_q.put(("step", text))
-            inflight.step(running, text)
-
-        progress_sink.set(on_step)
-        try:
-            with Session(bind=bind) as own:
-                prepared = _before_the_model(body, subject, key, own)
-            events_q.put(("ready", prepared))
-            mode, finished = prepared
-            if finished is not None:
-                return
-            with Session(bind=bind) as own:
-                _remember_thread(own, key, subject.id, body.thread_id, body.message)
-                context = attachments.context_for_thread(own, key, subject.id, body.thread_id)
-                files = attachments.files_for_thread(own, key, subject.id, body.thread_id)
-            with _private_slot(subject) as free:
-                if not free:
-                    events_q.put(("busy", None))
-                    return
-                token_sink.set(lambda text: events_q.put(("delta", text)))
-                reply = execution.run(subject, body.message, body.thread_id, mode, None, chat_key=key,
-                                      attachments=context, files=files)
-            with Session(bind=bind) as later:
-                _remember_thread(later, key, subject.id, body.thread_id, body.message)
-            events_q.put(("final", (mode, reply)))
-        except Exception as e:  # noqa: BLE001 - re-raised or reported below
-            events_q.put(("fail", e))
-        finally:
-            inflight.finish(running)
-
-    threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
-    first = events_q.get()
-    if first[0] == "fail":
-        raise first[1]  # nothing sent yet: a refusal keeps its HTTP status
-
-    def events() -> Iterator[str]:
-        yield PING  # headers and a first byte now
-        event = first
-        while True:
-            if event is None:
-                yield PING
-            elif event[0] == "step":
-                yield _event({"type": "step", "text": event[1]})
-            elif event[0] == "delta":
-                yield _event({"type": "delta", "text": event[1]})
-            elif event[0] == "fail":
-                # The type only: an exception's text could quote the message.
-                logger.error("chat stream failed: %s", type(event[1]).__name__)
-                yield _event({"type": "error", "detail": "That request failed on the server. Try again."})
-                return
-            elif event[0] == "busy":
-                yield _event({"type": "error", "detail": BUSY_MESSAGE})
-                return
-            elif event[0] == "ready":
-                finished = event[1][1]
-                if finished is not None:
-                    yield _event({"type": "done", **finished.model_dump(), "browser": handover or None})
-                    return
-            elif event[0] == "final":
-                mode, reply = event[1]
-                yield _event({"type": "done", **_private_reply(body.thread_id, mode, reply).model_dump(),
-                              "browser": handover or None, "dashboards": made})
-                return
-            event = _next(events_q)
-
-    return _stream_response(events())
+    return _run_and_relay(subject, body.thread_id, body.message, "message", work)
 
 
 def _departments_of(subject: Subject) -> dict[str, str]:
@@ -492,9 +532,24 @@ def thread_messages(
 
 
 class RunningOut(BaseModel):
+    id: str
+    kind: str
     message: str
     steps: list[str]
     seconds: int
+
+
+class RunStatusOut(BaseModel):
+    state: Literal["running", "done", "failed", "unknown"]
+
+
+@router.get("/runs/{run_id}", response_model=RunStatusOut)
+def run_status(run_id: str, subject: Subject = Depends(current_subject)) -> RunStatusOut:
+    """How a run ended: done (its reply is saved in the chat), failed, or unknown (lost in a server
+    restart: send the message again). Only the person's own runs."""
+    from app import inflight
+
+    return RunStatusOut(state=inflight.status(subject.id, run_id))
 
 
 @router.get("/running", response_model=list[str])
@@ -515,7 +570,8 @@ def thread_running(thread_id: str, subject: Subject = Depends(current_subject)) 
     run = inflight.get(subject.id, thread_id)
     if run is None or run.done:
         return None
-    return RunningOut(message=run.message, steps=list(run.steps), seconds=int(time.time() - run.started))
+    return RunningOut(id=run.id, kind=run.kind, message=run.message, steps=list(run.steps),
+                      seconds=int(time.time() - run.started))
 
 
 @router.get("/threads/{thread_id}/pending", response_model=ConfirmOut | None)
@@ -538,13 +594,56 @@ def thread_confirm(
     session: Session = Depends(get_session),
 ) -> ChatOut:
     """Go ahead with (or decline) the action the assistant asked you to confirm."""
+    from app import inflight
+
     pending = execution.private_pending(subject, thread_id, key)
     if pending is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "nothing is waiting for your confirmation in this chat")
+    try:
+        running = inflight.start(subject.id, thread_id, "", "confirm")
+    except inflight.Busy as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Already working on this confirmation.") from e
     handover: dict = {}
     browser_request.set(handover)
     made: list = []
     dashboards.set(made)
+    ok = False
+    try:
+        out = _confirm_now(thread_id, body, subject, key, session, pending, made)
+        ok = True
+    except _Refused as e:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(e)) from e
+    finally:
+        inflight.finish(running, ok)
+    return out.model_copy(update={"browser": handover or None, "dashboards": made})
+
+
+@router.post("/threads/{thread_id}/confirm/stream")
+def thread_confirm_stream(
+    thread_id: str,
+    body: ConfirmIn,
+    subject: Subject = Depends(current_subject),
+    key: bytes = Depends(chat_key),
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    """Like .../confirm, as server-sent events (the steps of the work it lets go on), running to the
+    end whatever the browser does: going on after a confirmation (e.g. a checkout) can take minutes."""
+    pending = execution.private_pending(subject, thread_id, key)
+    if pending is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "nothing is waiting for your confirmation in this chat")
+    bind = session.get_bind()
+    release_connection(session)
+
+    def work(handover: dict, made: list, emit) -> dict:
+        with Session(bind=bind) as own:
+            out = _confirm_now(thread_id, body, subject, key, own, pending, made)
+        return {**out.model_dump(), "browser": handover or None, "dashboards": made}
+
+    return _run_and_relay(subject, thread_id, "", "confirm", work)
+
+
+def _confirm_now(thread_id: str, body: ConfirmIn, subject: Subject, key: bytes, session: Session,
+                 pending: dict, made: list) -> ChatOut:
     if body.as_work and pending["tool"] == "browser_commit":
         # Work purchases are paid with company details by Accounts, never from personal ones.
         args = pending["args"]
@@ -561,7 +660,7 @@ def thread_confirm(
     release_connection(session)  # the model call below can take a while
     with _private_slot(subject) as free:
         if not free:
-            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, BUSY_MESSAGE)
+            raise _Refused(BUSY_MESSAGE)
         try:
             out = execution.resume_private(
                 subject, thread_id, key, approved=body.approve, tool=pending["tool"], args=pending["args"],
@@ -569,8 +668,7 @@ def thread_confirm(
             )
         except execution.StaleApproval as e:
             raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
-    reply = _private_reply(thread_id, pending["mode"], out)
-    return reply.model_copy(update={"browser": handover or None, "dashboards": made})
+    return _private_reply(thread_id, pending["mode"], out)
 
 
 @router.get("/threads/{thread_id}/requests", response_model=list[ChatRequestOut])

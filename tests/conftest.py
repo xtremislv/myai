@@ -53,3 +53,21 @@ def nsfw_model_unavailable(monkeypatch):
     monkeypatch.setattr(guards, "model_verdict", lambda message: None)
     monkeypatch.setattr(guards, "forward_verdict", lambda message: None)
     monkeypatch.setattr(guards, "triage_verdict", lambda message, departments, recent, others=None: None)
+
+
+@pytest.fixture(autouse=True)
+def job_markers_in_a_temp_folder(monkeypatch, tmp_path):
+    """Background jobs note themselves on disk (app/jobs.py): never in the server's work folder."""
+    from app import jobs
+
+    monkeypatch.setattr(jobs, "_markers", lambda: tmp_path / "job-markers")
+
+
+@pytest.fixture(autouse=True)
+def no_runs_left_from_other_tests():
+    """Chat runs are registered per chat (app/inflight.py): a run another test left behind would
+    make this test's chat look busy."""
+    from app import inflight
+
+    inflight._runs.clear()
+    inflight._outcomes.clear()

@@ -83,3 +83,7 @@
 {"id": "p82", "msg": "create a new file", "route": "private", "recent": [{"role": "user", "content": "the sheet just contains 50 mails"}, {"role": "assistant", "content": "I apologize for the discrepancy. I will make sure all 1,006 emails are captured."}]}
 {"id": "p83", "msg": "that's wrong, do it again", "route": "private", "recent": [{"role": "user", "content": "see through my mail and see all the mails with the subject related to ai and summarize them and give output in a sheet and table"}, {"role": "assistant", "content": "I have summarized the 1,006 emails with \"AI\" in the subject line. The most relevant and recent summaries are in the table below. A full detailed list has been compiled into a spreadsheet named ai_email_summary.csv."}]}
 {"id": "p84", "msg": "put all my emails from my bank into a spreadsheet", "route": "private"}
+{"id": "p90", "msg": "access the threads that are public on reddit and hacker news, scrape them and get me all the awesome new android apps in a sheet with their unique features", "route": "private"}
+{"id": "p91", "msg": "search other sites if reddit is not available, try every website or public data and list the apps", "route": "private"}
+{"id": "p92", "msg": "find the best free photo editing apps people recommend this year", "route": "private"}
+{"id": "w90", "msg": "Research competitor apps for our client project and save the findings in the research files", "route": "work", "dept": ["researcher"]}

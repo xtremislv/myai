@@ -39,6 +39,41 @@ class RequestOut(BaseModel):
     reason: str = ""
 
 
+APPROVAL_WAIT = 20  # seconds the approver's click waits for the result before it's left running
+
+
+def _resolve(session: Session, row) -> RequestOut:
+    """Carry out the decision. The work it lets go on (e.g. a booking) can take minutes, longer than
+    a web request lives behind the tunnel: it runs in its own thread to the end, and the approver
+    gets the result if it's quick, else "running" (the requester sees the result in their chat)."""
+    import contextvars
+    import threading
+
+    from sqlalchemy.orm import Session as _Session
+
+    from app.db.session import Approval
+
+    bind, approval_id = session.get_bind(), row.id
+    box: dict = {}
+
+    def go() -> None:
+        try:
+            with _Session(bind=bind) as own:
+                box["out"] = resolve_approval(own, own.get(Approval, approval_id))
+        except Exception as e:  # noqa: BLE001 - reported below if the approver is still waiting
+            box["error"] = e
+
+    worker = threading.Thread(target=contextvars.copy_context().run, args=(go,), daemon=True)
+    worker.start()
+    worker.join(APPROVAL_WAIT)
+    if "error" in box:
+        raise box["error"]
+    if "out" in box:
+        return RequestOut(**box["out"].__dict__)
+    return RequestOut(outcome="running", department=row.department, approval_id=approval_id,
+                      reason="Decided. The work it lets go on is still running; the requester will see the result.")
+
+
 @router.post("/v1/request", response_model=RequestOut)
 def submit_request(
     body: RequestIn,
@@ -108,7 +143,7 @@ def approve(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
     if not won:
         raise HTTPException(status.HTTP_409_CONFLICT, f"already {row.state}")
-    return RequestOut(**resolve_approval(session, row).__dict__)
+    return _resolve(session, row)
 
 
 @router.post("/v1/approvals/{approval_id}/deny", response_model=RequestOut)
@@ -124,7 +159,7 @@ def deny(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "approval not found")
     if not won:
         raise HTTPException(status.HTTP_409_CONFLICT, f"already {row.state}")
-    return RequestOut(**resolve_approval(session, row).__dict__)
+    return _resolve(session, row)
 
 
 # ---- Department inbox (forwarded tasks, e.g. orders/bills to accounts) ----

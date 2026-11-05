@@ -451,6 +451,25 @@ def mail_to_sheet(
     ]))
 
 
+def made_at(state: dict[str, Any]) -> str:
+    """Now, in the person's time zone (their setting, else the company's), for files made for them."""
+    from zoneinfo import ZoneInfo
+
+    from app.reminders import service
+
+    try:
+        with SessionLocal() as session:
+            from app.db.session import User
+
+            zone = service.zone_of(session.get(User, _subject(state).id))
+    except Exception:  # noqa: BLE001 - no database (tests) or no such user: the company's zone
+        from app.config import get_settings
+
+        zone = get_settings().timezone
+    now = _dt.datetime.now(ZoneInfo(zone))
+    return now.strftime("%Y-%m-%d %H:%M ") + (now.tzname() or zone)
+
+
 def dt_now_header() -> str:
     from email.utils import format_datetime
 
@@ -1176,10 +1195,29 @@ def _private_data_seen(state: dict[str, Any]) -> bool:
     return any(m.get("role") == "tool" and m.get("name") in PRIVATE_DATA_TOOLS for m in state.get("messages", []))
 
 
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _persons_own_words(state: dict[str, Any], text: str) -> bool:
+    """True if `text` is (nearly) all words the person typed in this conversation: their own words
+    carry none of the mail or file data the guard protects (2026-11-05: a detailed research request
+    was refused in a chat that had once read a notes file). Words that came from elsewhere (names,
+    numbers, sentences from an email) make it False."""
+    words = _WORD.findall(text.lower())
+    if not words:
+        return False
+    typed = set()
+    for m in state.get("messages", []):
+        if m.get("role") == "user":
+            typed |= set(_WORD.findall(str(m.get("content") or "").lower()))
+    foreign = [w for w in words if w not in typed]
+    return len(foreign) <= 8 and len(foreign) <= 0.2 * len(words)
+
+
 def _leaks(state: dict[str, Any], *, url: str = "", text: str = "") -> bool:
     if not _private_data_seen(state):
         return False
-    if text and len(text) > MAX_QUERY_AFTER_PRIVATE:
+    if text and len(text) > MAX_QUERY_AFTER_PRIVATE and not _persons_own_words(state, text):
         return True
     if url:
         from urllib.parse import urlsplit
@@ -1630,7 +1668,7 @@ def save_table(state: dict[str, Any], path: str, rows: str, columns: str = "", t
         blob = bigsummary.to_csv(cols, records)
     else:
         blob = bigsummary.to_xlsx(title or name.rsplit("/", 1)[-1].rsplit(".", 1)[0], cols, records,
-                                  [("Rows", str(len(records))), ("Made", dt_now_header())])
+                                  [("Rows", str(len(records))), ("Made", made_at(state))])
     saved = _save(state, name, blob)
     if not saved.startswith(("Created", "Saved")):
         return saved
@@ -1761,7 +1799,7 @@ def web_research(
             ("Sites", ", ".join(chosen)), ("Period", when),
             ("Sources read", str(len(report.read))), ("Could not read", str(len(report.failed))),
             ("Notes", "; ".join(report.notes)[:2000] or "-"),
-            ("Made", dt_now_header()),
+            ("Made", made_at(state)),
             *[("Source", f"{s.title[:80]} - {s.url}") for s in report.read],
         ])
         saved = _save(state, path, data)
@@ -1810,7 +1848,7 @@ def start_background_task(
             if not result.markdown:
                 raise RuntimeError("the model wrote no result")
             saved = _save(state, files[0], bigsummary.to_docx(title, result.markdown,
-                                                              f"Made in the background, {dt_now_header()}"))
+                                                              f"Made in the background, {made_at(state)}"))
             if not saved.startswith(("Created", "Saved")):
                 raise RuntimeError(saved)
             lines.append(saved)
@@ -1819,7 +1857,7 @@ def start_background_task(
                 raise RuntimeError("the result had no rows for a sheet")
             saved = _save(state, files[-1], bigsummary.to_xlsx(title, result.columns, result.rows, [
                 ("Task", task[:2000]), ("Steps", str(result.rounds)), ("Tool calls", str(result.calls)),
-                ("Made", dt_now_header())]))
+                ("Made", made_at(state))]))
             if not saved.startswith(("Created", "Saved")):
                 raise RuntimeError(saved)
             lines.append(f"{saved} {len(result.rows)} rows.")

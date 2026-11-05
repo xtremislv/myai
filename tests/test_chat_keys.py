@@ -300,3 +300,24 @@ def test_only_the_admin_can_manage_accounts(api):
     assert api.client.post(
         f"/v1/auth/users/{alice}/reset-password", headers=staff, json={"password": "another-long-pass"}
     ).status_code == 403
+
+
+# ---- staying signed in across a reload (2026-11-05) ----
+def test_the_session_cookie_renews_the_token_only_with_its_header_and_ends_on_sign_out(api):
+    first = _change(api, _bearer(_login(api, INITIAL).json()), INITIAL, MINE)
+    _chat_as(api, _bearer(first.json()), "REMEMBER THIS")
+    login = _login(api, MINE)
+    cookie = login.cookies.get("tw_session")
+    assert cookie and "httponly" in login.headers["set-cookie"].lower()
+    assert "path=/v1/auth/session" in login.headers["set-cookie"].lower()
+    assert "samesite=strict" in login.headers["set-cookie"].lower()
+    jar = {"tw_session": cookie}
+    assert api.client.post("/v1/auth/session", cookies=jar).status_code == 401  # a form from elsewhere can't
+    renewed = api.client.post("/v1/auth/session", cookies=jar, headers={"x-tw-session": "1"})
+    assert renewed.status_code == 200 and renewed.json()["access_token"] != login.json()["access_token"]
+    _chat_as(api, _bearer(renewed.json()), "what did I say?")  # the renewed token still opens private chats
+    assert any("REMEMBER THIS" in m["content"] for m in api.prompts[-1])
+    assert api.client.post("/v1/auth/session", headers={"x-tw-session": "1"},
+                           cookies={"tw_session": "forged"}).status_code == 401
+    out = api.client.delete("/v1/auth/session")
+    assert out.status_code == 204 and "tw_session=" in out.headers["set-cookie"]

@@ -2,7 +2,9 @@
 
 A job runs in a thread of the gateway with a copy of the caller's context (so it can save to the
 person's encrypted files with the key they unlocked), and ends with a notification in the bell.
-Jobs live in memory: a gateway restart loses a running job, and the person is told when they ask.
+Jobs live in memory: a gateway restart loses a running job. So each running job leaves a marker on
+disk (its owner and its title, encrypted with the notes key), removed when it ends; at startup any
+marker left means the job was cut off, and its owner is notified to start it again.
 
 Every job ends with a notification in the bell (shown as a browser pop-up while the app is open).
 A job can also ask (``Alerts``) for the result to be emailed and for a reminder to look at it later.
@@ -11,11 +13,13 @@ from __future__ import annotations
 
 import contextvars
 import datetime as dt
+import json
 import logging
 import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,60 @@ class Alerts:
     remind_at: str = ""      # also set a reminder to look at it, e.g. "tomorrow 9am" ("" = none)
 
 
+def _markers() -> Path:
+    from app.config import get_settings
+
+    return Path(get_settings().work_dir) / "jobs"
+
+
+def _mark(job: Job) -> None:
+    """Note a running job on disk, so a restart that kills it can be reported (best effort)."""
+    try:
+        from app.db.session import SessionLocal
+        from app.vault import notes
+
+        with SessionLocal() as session:
+            title = notes.encrypt(session, job.title, f"job:{job.id}")
+        folder = _markers()
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (folder / f"{job.id}.json").write_text(json.dumps({"id": job.id, "owner": job.owner, "title": title}))
+    except Exception:  # noqa: BLE001 - the job runs anyway
+        logger.info("job marker not written", exc_info=True)
+
+
+def _unmark(job: Job) -> None:
+    try:
+        (_markers() / f"{job.id}.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def report_interrupted() -> int:
+    """At startup: tell the owner of every job a restart cut off. Returns how many."""
+    from app.db.session import SessionLocal, User
+    from app.reminders import service
+    from app.vault import notes
+
+    folder = _markers()
+    if not folder.is_dir():
+        return 0
+    count = 0
+    for path in folder.glob("*.json"):
+        try:
+            data = json.loads(path.read_text())
+            with SessionLocal() as session:
+                if session.get(User, data["owner"]) is not None:
+                    title = notes.decrypt(session, data["title"], f"job:{data['id']}")
+                    service.notify(session, data["owner"], "job", f"Interrupted: {title}",
+                                   "The server restarted while this was running, so it stopped before it "
+                                   "finished. Ask the assistant to start it again.")
+                    count += 1
+        except Exception:  # noqa: BLE001 - one bad marker must not stop the others
+            logger.warning("interrupted job not reported", exc_info=True)
+        path.unlink(missing_ok=True)
+    return count
+
+
 def running(owner: str | None = None) -> list[Job]:
     with _lock:
         return [j for j in _jobs.values() if j.status == "running" and (owner is None or j.owner == owner)]
@@ -73,6 +131,7 @@ def start(owner: str, title: str, work: Callable[[Callable[[str], None]], str],
             raise Busy("the server is already running its maximum of background jobs. Try again in a few minutes.")
         job = Job(id=uuid.uuid4().hex[:12], owner=owner, title=title)
         _jobs[job.id] = job
+    _mark(job)
     if notify is None:
         notify = (lambda o, t, b: _notify(o, t, b, alerts)) if alerts else (lambda o, t, b: _notify(o, t, b))
 
@@ -93,6 +152,7 @@ def start(owner: str, title: str, work: Callable[[Callable[[str], None]], str],
             notify(owner, f"Couldn't finish: {title}", f"The job stopped: {job.result}. Ask the assistant to try again.")
         finally:
             job.finished = dt.datetime.now(dt.timezone.utc)
+            _unmark(job)
             _prune(owner)
 
     threading.Thread(target=contextvars.copy_context().run, args=(run,), daemon=True, name=f"job-{job.id}").start()

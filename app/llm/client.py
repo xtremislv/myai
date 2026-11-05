@@ -262,6 +262,8 @@ def _chat(
     if tools:
         params["tools"] = tools
         params["tool_choice"] = tool_choice or "auto"
+    if kwargs.get("timeout"):  # seconds for this call (the client's default is 10 minutes, retried twice)
+        params["timeout"] = kwargs["timeout"]
     with tracer.start_as_current_span("llm.chat") as span:
         span.set_attribute("llm.model", model)
         start = time.perf_counter()

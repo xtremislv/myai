@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **604 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **611 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -317,6 +317,7 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 - 64k context; pages are clipped (20,000 chars per page, older tool results to 3,000); overlong prompts drop their oldest turns. Prompts near 50k tokens take minutes to prefill on the Quadro.
 - Gemma sometimes needs nudges (it asked "are you sure?" in words before deleting; fixed by prompt wording).
 - Keyless web search is decent through DuckDuckGo but rate-limits; a Tavily/Serper key would be better.
+- Reloading the app keeps you signed in for as long as the session is valid (1 h, renewed while open).
 - Keyless Reddit is RSS only (no scores) and rate-limited: a second request straight after the first gets 429.
   A `reddit/oauth` app key fixes both. Background jobs live in memory: a gateway restart loses them.
 - Many shops/news sites block automated browsers regardless of network.

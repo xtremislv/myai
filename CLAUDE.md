@@ -39,7 +39,11 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Attachment text goes to the model through `app/orchestrator/context.py`, never graph state: state is
   checkpointed forever, and attachments must be gone after 3 days.
 - The web UI is plain files in `app/web/`, served at `/ui/` under a strict CSP: no inline scripts or styles,
-  no third-party assets. The token stays in JS memory because it can open private chats.
+  no third-party assets. The token stays in JS memory because it can open private chats; a reload renews it
+  from the HttpOnly `tw_session` cookie (Path `/v1/auth/session`, SameSite=Strict, `x-tw-session` header).
+  Never put the token in localStorage or a readable cookie.
+- Chat work runs through `routes_chat._run_and_relay` (own thread, one run per chat via `app/inflight.py`,
+  run ids and outcomes for `followRun` in app.js). Never start work inside a streaming generator.
 - `tests/test_postgres.py` runs only with `POSTGRES_INTEGRATION=1` and a throwaway `POSTGRES_DSN`.
 - `/v1/chat` is the one chat box. `guards.triage` sorts each message, defaulting to private. Private messages
   have `PRIVATE_TOOLS`: read-only web, plus the person's OWN mailbox and the official mailboxes of their own

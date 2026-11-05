@@ -5,7 +5,7 @@ import datetime as dt
 import uuid
 
 from cryptography.exceptions import InvalidTag
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -83,27 +83,85 @@ class CreateUserIn(BaseModel):
     roles: list[str] = []
 
 
+# Staying signed in across a reload (2026-11-05): the token is also kept in a cookie that page
+# scripts can't read (HttpOnly), sent only to /v1/auth/session (Path), never from other sites
+# (SameSite=Strict, plus a header a form can't send), and only over HTTPS (Secure). The page itself
+# still keeps its token in memory only. POST /v1/auth/session swaps a still-valid one for a fresh one.
+SESSION_COOKIE = "tw_session"
+SESSION_PATH = "/v1/auth/session"
+SESSION_HEADER = "x-tw-session"
+
+
+def _keep_session(response: Response, out: TokenOut) -> TokenOut:
+    from app.config import get_settings
+
+    response.set_cookie(SESSION_COOKIE, out.access_token, max_age=get_settings().jwt_ttl_seconds,
+                        path=SESSION_PATH, httponly=True, secure=True, samesite="strict")
+    return out
+
+
+@router.post("/session", response_model=TokenOut)
+def renew_session(
+    response: Response,
+    session: Session = Depends(get_session),
+    tw_session: str | None = Cookie(default=None),
+    x_tw_session: str | None = Header(default=None),
+) -> TokenOut:
+    """A fresh token for the person whose session cookie is still valid (a reload, or every half
+    hour while the app is open). Roles are read again; a disabled account is refused."""
+    from app.auth.security import decode_token
+
+    if x_tw_session != "1" or not tw_session:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "no session")
+    try:
+        claims = decode_token(tw_session)
+    except Exception as e:  # noqa: BLE001 - expired or forged
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session ended") from e
+    user = session.get(User, claims.get("sub"))
+    if user is None or user.disabled:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session ended")
+    chat_key = None
+    if claims.get("ck"):
+        try:
+            chat_key = user_keys.open_from_token(claims["ck"], user.id)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session ended") from e
+    out = TokenOut(access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
+                   must_change_password=user.wrapped_chat_key is None)
+    return _keep_session(response, out)
+
+
+@router.delete("/session", status_code=status.HTTP_204_NO_CONTENT)
+def end_session(response: Response) -> Response:
+    """Sign out: forget the session cookie."""
+    response.delete_cookie(SESSION_COOKIE, path=SESSION_PATH, httponly=True, secure=True, samesite="strict")
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, session: Session = Depends(get_session)) -> TokenOut:
+def login(body: LoginIn, response: Response, session: Session = Depends(get_session)) -> TokenOut:
     user = session.query(User).filter(User.username == body.username).one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
     if user.disabled:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
     if user.wrapped_chat_key is None:
-        return TokenOut(
+        return _keep_session(response, TokenOut(
             access_token=issue_token(user.id, user.username, user.roles), must_change_password=True
-        )
+        ))
     try:
         chat_key = user_keys.unlock(user, body.password)
     except InvalidTag as e:  # bcrypt only checks 72 bytes; the key needs the whole password
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
-    return TokenOut(access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key))
+    return _keep_session(response, TokenOut(
+        access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key)))
 
 
 @router.post("/change-password", response_model=TokenOut)
 def change_password(
     body: ChangePasswordIn,
+    response: Response,
     subject: Subject = Depends(current_subject),
     session: Session = Depends(get_session),
 ) -> TokenOut:
@@ -123,14 +181,14 @@ def change_password(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
     user.password_hash = hash_password(body.new_password)
     session.commit()
-    return TokenOut(
+    return _keep_session(response, TokenOut(
         access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
         recovery_code=recovery_code,
-    )
+    ))
 
 
 @router.post("/recover", response_model=TokenOut)
-def recover(body: RecoverIn, session: Session = Depends(get_session)) -> TokenOut:
+def recover(body: RecoverIn, response: Response, session: Session = Depends(get_session)) -> TokenOut:
     """Set a new password with a recovery code. The code is used up: a new one is issued."""
     user = session.query(User).filter(User.username == body.username).one_or_none()
     if user is None or user.wrapped_recovery_key is None:
@@ -145,10 +203,10 @@ def recover(body: RecoverIn, session: Session = Depends(get_session)) -> TokenOu
     new_code = user_keys.add_recovery_code(user, chat_key)
     user.password_hash = hash_password(body.new_password)
     session.commit()
-    return TokenOut(
+    return _keep_session(response, TokenOut(
         access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
         recovery_code=new_code,
-    )
+    ))
 
 
 @router.post("/recovery-code", response_model=RecoveryCodeOut)

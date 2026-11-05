@@ -18,6 +18,7 @@ const OUTCOMES = {
   denied_auth: ["Not allowed", "bad"],
   denied_quota: ["Rate limited", "bad"],
   denied_busy: ["Busy", "warn"],
+  running: ["Decided: still working", "warn"],
   error: ["Failed", "bad"],
 };
 
@@ -406,11 +407,15 @@ async function api(path, { method = "GET", body, form, raw } = {}) {
   const headers = {};
   if (state.token) headers.authorization = `Bearer ${state.token}`;
   if (body) headers["content-type"] = "application/json";
-  const response = await fetch(path, {
+  let response = await fetch(path, {
     method, headers, body: body ? JSON.stringify(body) : form,
   });
-  if (response.status === 401 && state.token && path !== "/v1/auth/change-password"
-      && path !== "/v1/auth/recovery-code") {
+  const renewable = state.token && path !== "/v1/auth/change-password" && path !== "/v1/auth/recovery-code";
+  if (response.status === 401 && renewable && await renewSession()) {  // the token had just run out
+    headers.authorization = `Bearer ${state.token}`;
+    response = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : form });
+  }
+  if (response.status === 401 && renewable) {
     signOut("Your session ended. Sign in again.");
     throw new Error("Session ended");
   }
@@ -427,13 +432,22 @@ async function api(path, { method = "GET", body, form, raw } = {}) {
   return response.status === 204 ? null : response.json();
 }
 
-// Calls onDelta with each piece of the reply as it arrives. Resolves with the finished reply.
-async function streamChat(body, onDelta, onStep = () => {}) {
-  const response = await fetch("/v1/chat/stream", {
+// POSTs and reads server-sent events: onRun(id) first, then onStep/onDelta as they come. Resolves with
+// the "done" event. A connection that ends without it throws err.cutOff: the server goes on regardless.
+async function streamPost(path, body, onDelta, onStep = () => {}, onRun = () => {}) {
+  const send = () => fetch(path, {
     method: "POST",
     headers: { authorization: `Bearer ${state.token}`, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+  const cutOff = () => Object.assign(new Error("The connection dropped while the assistant was working."), { cutOff: true });
+  let response;
+  try {
+    response = await send();
+    if (response.status === 401 && await renewSession()) response = await send();
+  } catch {
+    throw cutOff();  // the network failed: the server may have the request anyway, so follow it up
+  }
   if (response.status === 401) {
     signOut("Your session ended. Sign in again.");
     throw new Error("Session ended");
@@ -446,37 +460,72 @@ async function streamChat(body, onDelta, onStep = () => {}) {
   const decoder = new TextDecoder();
   let buffer = "";
   let finished = null;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let end;
-    while ((end = buffer.indexOf("\n\n")) >= 0) {
-      const line = buffer.slice(0, end);
-      buffer = buffer.slice(end + 2);
-      if (!line.startsWith("data: ")) continue;
-      const event = JSON.parse(line.slice(6));
-      if (event.type === "delta") onDelta(event.text);
-      else if (event.type === "step") onStep(event.text);
-      else if (event.type === "error") throw new Error(event.detail);
-      else if (event.type === "done") finished = event;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let end;
+      while ((end = buffer.indexOf("\n\n")) >= 0) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        if (!line.startsWith("data: ")) continue;
+        const event = JSON.parse(line.slice(6));
+        if (event.type === "run") onRun(event.id);
+        else if (event.type === "delta") onDelta(event.text);
+        else if (event.type === "step") onStep(event.text);
+        else if (event.type === "error") throw Object.assign(new Error(event.detail), { fromServer: true });
+        else if (event.type === "done") finished = event;
+      }
     }
+  } catch (err) {
+    if (err.fromServer) throw err;
+    finished = null;  // the network failed mid-read: treated as a dropped connection below
   }
-  if (!finished) {
-    // The connection dropped (network or proxy), but the server finishes the run and saves it.
-    const err = new Error("The connection dropped while the assistant was working.");
-    err.cutOff = true;
-    throw err;
-  }
+  if (!finished) throw cutOff();  // the connection dropped (network, proxy, a phone switching apps)
   return finished;
 }
 
-// After a dropped stream: wait for the reply the server is still producing and saved to the chat.
-// Resolves with {reply, handled_by, dashboards}, {pending} for a confirmation, or null on giving up.
+const streamChat = (body, onDelta, onStep, onRun) => streamPost("/v1/chat/stream", body, onDelta, onStep, onRun);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// After a dropped connection or on coming back to a chat: follow a run on the server until it ends.
+// Resolves with {state: "done", saved, pending} (the saved reply, or a confirmation it now waits for),
+// {state: "failed"}, or {state: "unknown"} (the server restarted and the run was lost with it).
+async function followRun(run) {
+  const where = `/v1/chat/threads/${encodeURIComponent(run.thread)}`;
+  if (!run.id) {  // the connection failed before the run was named: find it, or its saved reply
+    const now = await api(`${where}/running`).catch(() => null);
+    if (now) run.id = now.id;
+    else {
+      const saved = await waitForSavedReply(run.thread, run.text, { every: 2000, limit: 10000 });
+      if (saved && saved.pending) return { state: "done", pending: saved.pending };
+      return saved ? { state: "done", saved } : { state: "unknown" };
+    }
+  }
+  for (;;) {
+    await sleep(3000);
+    if (!state.token) return { state: "signed-out" };
+    let now;
+    try { now = (await api(`/v1/chat/runs/${run.id}`)).state; } catch { continue; }  // a blip: ask again
+    if (now === "running") {
+      const live = await api(`${where}/running`).catch(() => null);
+      if (live) live.steps.slice(run.steps.length).forEach((t) => { run.steps.push(t); if (run.ui) run.ui.step(t); });
+      continue;
+    }
+    if (now !== "done") return { state: now };
+    const history = await api(`${where}/messages`).catch(() => []);
+    const pending = await api(`${where}/pending`).catch(() => null);
+    const last = history[history.length - 1];
+    return { state: "done", saved: last && last.role === "assistant" ? last : null, pending };
+  }
+}
+
+// Used by followRun when a run has no id yet: wait briefly for the reply to appear in the chat.
 async function waitForSavedReply(thread, text, { every = 5000, limit = 20 * 60 * 1000 } = {}) {
   const until = Date.now() + limit;
   while (Date.now() < until && state.token) {
-    await new Promise((resolve) => setTimeout(resolve, every));
+    await sleep(every);
     try {
       const history = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/messages`);
       const asked = history.map((m) => m.role === "user" && m.content === text).lastIndexOf(true);
@@ -488,20 +537,42 @@ async function waitForSavedReply(thread, text, { every = 5000, limit = 20 * 60 *
   return null;
 }
 
+// Staying signed in: the server also keeps the session in a cookie this page can't read, sent only
+// to /v1/auth/session. A reload asks it for a fresh token; so does a timer, every half hour.
+let renewing = null;
+function renewSession() {
+  if (!renewing) {
+    renewing = fetch("/v1/auth/session", { method: "POST", headers: { "x-tw-session": "1" }, credentials: "same-origin" })
+      .then(async (response) => {
+        if (!response.ok) return false;
+        const result = await response.json();
+        if (result.must_change_password) return false;
+        useToken(result);
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => { renewing = null; });
+  }
+  return renewing;
+}
+setInterval(() => { if (state.token) renewSession(); }, 30 * 60 * 1000);
+
 function useToken(result, username) {
   state.token = result.access_token;
   const payload = result.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
   // For choosing which pages to show until /v1/dashboard answers. The server checks every action itself.
-  state.roles = JSON.parse(atob(payload)).roles || [];
-  state.username = username;
+  const claims = JSON.parse(atob(payload));
+  state.roles = claims.roles || [];
+  state.username = username || claims.username || state.username;
 }
 
 function signOut(message) {
+  fetch("/v1/auth/session", { method: "DELETE", credentials: "same-origin" }).catch(() => {});
   clearInterval(state.poll);
   clearInterval(state.bellPoll);
   Object.assign(state, {
     token: null, username: "", roles: [], view: "chat", thread: null, threads: [], counts: {}, poll: null,
-    bellPoll: null, unread: 0,
+    bellPoll: null, unread: 0, running: {},
   });
   loginScreen(message);
 }
@@ -1030,17 +1101,21 @@ async function chatView(thread, { reloadThreads, paint, open }) {
   const confirmCard = (pending) => {
     const error = errorBox();
     const card = h("div", { class: "confirm card" });
+    // Going on after a confirmation can take minutes (a checkout): it runs and shows like a message.
     const decide = (approve, asWork = false) => async () => {
+      if (state.running[thread]) return;
       error.clear();
       card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
-      try {
-        const result = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/confirm`, { method: "POST", body: { approve, as_work: asWork } });
-        card.remove();
-        showResult(result);
-      } catch (err) {
-        error.fail(err);
-        card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
-      }
+      card.remove();
+      const run = {
+        kind: "confirm", thread, text: "", steps: [], streamed: "",
+        onRefused(err) {  // nothing happened (e.g. busy): offer the card again
+          run.ui.messages.append(card);
+          card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+          error.fail(err);
+        },
+      };
+      await runHere(run, `/v1/chat/threads/${encodeURIComponent(thread)}/confirm/stream`, { approve, as_work: asWork });
     };
     const LABELS = { to: "To", subject: "Subject", body: "Message", path: "File", category: "Mailbox", in_reply_to: "In reply to",
       summary: "What happens", label: "Button" };
@@ -1107,12 +1182,6 @@ async function chatView(thread, { reloadThreads, paint, open }) {
     else openBrowser(b.scope, b.reason);
   };
 
-  const showResult = (result) => {
-    if (result.outcome === "confirm") confirmCard(result.confirm);
-    else if (result.reply) bubble("assistant", result.reply);
-    handover(result.browser);
-  };
-
   const watchRequests = async () => {
     clearInterval(state.poll);
     if (await paintRequests()) {
@@ -1152,14 +1221,14 @@ async function chatView(thread, { reloadThreads, paint, open }) {
   // coming back shows the question, the steps so far and then the reply (2026-11-05: switching
   // pages lost the request from view, and people sent it again).
   const attach = (run, { haveQuestion = false } = {}) => {
-    if (!haveQuestion) bubble("user", run.text);
-    const thinking = h("div", { class: "msg assistant thinking" }, "Thinking...");
+    if (!haveQuestion && run.kind !== "confirm") bubble("user", run.text);
+    const thinking = h("div", { class: "msg assistant thinking" }, run.kind === "confirm" ? "Carrying on..." : "Thinking...");
     messages.append(thinking);
     setEmpty(false);
     const steps = h("ol", { class: "steps", "aria-live": "polite" });
     let drawing = false;
     run.ui = {
-      thinking, bubble, confirmCard, handover, error, toBottom, setEmpty, messages,
+      thinking, bubble, confirmCard, error, messages,
       step(textOfStep) {
         if (run.streamed) return;
         if (!steps.isConnected) {
@@ -1182,7 +1251,49 @@ async function chatView(thread, { reloadThreads, paint, open }) {
         });
       },
       busy(on) { send.disabled = on; },
-      restore() { input.value = run.text; grow(); },
+      // Put the person's message back so they can send it again (only if they haven't typed since).
+      restore() {
+        if (run.kind === "confirm" || input.value.trim()) return;
+        input.value = run.text;
+        grow();
+      },
+      dropQuestion() {
+        const mine = [...messages.querySelectorAll(".msg.user")].pop();
+        if (mine && mine.textContent === run.text) mine.remove();
+        if (!messages.children.length) setEmpty(true);
+      },
+      // The finished request: the reply, a confirmation to give, or a blocked message.
+      async result(result) {
+        thinking.remove();
+        if (result.outcome === "flagged_nsfw") {
+          run.ui.dropQuestion();
+          bubble("flagged", "This message was blocked and reported to HR and the admin. It wasn't saved in this chat.");
+        } else if (result.outcome === "confirm") {
+          confirmCard(result.confirm);
+        } else {
+          if (result.reply) bubble("assistant", result.reply, result.route === "work" ? result.department : null, result.dashboards);
+          handover(result.browser);
+          if (result.route === "work" && state.thread === thread) await watchRequests();
+        }
+        toBottom();
+        await reloadThreads().catch(() => {});
+      },
+      // How a run the page lost track of ended (see followRun).
+      followed(outcome) {
+        thinking.remove();
+        if (outcome.state === "done" && outcome.pending) confirmCard(outcome.pending);
+        else if (outcome.state === "done" && outcome.saved) {
+          bubble("assistant", outcome.saved.content, outcome.saved.handled_by, outcome.saved.dashboards);
+        } else if (outcome.state === "failed") {
+          run.ui.restore();
+          error.fail(new Error("That request failed on the server, so there's no reply. Send it again."));
+        } else if (outcome.state === "unknown") {
+          run.ui.restore();
+          error.fail(new Error("That request was interrupted (the connection or the server failed), so there's "
+            + "no reply. " + (run.kind === "confirm" ? "Check this chat before trying again." : "Your message is back in the box: send it again.")));
+        }
+        toBottom();
+      },
     };
     run.steps.forEach((t) => run.ui.step(t));
     if (run.streamed) run.ui.draw();
@@ -1190,25 +1301,47 @@ async function chatView(thread, { reloadThreads, paint, open }) {
     toBottom();
   };
 
+  // Run a request in this chat (a message, or going on after a confirmation) and show it as it goes.
+  const runHere = async (run, path, body) => {
+    state.running[thread] = run;
+    attach(run);
+    const ui = () => run.ui;  // the page showing this chat now (it may have been reopened)
+    try {
+      const result = await streamPost(path, body, (piece) => { run.streamed += piece; ui().draw(); },
+        (textOfStep) => { run.steps.push(textOfStep); ui().step(textOfStep); },
+        (id) => { run.id = id; });
+      await ui().result(result);
+    } catch (err) {
+      if (err.cutOff) {
+        // Keep the question; the answer is still coming. Don't invite a second, duplicate run.
+        ui().step("The connection dropped, but the assistant is still working. The reply will appear here when it's ready.");
+        ui().followed(await followRun(run));
+        await reloadThreads().catch(() => {});
+      } else {
+        ui().thinking.remove();
+        if (run.kind === "confirm") run.onRefused(err);
+        else {
+          ui().dropQuestion();
+          ui().restore();
+          ui().error.fail(err);
+        }
+      }
+    } finally {
+      delete state.running[thread];
+      ui().busy(false);
+      if (state.thread === thread && input.isConnected && run.kind !== "confirm") input.focus();
+    }
+  };
+
   // The server is still working on a request this page didn't send (the page was reloaded, or it
-  // was sent from another tab): show it and wait for the saved reply.
+  // was sent from another tab): show it and follow it to the end.
   const watchServerRun = async (running, haveQuestion) => {
-    const run = { text: running.message, steps: [], streamed: "", fromServer: true };
+    const run = { id: running.id, kind: running.kind, thread, text: running.message, steps: [], streamed: "" };
     state.running[thread] = run;
     attach(run, { haveQuestion });
     running.steps.forEach((t) => { run.steps.push(t); run.ui.step(t); });
     try {
-      for (;;) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        if (!state.token) return;
-        const now = await api(`/v1/chat/threads/${encodeURIComponent(thread)}/running`).catch(() => running);
-        if (!now) break;
-        now.steps.slice(run.steps.length).forEach((t) => { run.steps.push(t); run.ui.step(t); });
-      }
-      const saved = await waitForSavedReply(thread, run.text, { every: 1000, limit: 30000 });
-      run.ui.thinking.remove();
-      if (saved && saved.pending) run.ui.confirmCard(saved.pending);
-      else if (saved) run.ui.bubble("assistant", saved.content, saved.handled_by, saved.dashboards);
+      run.ui.followed(await followRun(run));
     } finally {
       delete state.running[thread];
       run.ui.busy(false);
@@ -1224,60 +1357,10 @@ async function chatView(thread, { reloadThreads, paint, open }) {
       error.clear();
       input.value = "";
       grow();
-      const run = { text, steps: [], streamed: "" };
-      state.running[thread] = run;
-      attach(run);
-      const ui = () => run.ui;  // the page showing this chat now (it may have been reopened)
       // The chat is listed (Recent chats) as soon as the server has it, not only after the reply.
       setTimeout(() => { if (state.token) reloadThreads().catch(() => {}); }, 4000);
-      try {
-        const result = await streamChat({ message: text, thread_id: thread }, (piece) => {
-          run.streamed += piece;
-          ui().draw();
-        }, (textOfStep) => { run.steps.push(textOfStep); ui().step(textOfStep); });
-        ui().thinking.remove();
-        if (result.outcome === "flagged_nsfw") {
-          const mine = [...ui().messages.querySelectorAll(".msg.user")].pop();
-          if (mine) mine.remove();
-          ui().bubble("flagged", "This message was blocked and reported to HR and the admin. It wasn't saved in this chat.");
-        } else if (result.outcome === "confirm") {
-          ui().confirmCard(result.confirm);
-          await reloadThreads();
-        } else {
-          ui().bubble("assistant", result.reply, result.route === "work" ? result.department : null, result.dashboards);
-          ui().handover(result.browser);
-          await reloadThreads();
-          if (result.route === "work" && state.thread === thread) await watchRequests();
-          ui().toBottom();
-        }
-      } catch (err) {
-        if (err.cutOff) {
-          // Keep the question; the answer is still coming. Don't invite a second, duplicate run.
-          ui().step("The connection dropped, but the assistant is still working. The reply will appear here when it's ready.");
-          const saved = await waitForSavedReply(thread, text);
-          ui().thinking.remove();
-          if (saved && saved.pending) {
-            ui().confirmCard(saved.pending);
-          } else if (saved) {
-            ui().bubble("assistant", saved.content, saved.handled_by, saved.dashboards);
-            ui().toBottom();
-          } else {
-            ui().error.fail(new Error("No reply yet. Reopen this chat later to see it; there's no need to ask again."));
-          }
-          await reloadThreads().catch(() => {});
-        } else {
-          ui().thinking.remove();
-          const mine = [...ui().messages.querySelectorAll(".msg.user")].pop();
-          if (mine) mine.remove();
-          ui().restore();
-          ui().error.fail(err);
-          if (!ui().messages.children.length) ui().setEmpty(true);
-        }
-      } finally {
-        delete state.running[thread];
-        ui().busy(false);
-        if (state.thread === thread && input.isConnected) input.focus();
-      }
+      await runHere({ kind: "message", thread, text, steps: [], streamed: "" }, "/v1/chat/stream",
+        { message: text, thread_id: thread });
     },
   },
     files,
@@ -1831,8 +1914,10 @@ function resultNotice(result) {
 async function approvalsView(refresh) {
   const rows = await api("/v1/approvals");
   const error = errorBox();
-  const decide = (id, verb) => async () => {
+  const decide = (id, verb) => async (event) => {
     error.clear();
+    const buttons = event.currentTarget.parentElement.querySelectorAll("button");
+    buttons.forEach((b) => { b.disabled = true; });  // one decision, not two
     try {
       const result = await api(`/v1/approvals/${id}/${verb}`, { method: "POST" });
       const content = await approvalsView(refresh);
@@ -1840,6 +1925,7 @@ async function approvalsView(refresh) {
       document.querySelector(".page").replaceChildren(content);
       refreshCounts();
     } catch (err) {
+      buttons.forEach((b) => { b.disabled = false; });
       error.fail(err);
     }
   };
@@ -2921,4 +3007,5 @@ async function templatesView(refresh) {
   );
 }
 
-loginScreen();
+// A reload keeps the person signed in while their session is still valid.
+renewSession().then((ok) => (ok ? shell() : loginScreen()));

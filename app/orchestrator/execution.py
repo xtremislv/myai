@@ -9,19 +9,13 @@ Two guarantees live here:
 """
 from __future__ import annotations
 
-import contextvars
-import queue
-import threading
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 from langgraph.types import Command
 
 from app.acl.models import Subject
-from app.llm.client import token_sink
 from app.orchestrator.context import attachment_files, attachment_text, user_key
-from app.orchestrator.progress import progress_sink
 from app.orchestrator.state import TURN_COUNTERS, TURN_LISTS, TURN_RESET
 from app.vault import user_keys
 
@@ -164,37 +158,6 @@ def _missing(graph, config, context: list[dict[str, Any]]) -> list[dict[str, Any
 # A stream says something at least this often. Cloudflare (and other proxies) close a response
 # that sends nothing for ~100 s, which cut off long mail summaries mid-run (2026-11-04).
 KEEPALIVE_SECONDS = 15
-
-
-def stream_private(
-    subject: Subject, message: str, thread_id: str, mode: str, chat_key: bytes, attachments: str | None,
-    files: list[dict] | None = None,
-) -> Iterator[tuple[str, Any]]:
-    """Run a private reply, yielding ("step", text) for what the agents are doing (searching,
-    opening a page), ("delta", text) as words arrive, and then either
-    ("final", full_reply) or ("error", exception). The run finishes and is saved even if
-    the reader goes away."""
-    events: queue.Queue = queue.Queue()
-
-    def work() -> None:
-        token_sink.set(lambda text: events.put(("delta", text)))
-        progress_sink.set(lambda text: events.put(("step", text)))
-        try:
-            events.put(("final", run(subject, message, thread_id, mode, None, chat_key=chat_key,
-                                     attachments=attachments, files=files)))
-        except Exception as e:  # noqa: BLE001 - reported to the reader
-            events.put(("error", e))
-
-    threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
-    while True:
-        try:
-            event = events.get(timeout=KEEPALIVE_SECONDS)
-        except queue.Empty:  # still working (a long model call): tell the reader so
-            yield ("ping", None)
-            continue
-        yield event
-        if event[0] not in ("delta", "step"):
-            return
 
 
 def private_history(subject: Subject, thread_id: str, chat_key: bytes) -> list[dict[str, Any]]:

@@ -121,7 +121,9 @@ def test_collect_reads_sources_and_skips_ones_that_fail():
     extract = lambda text, url: [{"Name": "Gander", "Link": "https://github.com/o/gander" if url == "GitHub" else ""}]  # noqa: E731
     rep = research.collect("android apps", "apps", ["Name", "Link"], sources, listings, reader, extract, lambda t: None)
     assert [s.url for s in rep.read] == ["https://a"] and [s.url for s in rep.failed] == ["https://b"]
-    assert rep.rows[0]["Mentions"] == 2 and rep.columns == ["Name", "Link", "Mentions", "Sources"]
+    # The listing names it too, but only the thread is a source: counted once (2026-11-05: listings inflated counts).
+    assert rep.rows[0]["Mentions"] == 1 and rep.rows[0]["Sources"] == "https://a"
+    assert rep.rows[0]["Link"] == "https://github.com/o/gander" and rep.columns == ["Name", "Link", "Mentions", "Sources"]
 
 
 class FakeReply(str):
@@ -306,3 +308,62 @@ def test_the_criteria_check_drops_items_that_do_not_fit_and_keeps_all_on_a_bad_a
     assert [r["Name"] for r in kept] == ["Bloom"] and dropped == 1
     assert research.judge(rows, ["Name", "What"], lambda listing: "hmm")[0] == rows
     assert research.judge(rows, ["Name", "What"], lambda listing: "NONE")[0] == []
+
+
+def test_the_same_thing_under_two_names_or_one_link_is_one_row():
+    rows = [{"Name": "Free My TV (for LG webOS)", "Link": "", "_source": "a"},
+            {"Name": "FreeMyTvWebOS", "Link": "https://github.com/x/freemytv", "_source": "b"},
+            {"Name": "Gander viewer", "Link": "https://github.com/m/gander", "_source": "c"},
+            {"Name": "Gander", "Link": "https://github.com/m/gander/", "_source": "d"},
+            {"Name": "Photo", "Link": "", "_source": "e"}, {"Name": "PhotoCraft", "Link": "", "_source": "f"},
+            {"Name": "Only listed", "Link": "", "_source": "", "_fallback": "https://only.example"}]
+    out = {r["Name"]: r for r in research.merge(rows, "Name", ["Name", "Link"])}
+    assert out["Free My TV (for LG webOS)"]["Mentions"] == 2
+    assert out["Gander viewer"]["Mentions"] == 2 and out["Gander viewer"]["Sources"] == "c\nd"
+    assert "Photo" in out and "PhotoCraft" in out  # a short name isn't swallowed by a longer one
+    assert out["Only listed"]["Mentions"] == 1 and out["Only listed"]["Sources"] == "https://only.example"
+
+
+def test_a_job_cut_off_by_a_restart_is_reported_to_its_owner(monkeypatch, tmp_path):
+    from app.reminders import service
+
+    folder = tmp_path / "job-markers"
+    monkeypatch.setattr(jobs, "_markers", lambda: folder)
+    import app.db.session as dbs
+    from app.vault import notes
+
+    class S:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, model, key):
+            return object() if key == "u1" else None
+
+    monkeypatch.setattr(dbs, "SessionLocal", S)
+    monkeypatch.setattr(notes, "encrypt", lambda s, text, ctx: f"enc[{text}|{ctx}]")
+    monkeypatch.setattr(notes, "decrypt", lambda s, blob, ctx: blob.removeprefix("enc[").split("|")[0])
+    told = []
+    monkeypatch.setattr(service, "notify", lambda s, owner, kind, title, body="": told.append((owner, title)))
+    jobs._mark(jobs.Job("j1", "u1", "Research: android apps"))
+    jobs._mark(jobs.Job("j2", "gone-user", "x"))
+    assert "android" not in (folder / "j1.json").read_text().split('"title"')[0]
+    assert jobs.report_interrupted() == 1
+    assert told == [("u1", "Interrupted: Research: android apps")] and not list(folder.iterdir())
+    done = jobs.Job("j3", "u1", "y")
+    jobs._mark(done)
+    jobs._unmark(done)
+    assert not list(folder.iterdir())
+
+
+def test_the_leak_guard_lets_the_persons_own_words_through_but_not_mail_text():
+    long_request = ("find new apps usable for a mass audience not just the geeky guys like providing a premium "
+                    "feature for free or a very visually representable feature, from every website or public data")
+    state = {"messages": [{"role": "tool", "name": "read_file", "content": "Salary of Ana Rao: 12,40,000 INR"},
+                          {"role": "user", "content": long_request}]}
+    assert len(long_request) > tools_mod.MAX_QUERY_AFTER_PRIVATE
+    assert not tools_mod._leaks(state, text=long_request)
+    leaked = "salary ana rao 1240000 inr " + " ".join(["details"] * 30)
+    assert tools_mod._leaks(state, text=leaked)

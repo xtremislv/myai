@@ -10,17 +10,27 @@ from app.orchestrator import execution
 from app.orchestrator import tools as tools_mod
 
 
-def test_a_quiet_private_run_sends_keepalives_and_still_finishes(monkeypatch):
+def test_a_quiet_run_sends_keepalives_and_still_finishes(monkeypatch):
+    import asyncio
+
+    from app.acl.models import Subject
+    from app.api import routes_chat
+
     monkeypatch.setattr(execution, "KEEPALIVE_SECONDS", 0.05)
+    monkeypatch.setattr(routes_chat, "FIRST_WAIT", 0.05)
 
-    def slow_run(*a, **kw):
+    def slow_work(handover, made, emit):
         time.sleep(0.3)  # a long model call with nothing to show
-        return "done"
+        return {"reply": "done"}
 
-    monkeypatch.setattr(execution, "run", slow_run)
-    events = list(execution.stream_private(None, "m", "t", "single", b"k", None))
-    assert events[-1] == ("final", "done")
-    assert sum(1 for kind, _ in events if kind == "ping") >= 3
+    response = routes_chat._run_and_relay(Subject(id="u", roles=[]), "quiet", "m", "message", slow_work)
+
+    async def collect():
+        return [chunk async for chunk in response.body_iterator]
+
+    chunks = asyncio.run(collect())
+    assert '"reply": "done"' in chunks[-1]
+    assert sum(1 for c in chunks if c == routes_chat.PING) >= 3
 
 
 def test_the_stream_route_turns_silence_into_sse_comments():

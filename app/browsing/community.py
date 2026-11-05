@@ -180,6 +180,7 @@ def hn_thread(item_id: str, limit: int = 40) -> Thread:
 # ---- Reddit ----
 REDDIT_GAP = 6.0  # seconds between our Reddit requests (it refuses a second one sent straight away)
 CACHE_SECONDS = 900
+CACHE_ENTRIES = 300
 _reddit_lock = threading.Lock()
 _reddit_last = [0.0]
 _cache: dict[str, tuple[float, str]] = {}
@@ -207,6 +208,9 @@ def _reddit_get(url: str, headers: dict[str, str] | None = None) -> str:
         raise PermissionError(f"Reddit refused the request ({page.status})")
     if page.status >= 400:
         raise RuntimeError(f"Reddit answered {page.status}")
+    if len(_cache) >= CACHE_ENTRIES:  # drop the oldest half: a cache, not a store
+        for old in sorted(_cache, key=lambda k: _cache[k][0])[:CACHE_ENTRIES // 2]:
+            _cache.pop(old, None)
     _cache[url] = (time.monotonic(), page.body)
     return page.body
 
@@ -433,6 +437,8 @@ def discourse_search(domain: str, query: str, limit: int = 10) -> list[Post]:
         data = json.loads(page.body) if page.status == 200 else None
     except ValueError:
         data = None
+    if len(_discourse) > 2000:
+        _discourse.clear()
     if not isinstance(data, dict) or "topics" not in data and "posts" not in data:
         _discourse[domain] = False
         raise NoAdapter(domain)

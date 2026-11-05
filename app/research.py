@@ -59,6 +59,31 @@ def _key(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", first.lower())
 
 
+# Links on these sites are discussions or searches, not the item itself: they don't identify it.
+_NOT_ITEM_HOSTS = ("reddit.com", "news.ycombinator.com", "lemmy.world", "google.com/search", "duckduckgo.com")
+
+
+def _item_link(value) -> str:
+    """A link that identifies the item itself (its site, store page or repository), normalised."""
+    text = str(value or "").strip().lower()
+    if not text.startswith(("http://", "https://")):
+        return ""
+    text = re.sub(r"^https?://(www\.)?", "", text).split("#")[0].rstrip("/")
+    if any(text.startswith(h) for h in _NOT_ITEM_HOSTS) or "/" not in text and text.count(".") < 1:
+        return ""
+    if text.startswith("github.com/") and text.count("/") < 2:
+        return ""
+    return text
+
+
+def _same(a: str, b: str) -> bool:
+    """Keys of one thing: equal, or one the other with more words ("freemytv", "freemytvwebos")."""
+    if a == b:
+        return True
+    short, long_ = sorted((a, b), key=len)
+    return len(short) >= 6 and long_.startswith(short)
+
+
 _EMPTY = {"none", "null", "n/a", "na", "unknown", "-", "not mentioned", "not specified"}
 
 
@@ -88,24 +113,39 @@ def choose(sources: list[Source], n: int, pick: Callable[[str], str] | None) -> 
 
 
 def merge(rows: list[dict], name_col: str, columns: list[str]) -> list[dict]:
-    """One row per thing: the fullest value of each column, every source, how many sources."""
-    merged: dict[str, dict] = {}
+    """One row per thing: the fullest value of each column, every source, how many sources.
+
+    Names that are the same thing ("Free My TV (for LG webOS)" and "FreeMyTvWebOS") or rows with the
+    same item link are merged. A row's sources are the pages it was read from (`_source`); rows from
+    search-result listings (`_listing`) add no source of their own, so one thread seen both in a
+    listing and in full counts once."""
+    groups: list[dict] = []
     for r in rows:
         k = _key(r.get(name_col, ""))
         if not k:
             continue
-        cur = merged.setdefault(k, {c: "" for c in columns} | {"_sources": []})
+        links = {lk for c in columns if (lk := _item_link(r.get(c)))}
+        group = next((g for g in groups if any(_same(k, gk) for gk in g["keys"]) or links & g["links"]), None)
+        if group is None:
+            group = {"keys": set(), "links": set(), "row": {c: "" for c in columns}, "sources": [], "fallback": []}
+            groups.append(group)
+        group["keys"].add(k)
+        group["links"] |= links
+        cur = group["row"]
         for c in columns:
             v = r.get(c, "")
             if not _blank(v) and len(str(v)) > len(str(cur.get(c) or "")):
                 cur[c] = v
         src = r.get("_source", "")
-        if src and src not in cur["_sources"]:
-            cur["_sources"].append(src)
+        if src and src not in group["sources"]:
+            group["sources"].append(src)
+        fb = r.get("_fallback", "")
+        if fb and fb not in group["fallback"]:
+            group["fallback"].append(fb)
     out = []
-    for m in merged.values():
-        srcs = m.pop("_sources")
-        out.append({**m, "Mentions": len(srcs), "Sources": "\n".join(srcs[:10])})
+    for g in groups:
+        srcs = g["sources"] or g["fallback"][:1]
+        out.append({**g["row"], "Mentions": max(1, len(g["sources"])), "Sources": "\n".join(srcs[:10])})
     return sorted(out, key=lambda r: -r["Mentions"])
 
 
@@ -234,8 +274,11 @@ def collect(topic: str, what: str, columns: list[str], sources: list[Source], li
         progress(f"Picking out {what or 'items'}: source {i} of {len(ok)}")
         try:
             for r in extract(s.text, s.url):
-                link = str(r.get("Source") or r.get("Link") or "").strip()
-                r["_source"] = s.url if s.kind != "listing" or not link.startswith("http") else link
+                if s.kind == "listing":  # a search-result listing names things but is no source itself
+                    link = next((str(v) for v in r.values() if str(v).startswith("http")), "")
+                    r["_listing"], r["_source"], r["_fallback"] = True, "", link
+                else:
+                    r["_source"] = s.url
                 rows.append(r)
         except Exception as e:  # noqa: BLE001 - one unreadable reply must not sink the rest
             logger.warning("extraction failed: %s", type(e).__name__)

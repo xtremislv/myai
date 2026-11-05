@@ -383,6 +383,12 @@ def supervisor(state: dict[str, Any]) -> dict[str, Any]:
     handoffs = state.get("handoffs", 0)
     if not team or handoffs >= MAX_HANDOFFS:
         return {"next": "writer"}
+    from app.orchestrator.nodes import this_turn
+
+    if started_background(this_turn(state.get("messages", []))):
+        # The work goes on in the background: nothing more to hand out (2026-11-05: research was
+        # handed out again and its second start was refused as a duplicate job).
+        return {"next": "writer"}
 
     step("Planning" if handoffs == 0 else "Deciding the next step")
     listing = "\n".join(f"- {name}: {SPECIALISTS[name].about}" for name in team)

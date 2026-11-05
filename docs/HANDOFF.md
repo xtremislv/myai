@@ -334,6 +334,33 @@ been read; and a private reply was started by the HTTP response itself, so a rea
   Checked in Chromium against a fake API (leave and return; reload mid-request); test
   `test_a_private_reply_finishes_and_is_saved_when_the_reader_leaves_mid_reply`.
 
+## Glitch sweep (2026-11-05, owner: "fix all the issues")
+
+1. Confirm runs like a message: `POST /v1/chat/threads/{id}/confirm/stream` (steps, keepalive, survives
+   leaving); the card shows "Carrying on..." and the result.
+2. Runs have ids (`{"type":"run"}` first in every stream) and outcomes (`GET /v1/chat/runs/{id}`: running,
+   done, failed, unknown). `followRun` (app.js) follows a lost connection to the end; a run lost in a
+   restart is reported and the text put back. A network failure before the first byte is followed too.
+3. Background jobs leave encrypted markers in `WORK_DIR/jobs`; at boot `jobs.report_interrupted` notifies
+   owners of jobs a restart cut off.
+4. One run per chat (`inflight.start` raises Busy -> 409) on stream, plain chat and confirm.
+5. The stream starts within `FIRST_WAIT` (10 s) even if sorting is slow; triage has a 60 s model timeout
+   (`TRIAGE_TIMEOUT`, keyword fallback = private); `llm.chat(timeout=)` per call.
+6. Leak guard: text that is (nearly) all the person's own typed words passes (`_persons_own_words`);
+   mail/file text, numbers and short tokens don't.
+7. Triage: web/forum research for the person is private unless it's for the company/client/project/team or
+   uses company data. Eval 534/534 incl. new cases p90-p92, w90; personal-as-work 0.
+8. Supervisor goes to the writer once a background job has started.
+9-10. `research.merge`: listings add no source (no inflated Mentions, no "forum search results" text);
+   names that extend each other (>= 6 letters) and identical item links merge.
+11. Session cookie (see CLAUDE.md): reload keeps you signed in, renewed every 30 min and on a 401; sign-out
+   clears it.
+12. Sheets say when they were made in the person's time zone (`tools.made_at`).
+13. Approvals run in a thread; the approver waits up to 20 s, else gets outcome "running"; buttons disable.
+14. Reddit/Discourse caches capped; `execution.stream_private` removed.
+Checked in Chromium against a fake API: leave/return, reload (still signed in), lost run, confirm, busy chat,
+sign-out.
+
 ## Department data for members only (2026-11-04, owner's decision)
 - `packs.ADMIN` is an explicit allow list (platform, `mail:contact/*`, admin folders and templates, company
   templates, reports, inventory read, web, compute, credentials except `secret:mail/*`), not `*` minus

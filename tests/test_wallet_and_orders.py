@@ -242,3 +242,19 @@ def test_gmail_is_tried_first_and_outlook_explains_itself():
     assert [p.name for p in providers.candidates("ravi@mycompany.in")] == ["Gmail", "Outlook"]
     assert providers.candidates("ravi@hotmail.com")[0].password_ok is False
     assert "apppasswords" in providers.explain(providers.GMAIL, "b'[AUTHENTICATIONFAILED] Invalid credentials'")
+
+
+def test_confirming_streams_the_work_it_lets_go_on(chat, db, monkeypatch):
+    clicked = []
+    monkeypatch.setitem(tools.TOOLS, "browser_commit", lambda state, ref, label, summary: clicked.append(label) or "placed")
+    call = json.dumps({"tool": "browser_commit", "args": {"ref": 3, "label": "Place order", "summary": "1 x cable, ₹199"}})
+    replies = [call, "Ordered: 1 x cable."]
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw: replies.pop(0) if replies else "ok")
+    h = {"authorization": "Bearer " + issue_token("alice", "alice", ["hr"], chat_key=KEY)}
+    assert chat.post("/v1/chat", headers=h, json={"message": "order the cable", "thread_id": "o2"}).json()["outcome"] == "confirm"
+    out = chat.post("/v1/chat/threads/o2/confirm/stream", headers=h, json={"approve": True})
+    events = [json.loads(x[6:]) for x in out.text.split("\n\n") if x.startswith("data: ")]
+    assert events[0]["type"] == "run" and events[-1]["type"] == "done"
+    assert events[-1]["reply"] == "Ordered: 1 x cable." and clicked == ["Place order"]
+    again = chat.post("/v1/chat/threads/o2/confirm/stream", headers=h, json={"approve": True})
+    assert again.status_code == 409  # nothing waits any more: a second click can't order twice

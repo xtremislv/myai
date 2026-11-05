@@ -88,7 +88,9 @@ def api(monkeypatch):
 def _events(response):
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("text/event-stream")
-    return [json.loads(line[6:]) for line in response.text.split("\n\n") if line.startswith("data: ")]
+    events = [json.loads(line[6:]) for line in response.text.split("\n\n") if line.startswith("data: ")]
+    assert events[0]["type"] == "run" and events[0]["id"], "every stream names its run first"
+    return events[1:]
 
 
 def _stream(api, message="hello", thread="t", **extra):
@@ -459,3 +461,47 @@ def test_a_private_reply_finishes_and_is_saved_when_the_reader_leaves_mid_reply(
     assert api.client.get("/v1/chat/threads/gone/running", headers=ALICE).json() is None
     assert any(t["thread_id"] == "gone" for t in api.client.get("/v1/chat/threads", headers=ALICE).json())
     assert inflight.threads("alice") == []
+
+
+def test_one_request_at_a_time_per_chat_and_runs_report_how_they_ended(api, monkeypatch):
+    import threading
+    import time
+
+    from app.acl.models import Subject
+    from app.api import routes_chat
+
+    release = threading.Event()
+    real = routes_chat.execution.run
+    monkeypatch.setattr(routes_chat.execution, "run",
+                        lambda *a, **k: (a[2] != "one" or release.wait(5)) and real(*a, **k))
+    _sorted_as(monkeypatch)
+    with api.Session() as session:
+        routes_chat.chat_stream(routes_chat.ChatIn(message="first", thread_id="one"),
+                                Subject(id="alice", roles=["logistics"]), KEY, session)
+    running = None
+    for _ in range(100):
+        running = api.client.get("/v1/chat/threads/one/running", headers=ALICE).json()
+        if running:
+            break
+        time.sleep(0.02)
+    second = _stream(api, "second", thread="one")
+    assert second.status_code == 409 and "Still working" in second.json()["detail"]
+    assert _stream(api, "elsewhere", thread="two").status_code == 200  # other chats are free
+    assert api.client.get(f"/v1/chat/runs/{running['id']}", headers=ALICE).json()["state"] == "running"
+    release.set()
+    for _ in range(100):
+        if api.client.get(f"/v1/chat/runs/{running['id']}", headers=ALICE).json()["state"] == "done":
+            break
+        time.sleep(0.05)
+    assert api.client.get(f"/v1/chat/runs/{running['id']}", headers=ALICE).json()["state"] == "done"
+    assert api.client.get("/v1/chat/runs/never-seen", headers=ALICE).json()["state"] == "unknown"
+    assert _stream(api, "third", thread="one").status_code == 200
+
+
+def test_a_failed_run_is_reported_as_failed(api):
+    api.model.fail = True
+    events = _stream(api, "x", thread="f")
+    run_id = json.loads(events.text.split("data: ")[1].split("\n\n")[0])["id"]
+    assert api.client.get(f"/v1/chat/runs/{run_id}", headers=ALICE).json()["state"] == "failed"
+    bob = {"authorization": f"Bearer {issue_token('bob', 'bob', ['logistics'], chat_key=KEY)}"}
+    assert api.client.get(f"/v1/chat/runs/{run_id}", headers=bob).json()["state"] == "unknown"  # not his

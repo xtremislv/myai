@@ -48,6 +48,12 @@ async def lifespan(app: FastAPI):
         pass
     SQLAlchemyInstrumentor().instrument(engine=engine)
     metrics_server = start_metrics_server() if _settings.metrics_enabled else None
+    # Background jobs a restart cut off: tell their owners (in the background: boot doesn't wait).
+    import threading
+
+    from app import jobs
+
+    threading.Thread(target=jobs.report_interrupted, daemon=True, name="interrupted-jobs").start()
     yield
     if metrics_server is not None:
         metrics_server.shutdown()

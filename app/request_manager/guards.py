@@ -102,6 +102,10 @@ TRIAGE_PROMPT = (
     "or corrections about a file, sheet, summary or list it made there (\"the sheet only has 50\", "
     "\"that's wrong\", \"do it again\", \"make a new file\"), and sheets or tables made from the "
     "person's own mail. "
+    "Looking things up on the web, in forums or in other public information for the person (new or "
+    "popular apps, tools, products, news, comparisons, lists of things, gathered into a sheet or not) "
+    "is private: it uses no company data. It is work only when they say it is for the company, a client, "
+    "a project or the team, or it uses company data or files. "
     'If you are unsure, choose "private".\n\n'
     "department: for work, the department that owns that data or system, from this list, otherwise "
     "null. Choose the owner even if it is marked not available to this person: never substitute "
@@ -115,6 +119,7 @@ TRIAGE_PROMPT = (
     '"action": "...", "steps": "..."}}'
 )
 TRIAGE_MAX_TOKENS = 64
+TRIAGE_TIMEOUT = 60  # seconds
 RECENT_CHARS = 300
 
 
@@ -147,6 +152,9 @@ def triage_verdict(
             [{"role": "system", "content": system}, {"role": "user", "content": message}],
             temperature=0,
             max_tokens=TRIAGE_MAX_TOKENS,
+            # Sorting is the first thing every message waits for: if the model is this slow, the
+            # keyword fallback (private by default) is better than a chat that seems stuck.
+            timeout=TRIAGE_TIMEOUT,
         )
     except Exception:  # noqa: BLE001 - fall back to keywords and a private route
         logger.warning("triage unavailable; using keyword fallback")
