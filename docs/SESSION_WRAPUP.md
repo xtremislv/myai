@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **625 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **629 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -286,8 +286,15 @@ cuts TLS to many sites, and has hour-long outages. So the agents' traffic goes t
 VPS user may only port-forward), and `OUTBOUND_PROXY=socks5h://127.0.0.1:1080`
 routes httpx, the search APIs and Chromium through it. The network guard still refuses private addresses,
 re-checking names over DNS-over-HTTPS through the proxy. Model server, DB, MinIO, mail and tunnels stay direct.
-Through the proxy: 28 test sites OK, 10 refuse bots (Croma, MakeMyTrip, IRCTC, NDTV, The Hindu, Reuters,
-Britannica, Booking, Brave, Serper without key), 0 network blocks.
+Through the proxy (2026-11-05): 28 test sites OK, Booking.com and Amazon OK in Chromium only (AWS WAF's
+JS check passes by itself: `browser._pass_challenge` waits up to 12 s for it), 7 refuse even Chromium.
+**Why they refuse** (diagnosed 2026-11-05): the VPS is an OVH address (AS16276, a data-centre network).
+MakeMyTrip, IRCTC and Croma sit behind Akamai, which answers "Access Denied" at the edge to data-centre
+addresses before any page code runs; Reuters (DataDome), NDTV, The Hindu, Britannica likewise. No browser
+setting changes that. Not built, on purpose: stealth plugins, CAPTCHA solvers, fingerprint spoofing or
+rotating residential proxies (evasion; against the sites' terms; risks people's accounts). Real routes:
+official/partner APIs (Booking Demand/Affiliate API, Amadeus Self-Service for flights/hotels, IRCTC
+authorised agents), or handing the link to the person (shops already do this).
 
 ---
 

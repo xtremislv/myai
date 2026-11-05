@@ -100,6 +100,16 @@ _BLOCK_SIGNS = (
     "looks like all of india is here", "hang in there, the offers are worth the wait",
 )
 BLOCK_PAGE_MAX_CHARS = 1500
+# Interstitials that pass on their own once the site's script has looked at a real browser
+# (AWS WAF's empty 202 page, Cloudflare's "just a moment"): worth waiting a few seconds for.
+_PASSING_SIGNS = ("just a moment", "checking your browser", "please wait", "an empty page with no title")
+
+
+def passing_check(title: str, text: str) -> bool:
+    """True for a challenge page the browser itself usually passes in a few seconds; False for
+    real content and for hard refusals ("Access Denied"), where waiting changes nothing."""
+    why = block_reason(title, text)
+    return bool(why) and any(s in why for s in _PASSING_SIGNS)
 
 
 def block_reason(title: str, text: str) -> str | None:

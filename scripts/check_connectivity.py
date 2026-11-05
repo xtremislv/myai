@@ -5,8 +5,10 @@
 Each site is fetched through the agents' own path (network guard + HTTP client), so the result
 is what an agent would get. Verdicts:
   ok         the page came back with text
-  bot-block  the site answered but refused automated visitors (fetch_page then retries in
-             real Chromium, which gets past some of these)
+  browser    plain HTTP was refused, but real Chromium (fetch_page's fallback) got the page,
+             e.g. after an AWS WAF / Cloudflare check that passes on its own
+  bot-block  refused even in Chromium (usually an edge rule against data-centre addresses,
+             like Akamai's "Access Denied"): needs an official API or the person
   dns        the name resolves to a wrong or private address here (DNS poisoning)
   cut        the connection was reset, timed out or the network is unreachable (filtered)
 """
@@ -39,6 +41,21 @@ SITES = {
 }
 
 
+MIN_CONTENT = 300  # chars: less is an interstitial ("Continue shopping"), not the site
+
+
+def _in_chromium(url: str) -> int:
+    """Characters of real content Chromium gets, or 0 when it is refused too."""
+    from app.browsing.browser import browser
+
+    try:
+        b = browser()
+        title, text = extract.page_text(b.call(b.html_of, url))
+    except Exception:  # noqa: BLE001 - a failed fallback is just a block
+        return 0
+    return 0 if extract.block_reason(title, text) or len(text) < MIN_CONTENT else len(text)
+
+
 def probe(url: str) -> tuple[str, str, float]:
     started = time.monotonic()
     try:
@@ -49,6 +66,8 @@ def probe(url: str) -> tuple[str, str, float]:
         return "cut", f"{type(e).__name__}: {str(e)[:60]}", time.monotonic() - started
     title, text = extract.page_text(page.body) if page.is_html else ("", page.body)
     if page.status in (401, 403, 429, 503) or (page.is_html and extract.block_reason(title, text)):
+        if rendered := _in_chromium(url):
+            return "browser", f"HTTP {page.status} plain, {rendered} chars in Chromium", time.monotonic() - started
         return "bot-block", f"HTTP {page.status}", time.monotonic() - started
     return "ok", f"HTTP {page.status}, {len(text)} chars", time.monotonic() - started
 

@@ -312,6 +312,7 @@ class Browser:
             await page.wait_for_load_state("networkidle", timeout=4_000)
         except Exception:  # noqa: BLE001 - busy pages never go idle; read what's there
             pass
+        await _pass_challenge(page)
 
     async def _snapshot(self, page, note: str = "") -> str:
         elements = await page.evaluate(_MARK_JS, 150)
@@ -557,11 +558,40 @@ class Browser:
                 await s.page.wait_for_load_state("load", timeout=5_000)
             except Exception:  # noqa: BLE001
                 pass
-            return await s.page.content()
+            await _pass_challenge(s.page)
+            html = await s.page.content()
+            if len(extract.page_text(html)[1]) < THIN_PAGE_CHARS:  # results drawn by script after load
+                try:
+                    await s.page.wait_for_load_state("networkidle", timeout=6_000)
+                except Exception:  # noqa: BLE001 - busy pages never go idle; read what's there
+                    pass
+                html = await s.page.content()
+            return html
 
     async def close(self, key: str) -> str:
         await self._close(key)
         return "Browser closed."
+
+
+CHALLENGE_WAIT_S = 12
+THIN_PAGE_CHARS = 300
+
+
+async def _pass_challenge(page, wait_s: float = CHALLENGE_WAIT_S) -> None:
+    """Give a self-passing interstitial (AWS WAF, Cloudflare "just a moment") time to finish:
+    the site's own script checks the browser and then loads the real page. Nothing is solved,
+    clicked or disguised here; hard refusals and CAPTCHAs return at once (they go to the person)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait_s
+    while loop.time() < deadline:
+        try:
+            title, text = extract.page_text(await page.content())
+        except Exception:  # noqa: BLE001 - mid-navigation: the challenge is reloading the page
+            title, text = "", ""
+        else:
+            if not extract.passing_check(title, text):
+                return
+        await asyncio.sleep(1)
 
 
 def _chromium_proxy() -> dict | None:
