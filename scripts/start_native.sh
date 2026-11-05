@@ -52,6 +52,7 @@ status() {
   [[ -n "$(env_value PROXY_SSH)" ]] && up proxy-tunnel "timeout 8 curl -s -o /dev/null --socks5-hostname 127.0.0.1:1080 https://www.bing.com/"
   up app-tunnel "alive app-tunnel"
   up grafana-tunnel "alive grafana-tunnel"
+  up watchdog "alive watchdog"
   echo
   echo "  App:        $(tunnel_url app-tunnel)/ui/"
   echo "  Dashboards: $(tunnel_url grafana-tunnel)/   (user admin, password GRAFANA_PASSWORD in .env)"
@@ -130,6 +131,9 @@ if command -v cloudflared >/dev/null; then
   alive grafana-tunnel || : > "$LOG_DIR/grafana-tunnel.log"
   start_bg grafana-tunnel cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3000
 fi
+
+# Restarts whatever goes down and emails the admin new links (scripts/watchdog.sh).
+start_bg watchdog scripts/watchdog.sh
 
 for _ in $(seq 30); do curl -sf http://127.0.0.1:8000/healthz >/dev/null 2>&1 && break; sleep 1; done
 for _ in $(seq 20); do [[ -n "$(tunnel_url app-tunnel)" && -n "$(tunnel_url grafana-tunnel)" ]] && break; sleep 1; done

@@ -285,6 +285,22 @@ explains itself with `--help`). Everyone is signed out; nothing stored is lost.
 `scripts/load_test.py` measures the model under 1-16 simultaneous chats. `scripts/check_connectivity.py` shows
 which sites the agents can reach from this network (search, news, reference, government, APIs).
 
+### Auto-start and new-link emails
+
+The container has no systemd or cron, and a quick tunnel's link changes on every restart. So:
+
+1. **Start on boot:** install the hook once: `cp deploy/native/rc.local /etc/rc.local && chmod +x /etc/rc.local`.
+   The container runs `/etc/rc.local` at every start (before the provider's `/root/onstart.sh`); it clears old PID
+   files and runs `start_native.sh` in the background (log: `/var/log/ai-platform/boot.log`).
+2. **Watchdog:** `start_native.sh` starts `scripts/watchdog.sh` (log: `watchdog.log`). Every minute it restarts
+   whatever is down, restarts a tunnel whose link has failed for 10 minutes, and emails the admin the links
+   when they change (`links.sent` holds the last ones emailed; delete it to resend).
+3. **The sender:** a Gmail account with 2-step verification and an app password. On the admin Credentials page add
+   the secret `mail/notify`:
+   `{"imap_host": "imap.gmail.com", "username": "<address>", "password": "<app password>", "smtp_host": "smtp.gmail.com", "smtp_port": 465}`.
+   The same mailbox sends reminder emails, morning digests and Prometheus alerts. Mail goes to each admin's
+   address (My account email, or their connected mailbox), else to the notification mailbox itself.
+
 ### Outbound proxy (when this network blocks sites)
 Agents' web traffic can leave through another server, over SSH, so this network only sees one encrypted
 connection. On the other server (any small VPS), create a user that may only forward connections:

@@ -43,6 +43,21 @@ def address_of(session: Session, user: User) -> str | None:
     return None
 
 
+def email_admins(session: Session, subject: str, body: str) -> int:
+    """Email every admin from the notification mailbox (never from anyone's own mailbox).
+    An admin with no address of their own gets it at the notification mailbox's address.
+    Returns how many emails were sent: 0 when `mail/notify` isn't set up."""
+    cfg = _config(AESGCMVault(session), NOTIFY_SECRET)
+    if cfg is None:
+        return 0
+    admins = [u for u in session.query(User).all() if "admin" in (u.roles or []) and not u.disabled]
+    to = {address_of(session, u) or cfg.sender for u in admins} or {cfg.sender}
+    footer = "\n\n-- \nSent by your AI Platform server."
+    for address in sorted(to):
+        send(cfg, address, subject, body + footer)
+    return len(to)
+
+
 def email_person(session: Session, user: User, subject: str, body: str) -> bool:
     """False if there is no address or no mailbox to send from."""
     to = address_of(session, user)

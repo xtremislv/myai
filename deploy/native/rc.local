@@ -1,0 +1,9 @@
+#!/bin/sh
+# Install as /etc/rc.local: the container runs it at every start (before /root/onstart.sh, which
+# the provider manages). See docs/SERVER_SETUP.md, "Auto-start".
+# PID files from before the restart point at processes that no longer exist (and their numbers
+# may now belong to others), so drop them, then start everything in the background;
+# start_native.sh also starts scripts/watchdog.sh, which emails the admin the new links.
+rm -f /var/log/ai-platform/*.pid
+mkdir -p /var/log/ai-platform
+setsid nohup /root/myai/scripts/start_native.sh >> /var/log/ai-platform/boot.log 2>&1 < /dev/null &

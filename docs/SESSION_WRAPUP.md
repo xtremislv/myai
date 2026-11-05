@@ -26,6 +26,11 @@ curl -s localhost:8000/readyz           # {"ready":true,...}
 - **App (public):** the `app-tunnel` quick-tunnel URL printed by `status` + `/ui/` (changes on tunnel restart).
 - **Grafana:** the `grafana-tunnel` URL (user `admin`, password `GRAFANA_PASSWORD` in `.env`).
 - **Logs:** `/var/log/ai-platform/<service>.log`; PIDs next to them.
+- **Container restarts:** `/etc/rc.local` (copy of `deploy/native/rc.local`) runs `start_native.sh` at container
+  start, and `scripts/watchdog.sh` restarts what goes down and emails the admin new links from the `mail/notify`
+  mailbox (SERVER_SETUP "Auto-start"). Before that existed, an outage on 2026-11-04 (stopped ~16:58 UTC, back 20:36)
+  left everything down until a manual start. Postgres recovers from WAL by itself; Redis only keeps its last RDB
+  snapshot. vLLM takes ~2 min to load; a quick tunnel can need ~1 min to register (530 until then).
 - **After code changes:** restart the gateway: `kill $(cat /var/log/ai-platform/gateway.pid); scripts/start_native.sh`.
   After changing `app/departments/packs.py`: `.venv/bin/python -m scripts.seed_departments`. After a model change in
   `app/db/session.py`: `alembic revision --autogenerate`, then `alembic upgrade head`.
@@ -73,7 +78,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Model | `google/gemma-4-26B-A4B-it`, AWQ/compressed-tensors INT4 (`cyankiwi/...qat-AWQ-INT4` in `/root/models/gemma-4-26b`), vLLM 0.32.0 in `/root/vllm-env`, `--dtype half`, Turing patch applied, **64k context** (`LLM_CONTEXT_TOKENS` must match), KV cache 683k tokens, `--max-num-seqs 16`, tool parser `gemma4`. |
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
-| Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**: all started by `scripts/start_native.sh`. |
+| Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**, **watchdog**: all started by `scripts/start_native.sh`. |
 | Database | Postgres 16, migration **0008** (head). |
 | Network | Agents' web traffic goes through the owner's VPS (see §5.6). Without it this network poisons DNS and cuts many sites. |
 | Backups | `scripts/backup.sh` works natively and was verified with `restore.sh --verify`; **no off-server destination set** (`BACKUP_DEST` empty), no schedule on this host. |

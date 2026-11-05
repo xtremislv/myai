@@ -415,6 +415,59 @@ def test_alerts_notify_the_admin_once_when_firing_and_once_when_resolved(db):
         assert service.notifications(s, "alice") == []
 
 
+NOTIFY_BOX = json.dumps({"imap_host": "imap.gmail.com", "username": "platform@gmail.com", "password": "p",
+                         "smtp_host": "smtp.gmail.com", "smtp_port": 465})
+
+
+def test_admin_emails_need_the_notification_mailbox(db, monkeypatch):
+    from app.reminders import delivery
+
+    sent = []
+    monkeypatch.setattr(delivery, "send", lambda cfg, to, subject, body: sent.append((cfg.sender, to, subject)))
+    with db() as s:
+        AESGCMVault(s).put("mail/personal/root", NOTIFY_BOX.replace("platform@", "root-own@"))
+        assert delivery.email_admins(s, "hi", "body") == 0  # never from someone's own mailbox
+        AESGCMVault(s).put("mail/notify", NOTIFY_BOX)
+        s.get(User, "root").prefs = {"email": "admin@example.com"}
+        s.commit()
+        assert delivery.email_admins(s, "hi", "body") == 1
+        assert sent == [("platform@gmail.com", "admin@example.com", "hi")]  # not alice
+
+
+def test_alerts_are_emailed_and_a_mail_failure_keeps_the_bell_notice(db, monkeypatch):
+    from app.api.routes_ops import AlertIn, record
+    from app.reminders import delivery
+
+    sent = []
+    monkeypatch.setattr(delivery, "send", lambda cfg, to, subject, body: sent.append((to, subject)))
+    firing = AlertIn(labels={"alertname": "GatewayDown", "severity": "critical"},
+                     annotations={"summary": "gateway"}, endsAt=NOW + dt.timedelta(minutes=5))
+    with db() as s:
+        AESGCMVault(s).put("mail/notify", NOTIFY_BOX)
+        assert record(s, [firing], NOW) == 1
+        assert record(s, [firing], NOW) == 0
+        # The admin has no address of their own: the notification mailbox gets it.
+        assert sent == [("platform@gmail.com", "Server alert (critical): GatewayDown")]
+
+    def broken(*a):
+        raise OSError("smtp down")
+
+    monkeypatch.setattr(delivery, "send", broken)
+    other = AlertIn(labels={"alertname": "DiskAlmostFull"}, annotations={}, endsAt=NOW + dt.timedelta(minutes=5))
+    with db() as s:
+        AESGCMVault(s).put("mail/notify", NOTIFY_BOX)
+        assert record(s, [other], NOW) == 1
+        assert service.notifications(s, "root")[0]["title"] == "Server alert (warning): DiskAlmostFull"
+
+
+def test_links_email_names_both_links():
+    from scripts.notify_links import body
+
+    text = body("https://a.trycloudflare.com/ui/", "https://g.trycloudflare.com/")
+    assert "https://a.trycloudflare.com/ui/" in text and "https://g.trycloudflare.com/" in text
+    assert "GRAFANA_PASSWORD" in text  # names where the password is, never the password
+
+
 def test_alert_endpoint_needs_the_token(monkeypatch):
     from app.api import routes_ops
     from app.config import get_settings

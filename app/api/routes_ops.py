@@ -1,5 +1,6 @@
 """Server alerts for the admin: Prometheus sends its alerts here, and they appear under the
-admin's bell, once when they start and once when they resolve.
+admin's bell (and by email, when the notification mailbox `mail/notify` is set up), once when
+they start and once when they resolve.
 
 Prometheus speaks the Alertmanager API, so this answers POST <prefix>/api/v2/alerts with a
 list of alerts. deploy/native/prometheus.yml points `alerting` at
@@ -11,6 +12,7 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
@@ -18,7 +20,9 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.session import OpsAlert, get_session
-from app.reminders import service
+from app.reminders import delivery, service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/ops", tags=["ops"])
 
@@ -63,10 +67,21 @@ def record(session: Session, alerts: list[AlertIn], now: dt.datetime | None = No
         row.state = "resolved" if resolved else "firing"
         session.commit()
         if row.state == "firing" and before != "firing":
-            sent += service.notify_admins(session, "alert", f"Server alert ({severity or 'warning'}): {name}", summary)
+            title = f"Server alert ({severity or 'warning'}): {name}"
         elif row.state == "resolved" and before == "firing":
-            sent += service.notify_admins(session, "alert", f"Resolved: {name}", summary)
+            title = f"Resolved: {name}"
+        else:
+            continue
+        sent += service.notify_admins(session, "alert", title, summary)
+        _email(session, title, summary)
     return sent
+
+
+def _email(session: Session, title: str, summary: str) -> None:
+    try:
+        delivery.email_admins(session, title, summary or title)
+    except Exception:  # noqa: BLE001 - the bell notice is already saved; mail is best effort
+        logger.warning("could not email alert %r", title, exc_info=True)
 
 
 @router.post("/alerts/api/v2/alerts")
