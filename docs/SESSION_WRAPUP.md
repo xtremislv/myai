@@ -1,4 +1,4 @@
-# Session wrap-up: state of the platform at end of 2026-11-04
+# Session wrap-up: state of the platform on 2026-11-05
 
 Read this first in the next session. It is the short, current picture. `docs/HANDOFF.md` has the detailed
 history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.md` the setup steps.
@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **529 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **599 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -103,6 +103,27 @@ the web, read and answer mail, manage files, make documents from templates, set 
   `scholar_search` (arXiv + Crossref + PubMed), `fetch_page` / `scrape_page` (Chromium fallback for bot checks
   and JS pages; block pages reported as blocked), `weather` (Open-Meteo), interactive browser.
 - Agents that only searched are made to open 2-3 sources before answering.
+- **Forums and code hosts** (`app/browsing/community.py`, 2026-11-05): `forum_search` (Hacker News via Algolia
+  incl. "Show HN" launches, Reddit, Lemmy, and ANY other site named in `sites=`: Discourse forums through
+  their JSON, everything else through a site-limited web search), `read_thread` (any link: HN/Reddit/Lemmy
+  threads with top comments, Discourse topics, GitHub READMEs, else the general page reader with its
+  Chromium fallback), `github_search` (stars, created/pushed dates, topics; `created_after` for new projects).
+  Reddit: its JSON/HTML answer 403 here, so without a key we read its public RSS, one request every 6 s,
+  cached 15 min, and a 429 is reported (never retried around). Optional vault secrets: `reddit/oauth`
+  (`{"client_id","client_secret"}` of an app from reddit.com/prefs/apps: official API with scores) and
+  `github/token` (higher rate limit).
+- **`web_research`** (`app/research.py`): a topic across many sites at once, in the background: finds
+  sources (forums, any named domains, GitHub, 4 web-search phrasings, news), the model picks the most
+  useful from their titles, reads up to 60 (4 at a time), extracts rows from each (bigsummary's row
+  extraction), merges duplicates across sources and saves an Excel sheet ranked by how many sources
+  mention each item, with links. Live 2026-11-05: "android apps", 20 sources -> 58 apps in ~5 min.
+
+**Long tasks in the background** (2026-11-05)
+- `start_background_task` (`app/background.py`): any big task; the agent works alone for up to 30 tool
+  rounds (no approvals/confirmations/live browser/wallet, no nested jobs) and saves a Word document, an
+  Excel sheet or both. `save_table` saves a table the agent compiled as .xlsx/.csv.
+- Every job (`app/jobs.py`, also mail_to_sheet) ends with the bell + browser pop-up; with `email=true` the
+  result is emailed (from `mail/notify`) and with `remind_at` a reminder to look at it is set.
 
 **Shopping**
 - `product_search`, `product_page`. From this server (2026-11-04): Reliance Digital works to checkout;
@@ -295,6 +316,8 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 - 64k context; pages are clipped (20,000 chars per page, older tool results to 3,000); overlong prompts drop their oldest turns. Prompts near 50k tokens take minutes to prefill on the Quadro.
 - Gemma sometimes needs nudges (it asked "are you sure?" in words before deleting; fixed by prompt wording).
 - Keyless web search is decent through DuckDuckGo but rate-limits; a Tavily/Serper key would be better.
+- Keyless Reddit is RSS only (no scores) and rate-limited: a second request straight after the first gets 429.
+  A `reddit/oauth` app key fixes both. Background jobs live in memory: a gateway restart loses them.
 - Many shops/news sites block automated browsers regardless of network.
 - Department mailboxes have no automatic digest; reminders are per person (no team reminders).
 - Attachments in work chats aren't read (private only). Bell polls once a minute; pop-ups only while the app is open.
@@ -310,7 +333,8 @@ Britannica, Booking, Brave, Serper without key), 0 network blocks.
 1. **Try a real personal order** (cheap item) via the globe button: sign in to Amazon in the live panel, ask
    the assistant to order, confirm the card. Fix whatever the real checkout throws up.
 2. **Connect a real mailbox** (sign-in or app password) and check `summarize_mail` + the morning digest.
-3. **Add a Tavily (free tier) key** on the Credentials page as `search/tavily`.
+3. **Add a Tavily (free tier) key** on the Credentials page as `search/tavily`; optionally `reddit/oauth` and
+   `github/token` for forum/GitHub research (see §4 Research).
 4. **Off-server backups:** set `BACKUP_DEST` (rclone) and run `backup.sh` daily from the scheduler or
    `onstart.sh`.
 5. **A domain + Cloudflare named tunnel with Access** in front of the login page.

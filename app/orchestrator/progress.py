@@ -75,6 +75,12 @@ TOOL_STEPS = {
     "summarize_large": "Summarizing {source}",
     "mail_to_sheet": "Finding every email matching {query}",
     "job_status": "Checking on the background work",
+    "forum_search": "Searching forums for {query}",
+    "github_search": "Searching GitHub for {query}",
+    "read_thread": "Reading {url}",
+    "save_table": "Saving the sheet {path}",
+    "web_research": "Starting research on {topic} across many sites",
+    "start_background_task": "Starting the task in the background",
     "make_dashboard": "Building a dashboard: {title}",
 }
 

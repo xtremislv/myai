@@ -104,7 +104,16 @@ DATA_HINT = (
     "number of rows or emails a tool says a file holds, never more, and a background job is not done "
     "until job_status or the person's notification says so. Never ask for passwords, login details or "
     "\"access\" to a mailbox or system: connected mailboxes already work through your tools. If a tool "
-    "failed, say which step failed and the error it gave, not that you have no access."
+    "failed, say which step failed and the error it gave, not that you have no access. "
+    "For what people recommend, discuss or launch (new or underrated apps, tools, opinions), use "
+    "forum_search (Hacker News, Reddit, Lemmy or any forum/site domain) and read_thread on the best threads "
+    "(it reads any link: thread comments, GitHub READMEs, ordinary pages); github_search for open-source "
+    "projects. To collect a list of items across many websites (find all / list / compare many), use "
+    "web_research: it reads dozens of sources in the background and saves one merged Excel sheet. For any "
+    "other task too big for one reply (many pages, a long report), use start_background_task with the "
+    "whole request: the result is saved as a Word document and/or sheet and the person is notified (also by "
+    "email or with a reminder if they ask). To save a table you compiled yourself as a sheet, use save_table. "
+    "Never answer that a site can't be reached or that nothing exists after one failed search: try these tools."
 )
 
 
@@ -248,11 +257,11 @@ def started_background(messages: list[dict[str, Any]]) -> bool:
 
 # Search snippets are not evidence: an answer built on web or news search must have opened at
 # least one result. Scholarly results carry abstracts, so they count as read.
-SEARCH_TOOLS = frozenset({"web_search", "news_search"})
-READING_TOOLS = frozenset({"fetch_page", "scrape_page", "browser_open", "browser_read", "scholar_search"})
+SEARCH_TOOLS = frozenset({"web_search", "news_search", "forum_search"})
+READING_TOOLS = frozenset({"fetch_page", "scrape_page", "browser_open", "browser_read", "scholar_search", "read_thread"})
 READ_SOURCES = (
     "Before answering: you have only search-result snippets, which are not proof. Open the two or "
-    "three most relevant results with fetch_page (in one step), then answer from what the pages say, "
+    "three most relevant results with fetch_page (forum threads with read_thread) in one step, then answer from what the pages say, "
     "naming them. If none can be opened, answer from the snippets and say so."
 )
 

@@ -1272,20 +1272,23 @@ def fetch_page(state: dict[str, Any], url: str) -> str:
         return err
     if _leaks(state, url=url):
         return LEAK_REFUSAL
+    return untrusted(url, _web_call(lambda: _page_text(url)))
+
+
+def _page_text(url: str, max_chars: int = 0) -> str:
+    """Any public page as text (Chromium when needed), or an ERROR line when it can't be read."""
     from app.browsing import extract
 
-    def go() -> str:
-        got = _readable(url)
-        if isinstance(got, str):
-            return got
-        page, title, text = got
-        if page.is_html:
-            if len(text) < 200:
-                return f"{title}\n{text}\n(Little text: the page may need JavaScript. Try browser_open.)"
-            return f"PAGE: {title}\nURL: {page.url}\n\n{extract.clip(text, _max_chars())}"
-        return f"URL: {page.url}\n\n{extract.clip(page.body, _max_chars())}"
-
-    return untrusted(url, _web_call(go))
+    got = _readable(url)
+    if isinstance(got, str):
+        return got
+    page, title, text = got
+    cap = max_chars or _max_chars()
+    if page.is_html:
+        if len(text) < 200:
+            return f"{title}\n{text}\n(Little text: the page may need JavaScript. Try browser_open.)"
+        return f"PAGE: {title}\nURL: {page.url}\n\n{extract.clip(text, cap)}"
+    return f"URL: {page.url}\n\n{extract.clip(page.body, cap)}"
 
 
 def scrape_page(state: dict[str, Any], url: str, what: str = "text", selector: str = "") -> str:
@@ -1477,6 +1480,335 @@ def scholar_search(state: dict[str, Any], query: str) -> str:
     from app.browsing import search
 
     return untrusted("research paper indexes", _web_call(lambda: search.render(search.scholarly(query))))
+
+
+# ---- forums and code hosts (app/browsing/community.py) ----
+def _community_keys() -> tuple[dict | None, str | None]:
+    """Optional keys an admin stored in the vault: reddit/oauth (JSON client_id/client_secret of a
+    Reddit app, for the official API with scores) and github/token (higher GitHub rate limit). Read
+    by the tool, never shown to the model."""
+    import json as _json
+
+    reddit_creds, gh_token = None, None
+    try:
+        with SessionLocal() as session:
+            vault = AESGCMVault(session)
+            raw = vault.get("reddit/oauth")
+            if raw:
+                data = _json.loads(raw)
+                if data.get("client_id") and data.get("client_secret"):
+                    reddit_creds = {"client_id": data["client_id"], "client_secret": data["client_secret"]}
+            gh_token = (vault.get("github/token") or "").strip() or None
+    except Exception as e:  # noqa: BLE001 - keys are optional; the keyless paths still work
+        logger.info("community keys unavailable: %s", type(e).__name__)
+    return reddit_creds, gh_token
+
+
+def _sites(sites: str) -> tuple[str, ...]:
+    """'all' = the built-in forums; or any comma-separated mix of hackernews, reddit, lemmy and domains."""
+    from app.browsing import community
+
+    picked = [s.strip().lower() for s in re.split(r"[,\s]+", sites or "") if s.strip()]
+    if not picked:
+        return community.SITES
+    return tuple(dict.fromkeys(x for p in picked for x in (community.SITES if p == "all" else (p,))))
+
+
+def _period(period: str) -> str:
+    p = (period or "year").strip().lower().removeprefix("past ").removeprefix("last ")
+    return p if p in ("day", "week", "month", "year", "all") else "year"
+
+
+def forum_search(
+    state: dict[str, Any], query: str, sites: str = "all", period: str = "year", subreddit: str = "",
+    launches: bool = False,
+) -> str:
+    """Public discussions on Hacker News, Reddit and Lemmy with points, comment counts and dates."""
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    if _leaks(state, text=query + subreddit + sites):
+        return LEAK_REFUSAL
+    from app.browsing import community, search
+
+    wanted = _sites(sites)
+    if launches and "hackernews" not in wanted:
+        wanted = (*wanted, "hackernews")
+    reddit_creds, _ = _community_keys() if "reddit" in wanted else (None, None)
+    api = _search_api()
+
+    def go() -> str:
+        posts, notes = community.search_all(query, wanted, _period(period), launches, subreddit, 12, reddit_creds,
+                                            lambda q: search.web(q, api=api))
+        return community.render_posts(posts, notes) + (
+            "\nOpen the most relevant threads with read_thread (several in one step) to see what people "
+            "actually recommend before answering." if posts else
+            "\nTry fewer words (e.g. 'android apps'), a longer period, or subreddit=androidapps.")
+
+    return untrusted("public forum discussions", _web_call(go))
+
+
+def github_search(
+    state: dict[str, Any], query: str, created_after: str = "", min_stars: int = 0, sort: str = "stars",
+) -> str:
+    """Open-source projects on GitHub: stars, creation date, last push, language, topics."""
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    if _leaks(state, text=query):
+        return LEAK_REFUSAL
+    from app.browsing import community
+
+    _, token = _community_keys()
+    return untrusted("GitHub search results", _web_call(lambda: community.render_repos(
+        community.github(query, created_after, int(min_stars or 0), sort, 15, token))))
+
+
+def read_thread(state: dict[str, Any], url: str) -> str:
+    """A Hacker News, Reddit or Lemmy thread with its top comments, or a GitHub repository's README."""
+    if (err := _enforce(state, "read", "web", "fetch")) is not None:
+        return err
+    if _leaks(state, url=url):
+        return LEAK_REFUSAL
+    from app.browsing import community
+
+    reddit_creds, token = _community_keys()
+
+    def go() -> str:
+        try:
+            text = community.render_thread(community.read(url.strip(), 40, reddit_creds, token))
+        except community.NoAdapter:
+            return _page_text(url.strip())  # any other site: the general reader (browser fallback)
+        except ValueError as e:
+            return f"ERROR: {e}"
+        except (community.RateLimited, PermissionError) as e:
+            return f"ERROR: {e}"
+        cap = _max_chars()
+        return text if len(text) <= cap else text[:cap] + f"\n[... cut at {cap} characters]"
+
+    return untrusted(url, _web_call(go))
+
+
+MAX_TABLE_ROWS = 5000
+
+
+def save_table(state: dict[str, Any], path: str, rows: str, columns: str = "", title: str = "") -> str:
+    """Save records the agent compiled (a list of objects or of lists) as an Excel sheet or CSV."""
+    import json as _json
+
+    from app import bigsummary
+
+    if (err := _enforce(state, "write", "compute", "summarize")) is not None:
+        return err
+    try:
+        data = _json.loads(rows)
+    except ValueError as e:
+        return f"ERROR: rows must be a JSON list of objects (or of lists, with columns): {e}"
+    if isinstance(data, dict):
+        data = data.get("rows") or [data]
+    if not isinstance(data, list) or not data:
+        return "ERROR: rows must be a non-empty JSON list"
+    if len(data) > MAX_TABLE_ROWS:
+        return f"ERROR: at most {MAX_TABLE_ROWS} rows"
+    cols = [c.strip() for c in columns.split(",") if c.strip()]
+    if all(isinstance(r, dict) for r in data):
+        if not cols:
+            for r in data:
+                cols += [str(k) for k in r if str(k) not in cols]
+        records = [{c: r.get(c, "") for c in cols} for r in data]
+    elif all(isinstance(r, list) for r in data):
+        if not cols:
+            return "ERROR: rows are lists, so give columns as comma-separated names"
+        records = [dict(zip(cols, r)) for r in data]
+    else:
+        return "ERROR: rows must all be objects, or all be lists"
+    records = [{c: (v if isinstance(v, (int, float)) or v is None else
+                    "; ".join(map(str, v)) if isinstance(v, list) else str(v)) for c, v in r.items()} for r in records]
+    name = (path or "").strip() or f"Research/{title or 'Table'}.xlsx"
+    if not name.lower().endswith((".xlsx", ".csv")):
+        name = name.rsplit(".", 1)[0] if "." in name.rsplit("/", 1)[-1] else name
+        name += ".xlsx"
+    if name.lower().endswith(".csv"):
+        blob = bigsummary.to_csv(cols, records)
+    else:
+        blob = bigsummary.to_xlsx(title or name.rsplit("/", 1)[-1].rsplit(".", 1)[0], cols, records,
+                                  [("Rows", str(len(records))), ("Made", dt_now_header())])
+    saved = _save(state, name, blob)
+    if not saved.startswith(("Created", "Saved")):
+        return saved
+    where = "Files > My files" if _private(state) else "Files > Department files"
+    return f"{saved} {len(records)} rows, columns: {', '.join(cols)}. The person finds it under {where}."
+
+
+# ---- long tasks in the background (app/jobs.py) ----
+def _alerts(email: bool, remind_at: str):
+    from app import jobs
+
+    return jobs.Alerts(email=bool(email), remind_at=(remind_at or "").strip())
+
+
+def _out_path(save_as: str, title: str, ext: str) -> str:
+    clean = re.sub(r"[^\w\s-]", " ", title).strip()[:70] or "Result"
+    base = (save_as or "").strip() or f"Research/{clean}"
+    base = base.rsplit(".", 1)[0] if base.lower().endswith((".xlsx", ".docx", ".csv", ".md", ".txt")) else base
+    return f"{base}.{ext}"
+
+
+def _where(state: dict[str, Any]) -> str:
+    return ("the person's own Files (Files > My files)" if _private(state)
+            else "the department's shared folder (Files > Department files)")
+
+
+def _started(job, what: str, files: list[str], state: dict[str, Any], minutes: str, email: bool, remind_at: str) -> str:
+    extra = (" They will also get it by email." if email else "") + (
+        f" A reminder to look at it is set for {remind_at}." if remind_at.strip() else "")
+    return (f"{JOB_STARTED} (job {job.id}): {what}. It will be saved as {' and '.join(repr(f) for f in files)} "
+            f"in {_where(state)}. It takes about {minutes}. The person gets a notification (the bell, and a "
+            f"pop-up while the app is open) when it is ready; job_status shows progress.{extra} Tell the person "
+            "exactly this. Do NOT say it is finished.")
+
+
+def web_research(
+    state: dict[str, Any], topic: str, what: str = "", columns: str = "", sites: str = "all",
+    period: str = "year", max_sources: int = 25, save_as: str = "", email: bool = False, remind_at: str = "",
+) -> str:
+    """Many websites at once -> one merged, ranked Excel sheet, in the background."""
+    from app import bigsummary, jobs, research
+    from app.browsing import community, search
+
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    if (err := _enforce(state, "write", "compute", "summarize")) is not None:
+        return err
+    if _leaks(state, text=topic + what + sites):
+        return LEAK_REFUSAL
+    if not topic.strip():
+        return "ERROR: give the topic, e.g. 'android apps'"
+    cols = [c.strip() for c in columns.split(",") if c.strip()][:bigsummary.MAX_COLUMNS] or [
+        "Name", "Category", "Platform", "What it does", "What makes it special", "Price", "Link"]
+    picked = [x.strip().lower() for x in re.split(r"[,\s]+", sites or "") if x.strip()]
+    if not picked or "all" in picked:
+        picked = [p for p in picked if p != "all"] + [*community.SITES, "github", "web", "news"]
+    chosen = tuple(dict.fromkeys(picked))
+    n = max(5, min(int(max_sources or research.DEFAULT_SOURCES), research.MAX_SOURCES))
+    path = _out_path(save_as, f"{topic} - {what or 'findings'}", "xlsx")
+    api = _search_api()
+    reddit_creds, gh_token = _community_keys()
+    when = _period(period)
+    created_after = ""
+    if when != "all":
+        from app.browsing.community import since
+
+        created_after = since(when).strftime("%Y-%m-%d")
+    kind = what or "item"
+    focus = (f"Topic: {topic}. Find every {kind} mentioned (one row each) that fits the topic. Only things that "
+             f"are themselves a {kind}: skip other kinds of things the text mentions (companies, people, "
+             f"platforms or stores, operating systems, news events) unless they are a {kind}. Describe what "
+             f"makes each one special as the source says it (features, why people like it).")
+
+    def pick(listing: str) -> str:
+        return bigsummary._ask(
+            f"You choose which sources to read for research. Topic: {topic}. Wanted: as many different "
+            f"{kind}s as possible, each with what makes it special. Prefer sources likely to name and "
+            f"describe many specific {kind}s (recommendation threads, lists, launches, reviews, roundups); "
+            "avoid news or policy stories that only mention the topic. Reply with ONLY the numbers of the "
+            f"best {n} sources, best first, comma-separated. " + bigsummary.UNTRUSTED, listing, 200)
+
+    def reader(url: str) -> str:
+        try:
+            return community.render_thread(community.read(url, 40, reddit_creds, gh_token))
+        except community.NoAdapter:
+            return _page_text(url, research.SOURCE_CHARS)
+        except (community.RateLimited, PermissionError, ValueError) as e:
+            return f"ERROR: {e}"
+
+    def extract(text: str, url: str) -> list[dict]:
+        reply = bigsummary._ask(bigsummary._rows_prompt(focus, cols), f"Source: {url}\n\n{text}", 3000)
+        return bigsummary._parse_rows(reply)
+
+    def make(progress) -> str:
+        progress("Finding sources on every site")
+        found, listings, notes = research.find_sources(
+            topic, chosen, when, web=lambda q: search.web(q, api=api), news=lambda q: search.news(q, api=api),
+            reddit_creds=reddit_creds, gh_token=gh_token, github_created_after=created_after)
+        if not found and not listings:
+            raise RuntimeError("no sources found for that topic; try broader words")
+        report = research.collect(topic, what, cols, found, listings, reader, extract, progress, n, pick)
+        report.notes = notes + report.notes
+        progress("Saving the sheet")
+        data = bigsummary.to_xlsx(f"{topic}: {what or 'findings'}", report.columns, report.rows, [
+            ("Topic", topic), ("Looking for", what or "items"), ("Sites", ", ".join(chosen)), ("Period", when),
+            ("Sources read", str(len(report.read))), ("Could not read", str(len(report.failed))),
+            ("Notes", "; ".join(report.notes)[:2000] or "-"),
+            ("Made", dt_now_header()),
+            *[("Source", f"{s.title[:80]} - {s.url}") for s in report.read],
+        ])
+        saved = _save(state, path, data)
+        if not saved.startswith(("Created", "Saved")):
+            raise RuntimeError(saved)
+        top = "\n".join(f"- {r[cols[0]]} ({r['Mentions']} sources): {str(r.get(cols[-3] if len(cols) > 2 else cols[-1], ''))[:120]}"
+                         for r in report.rows[:15])
+        return (f"{saved} {len(report.rows)} {what or 'items'} from {len(report.read)} sources "
+                f"({len(report.failed)} couldn't be read), ranked by how many sources mention them.\n\nTop:\n{top}")
+
+    try:
+        job = jobs.start(_subject(state).id, f"Research: {topic}"[:120], make, alerts=_alerts(email, remind_at))
+    except jobs.Busy as e:
+        return f"ERROR: not started: {e}"
+    return _started(job, f"researching '{topic}' across {', '.join(chosen)}, reading up to {n} sources and "
+                    f"collecting {what or 'items'} with columns {', '.join(cols)} plus how many sources mention each",
+                    [path], state, f"{max(3, n // 4)} minutes", email, remind_at)
+
+
+def start_background_task(
+    state: dict[str, Any], task: str, output: str = "doc", columns: str = "", save_as: str = "",
+    email: bool = False, remind_at: str = "",
+) -> str:
+    """Any long multi-step task, done by the agent in the background, result saved as a Word document
+    and/or an Excel sheet."""
+    from app import background, bigsummary, jobs
+
+    if (err := _enforce(state, "write", "compute", "summarize")) is not None:
+        return err
+    if not task.strip():
+        return "ERROR: describe the whole task, with everything the person asked for"
+    out = (output or "doc").strip().lower()
+    out = {"word": "doc", "document": "doc", "docx": "doc", "excel": "sheet", "xlsx": "sheet", "table": "sheet"}.get(out, out)
+    if out not in background.OUTPUTS:
+        return f"ERROR: output is one of {', '.join(background.OUTPUTS)}"
+    cols = [c.strip() for c in columns.split(",") if c.strip()][:bigsummary.MAX_COLUMNS]
+    title = " ".join(task.split())[:70]
+    files = ([_out_path(save_as, title, "docx")] if out in ("doc", "both") else []) + (
+        [_out_path(save_as, title, "xlsx")] if out in ("sheet", "both") else [])
+    task_state = {k: v for k, v in state.items() if k != "messages"}
+
+    def make(progress) -> str:
+        result = background.run(task_state, task, out, list(cols), progress)
+        lines = []
+        if out in ("doc", "both"):
+            if not result.markdown:
+                raise RuntimeError("the model wrote no result")
+            saved = _save(state, files[0], bigsummary.to_docx(title, result.markdown,
+                                                              f"Made in the background, {dt_now_header()}"))
+            if not saved.startswith(("Created", "Saved")):
+                raise RuntimeError(saved)
+            lines.append(saved)
+        if out in ("sheet", "both"):
+            if not result.rows:
+                raise RuntimeError("the result had no rows for a sheet")
+            saved = _save(state, files[-1], bigsummary.to_xlsx(title, result.columns, result.rows, [
+                ("Task", task[:2000]), ("Steps", str(result.rounds)), ("Tool calls", str(result.calls)),
+                ("Made", dt_now_header())]))
+            if not saved.startswith(("Created", "Saved")):
+                raise RuntimeError(saved)
+            lines.append(f"{saved} {len(result.rows)} rows.")
+        gist = result.markdown[:1500] if result.markdown else "\n".join(
+            "- " + " | ".join(str(v)[:60] for v in r.values()) for r in result.rows[:10])
+        return "\n".join(lines) + f"\n\n{gist}"
+
+    try:
+        job = jobs.start(_subject(state).id, title, make, alerts=_alerts(email, remind_at))
+    except jobs.Busy as e:
+        return f"ERROR: not started: {e}"
+    return _started(job, f"working on: {title}", files, state, "5 to 20 minutes", email, remind_at)
 
 
 # ---- interactive browser: one isolated session per person ----
@@ -1813,6 +2145,12 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "fetch_page": fetch_page,
     "scrape_page": scrape_page,
     "scholar_search": scholar_search,
+    "forum_search": forum_search,
+    "github_search": github_search,
+    "read_thread": read_thread,
+    "save_table": save_table,
+    "web_research": web_research,
+    "start_background_task": start_background_task,
     "product_search": product_search,
     "product_page": product_page,
     "ask_person_to_browse": ask_person_to_browse,
@@ -1954,6 +2292,44 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "ask_person_for_secret": "Ask the person to type a secret into field [ref] through a secure box (a "
                              "password that isn't saved, the card CVV, an OTP). Then stop and wait.",
     "fetch_page": "Read the text of a web page, PDF or text file by URL.",
+    "forum_search": "Search what people are discussing, recommending and launching on Hacker News, Reddit "
+                    "and Lemmy: titles with points, comment counts, dates and thread links. Best for 'what do people "
+                    "recommend', new or underrated apps/tools, opinions and launches (web_search is weak for these). "
+                    "query: 2-4 key words, no years or adjectives like 'new'/'best' (e.g. 'android apps', "
+                    "'self-hosted notes'). sites: all, or comma-separated hackernews, reddit, lemmy. period: day, "
+                    "week, month, year or all. subreddit: one subreddit, e.g. androidapps. launches=true: only "
+                    "'Show HN' launch posts (new products by their makers). Then read_thread the best threads.",
+    "github_search": "Search GitHub for open-source projects: stars, creation date, last push, language, licence, "
+                     "topics, link. query: words and GitHub qualifiers, e.g. 'topic:android-app', 'notes "
+                     "language:kotlin'. created_after: YYYY-MM-DD for new projects only. min_stars to skip "
+                     "small ones. sort: stars or updated. read_thread a repository link for its README.",
+    "read_thread": "Read a discussion thread with its top comments (Hacker News, Reddit or Lemmy link from "
+                   "forum_search), or a GitHub repository's README and facts. Comments name the things people "
+                   "recommend and why.",
+    "save_table": "Save a table you compiled as an Excel sheet (or .csv) in the person's files, e.g. a list of "
+                  "apps with their features. path: e.g. 'Research/New Android apps.xlsx'. rows: a JSON list of "
+                  "objects, one per row, e.g. [{\"App\": \"Gander\", \"Platform\": \"Android\", \"What's "
+                  "special\": \"...\", \"Source\": \"https://...\"}]. columns: the order of the columns "
+                  "(optional). Use it whenever the person asks for a sheet, spreadsheet or Excel of results.",
+    "web_research": "Research a topic across MANY websites at once in the background and get one merged Excel "
+                    "sheet: it searches forums (Hacker News incl. launches, Reddit, Lemmy and any other forum or "
+                    "site), GitHub, the web and news, reads up to max_sources pages and threads (default 25, most "
+                    "60), picks out every matching item, merges duplicates and ranks them by how many sources "
+                    "mention them, with links. Use it for 'find all / list of / collect' requests over many sites "
+                    "(new apps, tools, products, companies, events). topic: 2-4 key words. what: the kind of item "
+                    "('apps'). columns: comma-separated, first is the name (default Name, Category, Platform, What "
+                    "it does, What makes it special, Price, Link). sites: all, or a mix of hackernews, reddit, "
+                    "lemmy, github, web, news and any domains (e.g. 'reddit, xda-developers.com'). period: week, "
+                    "month, year or all. email=true also emails the result; remind_at sets a reminder to look at "
+                    "it (e.g. 'tomorrow 9am').",
+    "start_background_task": "Do a big multi-step task in the background, when it needs far more steps than a "
+                             "chat reply (reading many pages, comparing many options, a long report). The agent "
+                             "works on it alone with your tools for up to 30 rounds and saves the result as a "
+                             "Word document (output doc), an Excel sheet (sheet; columns optional) or both. "
+                             "task: the WHOLE request in full, with every detail the person gave (it can't ask "
+                             "them). email=true also emails the result; remind_at sets a reminder to look at it. "
+                             "The person is notified when it is ready. For collecting items from many sites "
+                             "prefer web_research.",
     "scholar_search": "Search research papers (arXiv, Crossref, PubMed): title, authors, year, link and "
                       "abstract. Use it for scientific, technical or medical research.",
     "weather": "Current weather and the next 3 days for a place, e.g. 'Mumbai' or 'Hyderabad, India'.",

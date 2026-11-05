@@ -284,6 +284,24 @@ Found from the owner's live session (an Amazon headphones order that never got a
   cart -> no saved login -> live browser handed to the person to sign in. Placing the order needs a real
   signed-in account and was not done.
 
+## Forum research, many-site research, background tasks (2026-11-05)
+
+The research agent answered "no public threads found" for new/underrated Android apps: keyless web
+search returned nothing useful (DuckDuckGo 202 rate limit, Bing weak) and `fetch_page` on Reddit got 403.
+Measured through the proxy: HN Algolia, GitHub API, Lemmy API and Reddit RSS answer; Reddit JSON/HTML
+403; Reddit RSS 429 on a request sent straight after another.
+- `app/browsing/community.py`: HN, Reddit (RSS, or official API with `reddit/oauth`), Lemmy, GitHub,
+  Discourse (any forum), any domain via site-limited web search; `read` raises `NoAdapter` for other
+  sites so callers use the general reader. Tools `forum_search`, `read_thread`, `github_search`.
+- `app/research.py` + tool `web_research`: many sites -> one merged, ranked sheet, in the background.
+- `app/background.py` + tool `start_background_task`: the agent loop without a person (30 rounds), result
+  as Word/Excel. Tool `save_table`. `jobs.Alerts`: email and reminder when a job ends.
+- `fetch()` takes extra headers; `post_form()` for OAuth token endpoints.
+- Prompts: research specialist, DATA_HINT, READ_SOURCES mention the new tools; `forum_search` counts as a
+  search that needs reading, `read_thread` as reading.
+- Live: web_research "android apps" (20 sources) -> 58 apps in ~5 min; background.run (10 rounds) -> 14 rows.
+- Not done: no UI for job alerts beyond the bell; jobs are in memory (lost on restart).
+
 ## Department data for members only (2026-11-04, owner's decision)
 - `packs.ADMIN` is an explicit allow list (platform, `mail:contact/*`, admin folders and templates, company
   templates, reports, inventory read, web, compute, credentials except `secret:mail/*`), not `*` minus

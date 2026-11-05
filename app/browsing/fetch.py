@@ -57,13 +57,23 @@ def post_json(url: str, payload: dict, headers: dict[str, str]) -> dict:
         return resp.json()
 
 
-def fetch(url: str) -> Fetched:
+def post_form(url: str, form: dict[str, str], headers: dict[str, str], auth: tuple[str, str] | None = None) -> dict:
+    """POST a form to a public API through the guard (OAuth token endpoints). No redirects."""
+    check_url(url)
+    with _client() as client:
+        resp = client.post(url, data=form, headers=headers, auth=auth)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def fetch(url: str, headers: dict[str, str] | None = None) -> Fetched:
     """GET a URL, following up to MAX_REDIRECTS redirects, each re-checked. Raises Blocked
-    for addresses agents may not reach and httpx.HTTPError for network failures."""
+    for addresses agents may not reach and httpx.HTTPError for network failures. headers: extra
+    request headers (an API's Accept or Authorization)."""
     current = check_url(url)
     with _client() as client:
         for _ in range(MAX_REDIRECTS + 1):
-            with client.stream("GET", current) as resp:
+            with client.stream("GET", current, headers=headers) as resp:
                 if resp.is_redirect and resp.headers.get("location"):
                     current = check_url(urljoin(current, resp.headers["location"]))
                     continue

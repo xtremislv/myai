@@ -80,6 +80,10 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   (app.js); they ride on the final assistant message via `context.with_dashboards`, never in a `str` state field.
 - Data bigger than the context goes through `app/bigsummary.py` (`summarize_large`): parts in a private temp
   folder under `WORK_DIR`, always deleted; never put the whole text in a prompt or in graph state.
+- Forum/code-host research goes through `app/browsing/community.py` (official APIs/feeds only; honour 429s,
+  never retry around a rate limit or disguise the client). Long work runs as a job (`app/jobs.py`) via
+  `web_research` (`app/research.py`) or `start_background_task` (`app/background.py`, no critical or
+  person-present tools); results are saved with `_save` and announced with `JOB_STARTED`.
 - Web tools must never pass a block/CAPTCHA page off as content (`extract.block_reason`, `tools._readable`).
   `scripts/check_connectivity.py` shows what this network lets through; it changes over time.
 

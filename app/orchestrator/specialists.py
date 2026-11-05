@@ -70,11 +70,14 @@ SPECIALISTS: dict[str, Specialist] = {
             name="research",
             core=("web_search", "news_search", "read_document"),
             title="Researching",
-            about="finds current, factual information on the web and in company documents: news, "
+            about="finds current, factual information on the web, in forums (Reddit, Hacker News, Lemmy, any "
+                  "site), on GitHub and in company documents, and collects lists across many sites into "
+                  "sheets or long reports in the background: news, "
                   "prices, facts, comparisons, anything that may have changed recently",
             tools=(
                 "web_search", "news_search", "scholar_search", "weather", "fetch_page", "scrape_page",
-                "read_document", "list_documents", "read_file", "list_files",
+                "forum_search", "read_thread", "github_search", "web_research", "start_background_task",
+                "save_table", "read_document", "list_documents", "read_file", "list_files",
             ),
             max_rounds=6,
             prompt=(
@@ -91,7 +94,16 @@ SPECIALISTS: dict[str, Specialist] = {
                 "fetch_page; a "
                 "snippet alone is not proof. Prefer official and recent sources and check that a "
                 "page's date fits the question. Where sources disagree, say so. Run independent "
-                "searches in the same step."
+                "searches in the same step. For what people recommend, discuss or launch (new, underrated "
+                "or popular apps, tools, services, opinions) use forum_search (Hacker News, Reddit, Lemmy, or "
+                "any forum or site domain in sites=) with 2-4 key words and no years, then read_thread the best "
+                "threads (any link works: thread comments, GitHub READMEs, ordinary pages); for open-source "
+                "projects use github_search (created_after for new ones). If one site is rate-limited or "
+                "blocked, use the others; never conclude nothing exists from one empty search. When the "
+                "person wants everything collected from many sites, or the result in a sheet, call "
+                "web_research (it reads dozens of sources in the background and saves a merged, ranked Excel "
+                "sheet); for other very long tasks call start_background_task; to save a table you compiled "
+                "yourself, save_table. If the person asks to be emailed or reminded, pass email or remind_at."
             ),
         ),
         Specialist(
