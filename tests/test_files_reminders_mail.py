@@ -460,15 +460,19 @@ def test_alerts_are_emailed_and_a_mail_failure_keeps_the_bell_notice(db, monkeyp
         assert service.notifications(s, "root")[0]["title"] == "Server alert (warning): DiskAlmostFull"
 
 
-def test_official_mailbox_sends_when_there_is_no_notify_box(db, monkeypatch):
+def test_official_mailboxes_are_never_used_for_service_mail(db, monkeypatch):
     from app.reminders import delivery
 
     sent = []
     monkeypatch.setattr(delivery, "send", lambda cfg, to, subject, body: sent.append((cfg.sender, to)))
     with db() as s:
-        AESGCMVault(s).put("mail/contact", NOTIFY_BOX.replace("platform@gmail.com", "contact@corp.com"))
-        assert delivery.email_admins(s, "alert", "x") == 1
-    assert sent == [("contact@corp.com", "contact@corp.com")]
+        for box in ("contact", "career", "finance"):
+            AESGCMVault(s).put(f"mail/{box}", NOTIFY_BOX.replace("platform@gmail.com", f"{box}@corp.com"))
+        s.get(User, "alice").prefs = {"email": "alice@example.com"}
+        s.commit()
+        assert delivery.email_admins(s, "alert", "x") == 0
+        assert delivery.welcome_new_addresses(s) == 0
+    assert sent == []
 
 
 def test_welcome_goes_once_to_each_new_address(db, monkeypatch):

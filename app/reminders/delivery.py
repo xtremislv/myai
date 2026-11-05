@@ -1,9 +1,10 @@
 """Emailing a person their reminders and digests.
 
 The address is the one in their settings, or else their connected mailbox's own address.
-It is sent from the company's notification mailbox: vault secret `mail/notify` if there is one,
-else the admin department's official mailbox `mail/contact`. Reminders fall back to the person's
-own mailbox, sending to itself. Welcome emails go to each new address once (`welcome_new_addresses`).
+It is sent from the platform's notification mailbox, vault secret `mail/notify` (the owner's own
+alert account). Never from a department's official mailbox (mail/contact, mail/career, ...):
+the owner's rule, 2026-11-05 - don't touch those without asking. Reminders fall back to the
+person's own mailbox, sending to itself. Welcome emails go to each new address once.
 """
 from __future__ import annotations
 
@@ -16,7 +17,6 @@ from app.mail.connector import MailConfig, secret_name, send
 from app.vault.aesgcm_vault import AESGCMVault
 
 NOTIFY_SECRET = "mail/notify"
-OFFICIAL_SECRET = "mail/contact"  # the admin department's official mailbox
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _config(vault: AESGCMVault, name: str) -> MailConfig | None:
 
 
 def _sender(vault: AESGCMVault) -> MailConfig | None:
-    return _config(vault, NOTIFY_SECRET) or _config(vault, OFFICIAL_SECRET)
+    return _config(vault, NOTIFY_SECRET)
 
 
 def address_of(session: Session, user: User) -> str | None:

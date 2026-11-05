@@ -295,9 +295,10 @@ The container has no systemd or cron, and a quick tunnel's link changes on every
 2. **Watchdog:** `start_native.sh` starts `scripts/watchdog.sh` (log: `watchdog.log`). Every minute it restarts
    whatever is down, restarts a tunnel whose link has failed for 10 minutes, and emails the admin the links
    when they change (`links.sent` holds the last ones emailed; delete it to resend).
-3. **The sender:** the admin department's official mailbox `mail/contact` (set on the Credentials page). To send
-   from a separate account instead, add `mail/notify` there, which wins when present (Gmail needs an app password:
-   2-step verification on, then Security > App passwords):
+3. **The sender:** only the vault secret `mail/notify`, the owner's own alert account (Gmail: 2-step verification
+   on, then Security > App passwords; the normal password is refused). Never a department's official mailbox
+   (`mail/contact`, `mail/career`, ...): the owner's rule is not to touch those without asking. On the admin
+   Credentials page add `mail/notify`:
    `{"imap_host": "imap.gmail.com", "username": "<address>", "password": "<app password>", "smtp_host": "smtp.gmail.com", "smtp_port": 465}`.
    The same mailbox sends reminder emails, morning digests and Prometheus alerts. Admin mail goes to each admin's
    address (My account email, or their connected mailbox), else to the sender's own inbox.
