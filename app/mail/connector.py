@@ -234,28 +234,93 @@ def _search(conn, base: list[str], query: str) -> list[bytes]:
     return (data[0] or b"").split()
 
 
+_INTERNALDATE = re.compile(rb'INTERNALDATE "([^"]+)"')
+NOT_RECEIVED = "-in:sent -in:drafts"  # Gmail: a time window counts mail that came in, not mail sent
+
+
+def since_hours(hours: float) -> dt.datetime | None:
+    """The moment `hours` ago (UTC), or None for no time limit."""
+    try:
+        hours = float(hours or 0)
+    except (TypeError, ValueError):
+        return None
+    return dt.datetime.now(dt.UTC) - dt.timedelta(hours=min(hours, 24 * 366)) if hours > 0 else None
+
+
+def _received_after(conn, base: list[str], query: str, after: dt.datetime) -> list[bytes]:
+    """UIDs (oldest first) of emails the server received at or after `after`. IMAP's SINCE only
+    knows whole days (in the server's own time zone), so the search starts a day early and the
+    exact arrival time (INTERNALDATE) of each candidate decides."""
+    day = (after - dt.timedelta(days=1)).strftime("%d-%b-%Y")
+    uids = _search(conn, [*base, "SINCE", day], query)
+    kept = []
+    for start in range(0, len(uids), 500):
+        chunk = uids[start:start + 500]
+        _, rows = conn.uid("FETCH", b",".join(chunk), "(UID INTERNALDATE)")
+        arrived = {}
+        for row in rows or []:
+            line = row[0] if isinstance(row, tuple) else row
+            if not isinstance(line, bytes):
+                continue
+            uid, when = re.search(rb"UID (\d+)", line), _INTERNALDATE.search(line)
+            if uid and when:
+                try:
+                    arrived[uid.group(1)] = dt.datetime.strptime(when.group(1).decode().strip(), "%d-%b-%Y %H:%M:%S %z")
+                except ValueError:
+                    arrived[uid.group(1)] = None
+        # An email whose arrival time can't be read is kept: missing mail is worse than one extra.
+        kept += [u for u in chunk if arrived.get(u) is None or arrived[u] >= after]
+    return kept
+
+
+def window_label(hours: float) -> str:
+    hours = float(hours)
+    if hours % 24 == 0:
+        days = int(hours // 24)
+        return "in the last day" if days == 1 else f"in the last {days} days"
+    shown = f"{hours:g}"
+    return f"in the last {shown} hour{'' if shown == '1' else 's'}"
+
+
 def list_messages(cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_only: bool = False,
-                  query: str = "", page: int = 1) -> str:
+                  query: str = "", page: int = 1, hours: float = 0) -> str:
     """Emails newest first, one page at a time, with how many there are in all. A search with
-    no folder given looks through every folder (the archive folder) when the server has one."""
+    no folder given looks through every folder (the archive folder) when the server has one.
+    hours > 0: only emails received in that many past hours (exact count, every folder on Gmail)."""
+    after = since_hours(hours)
     conn = _imap(cfg)
     try:
         folder = _folder(box)
         prefix = ""
-        if query and (box or "inbox").strip().lower() in ("", "inbox", "all") and (archive := _all_mail(conn)):
+        gmail = "X-GM-EXT-1" in getattr(conn, "capabilities", ())
+        if ((query or (after and gmail)) and (box or "inbox").strip().lower() in ("", "inbox", "all")
+                and (archive := _all_mail(conn))):
             folder, prefix = archive, ALL_PREFIX
         status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
         if status != "OK":
             return f"ERROR: no mailbox folder named '{box}'"
-        uids = _search(conn, ["UNSEEN"] if unread_only else ["ALL"], query)[::-1]
+        base = ["UNSEEN"] if unread_only else ["ALL"]
+        if after:
+            raw = f"{query} {NOT_RECEIVED}".strip() if prefix and gmail else query
+            uids = _received_after(conn, base, raw, after)[::-1]
+        else:
+            uids = _search(conn, base, query)[::-1]
         total = len(uids)
         size = max(1, min(int(limit), MAX_LIST))
         page = max(1, int(page))
         shown = uids[(page - 1) * size:page * size]
         where = "every folder" if prefix else f"the {box or 'inbox'} folder"
-        what = f'matching "{query}"' if query else ("unread" if unread_only else "")
+        what = " ".join(filter(None, [
+            "unread" if unread_only else "", f'matching "{query}"' if query else "",
+            f"received {window_label(hours)}" if after else "",
+        ]))
         if not shown:
-            return f"No emails {what} in {where}." if page == 1 else f"No more: all {total} emails were shown."
+            if page == 1:
+                none = f"No emails {what} in {where}."
+                if unread_only:
+                    none += " (Only UNREAD emails were counted: read ones may exist; call again with unread_only false.)"
+                return none
+            return f"No more: all {total} emails were shown."
         _, rows = conn.uid("FETCH", b",".join(shown), "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
         found = {}
         for row in rows:
@@ -380,14 +445,17 @@ def read_message(cfg: MailConfig, message_id: str, box: str = "inbox", max_chars
 
 def fetch_messages(
     cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_only: bool = True,
-    since: dt.date | None = None, body_chars: int = 3000, query: str = "",
+    since: dt.date | None = None, body_chars: int = 3000, query: str = "", hours: float = 0,
 ) -> list[dict]:
     """The newest messages with their text, without marking them read. Each is
     {"id", "message_id", "from", "subject", "date", "unread", "attachments", "body"}."""
     conn = _imap(cfg)
     try:
+        after = since_hours(hours)
+        gmail = "X-GM-EXT-1" in getattr(conn, "capabilities", ())
         folder, prefix = _folder(box), ""
-        if query and (box or "inbox").strip().lower() in ("", "inbox", "all") and (archive := _all_mail(conn)):
+        if ((query or (after and gmail)) and (box or "inbox").strip().lower() in ("", "inbox", "all")
+                and (archive := _all_mail(conn))):
             folder, prefix = archive, ALL_PREFIX
         status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
         if status != "OK":
@@ -395,7 +463,12 @@ def fetch_messages(
         criteria = ["UNSEEN"] if unread_only else ["ALL"]
         if since is not None:
             criteria += ["SINCE", since.strftime("%d-%b-%Y")]
-        uids = _search(conn, criteria, query)[-max(1, min(limit, MAX_SUMMARY)):][::-1]
+        if after:
+            raw = f"{query} {NOT_RECEIVED}".strip() if prefix and gmail else query
+            found = _received_after(conn, criteria, raw, after)
+        else:
+            found = _search(conn, criteria, query)
+        uids = found[-max(1, min(limit, MAX_SUMMARY)):][::-1]
         out = []
         for uid in uids:
             _, rows = conn.uid("FETCH", uid, f"(UID FLAGS BODY.PEEK[]<0.{SUMMARY_FETCH_BYTES}>)")

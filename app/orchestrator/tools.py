@@ -259,7 +259,7 @@ def _mail_call(fn, *args) -> str:
 
 def read_mail(
     state: dict[str, Any], category: str = "", folder: str = "", limit: int = 20, unread_only: bool = False,
-    page: int = 1,
+    page: int = 1, hours: float = 0,
 ) -> str:
     from app.mail import connector
 
@@ -267,18 +267,19 @@ def read_mail(
     if cfg is None:
         return err
     return untrusted(f"{category} mailbox",
-                     _mail_call(connector.list_messages, cfg, folder or "inbox", limit, unread_only, "", page))
+                     _mail_call(connector.list_messages, cfg, folder or "inbox", limit, unread_only, "", page, hours))
 
 
 def search_mail(
-    state: dict[str, Any], query: str, category: str = "", folder: str = "", page: int = 1, limit: int = 50
+    state: dict[str, Any], query: str, category: str = "", folder: str = "", page: int = 1, limit: int = 50,
+    hours: float = 0,
 ) -> str:
     from app.mail import connector
 
     cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    found = _mail_call(connector.list_messages, cfg, folder, limit, False, query, page)
+    found = _mail_call(connector.list_messages, cfg, folder, limit, False, query, page, hours)
     total = re.match(r"(\d+) emails", found)
     if total and int(total.group(1)) > INLINE_SUMMARIZED:
         found += (f"\n\nTo list, tabulate or summarize all {total.group(1)} of these, call mail_to_sheet with this "
@@ -320,7 +321,7 @@ def send_mail(
 
 def summarize_mail(
     state: dict[str, Any], category: str = "", folder: str = "", count: int = 10, unread_only: bool = True,
-    query: str = "",
+    query: str = "", hours: float = 0,
 ) -> str:
     """Reads up to `count` emails in full and returns a gist, the action needed and any deadline
     for each: a whole inbox in one step, without filling the context with raw mail."""
@@ -330,13 +331,23 @@ def summarize_mail(
     if cfg is None:
         return err
 
+    # A time window means mail that came in, read or not: "how many emails today" counts both.
+    windowed = connector.since_hours(hours) is not None
+    unread_only = unread_only and not windowed
+
     def go() -> str:
         messages = connector.fetch_messages(cfg, folder or ("" if query else "inbox"),
                                             max(1, min(int(count), connector.MAX_SUMMARY)), unread_only,
-                                            query=query)
+                                            query=query, hours=hours if windowed else 0)
         if not messages:
             what = f' matching "{query}"' if query else ""
-            return f"No unread messages{what}." if unread_only else f"No messages{what}."
+            if windowed:
+                what += f" received {connector.window_label(hours)}"
+            if unread_only:
+                return (f"No UNREAD messages{what}. This does NOT mean the mailbox has no emails: read ones "
+                        "were not counted. To say how many emails arrived, call read_mail with hours set "
+                        "(or unread_only false) before answering.")
+            return f"No messages{what}."
         from app.orchestrator.progress import step
 
         step(f"Reading {len(messages)} emails")
@@ -2418,11 +2429,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                  "(most 100); page for older ones. category: personal (the "
                  "person's own), finance, career or contact (official department mailboxes, for their "
                  "members); leave it empty when the person didn't say, and you'll be told if you must ask. "
-                 "unread_only to see only new mail.",
+                 "unread_only to see only new mail. hours: only emails received in that many past hours "
+                 "(24 = the last day), read or unread, with the exact total: use it for 'how many emails "
+                 "did I get today / in the last N hours'.",
     "summarize_mail": "Read up to `count` emails (most 40) in full and get, for each, a one-line gist, "
                       "what the reader must do, and any deadline; urgent ones first. Best way to answer "
                       "'what's in my mail' or 'what do I need to do'. With query, it summarizes the emails "
-                      "on that topic from every folder (set unread_only false to include read ones).",
+                      "on that topic from every folder (set unread_only false to include read ones). "
+                      "hours: only emails received in that many past hours (read ones included). Never "
+                      "say a mailbox has no emails from an unread-only result.",
     "mail_to_sheet": "Put EVERY email matching a search into an Excel sheet in the person's files: date, "
                      "sender, sender email, subject and (summarize true) a one-line summary, action, deadline "
                      "and type for each. No page limit (up to 2,000 summarized, 5,000 without summaries). "
@@ -2436,7 +2451,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                    "per page, with the total. The query is words that must all appear (Gmail also takes "
                    "from:, subject:, after:2026/01/01). If the result says there are more, call again with "
                    "the next page until you have them all before answering. folder: only to limit the "
-                   "search to one folder; which mailbox is category.",
+                   "search to one folder; which mailbox is category. hours: only emails received in "
+                   "that many past hours (Gmail's newer_than: has no hours, so use this instead).",
     "open_mail": "Read one email in full by the id exactly as read_mail or search_mail showed it "
                  "(ids like all-123 are from the archive search).",
     "mark_mail": "Mark an email by id: action read, unread, flag or unflag.",

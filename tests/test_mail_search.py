@@ -1,6 +1,8 @@
 """Finding every email on a topic: all folders, all pages, words matched separately."""
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from app.mail import connector
@@ -85,3 +87,82 @@ def test_a_topic_summary_reads_the_matching_mail(imap):
     got = connector.fetch_messages(CFG, "", 100, False, query="acme")
     assert len(got) == connector.MAX_SUMMARY and got[0]["id"] == "all-60"
     assert conn.searches[-1] == ("ALL", "X-GM-RAW", '"acme"')
+
+
+# --- "How many emails did I get in the last N hours?" (2026-11-05: the agent answered "none"
+# because summarize_mail only counts UNREAD mail and no tool could filter by arrival time).
+
+class TimedIMAP(FakeIMAP):
+    """Ten emails: UID i arrived i*30 minutes before `now`; UIDs 1-5 already read."""
+
+    def __init__(self, now, gmail=True):
+        super().__init__(gmail=gmail, n=10)
+        self.now = now
+
+    def uid(self, cmd, *args):
+        if cmd == "SEARCH":
+            self.searches.append(args)
+            unseen = "UNSEEN" in args
+            ids = [i for i in range(10, 0, -1) if not (unseen and i <= 5)]  # oldest first
+            return "OK", [b" ".join(str(i).encode() for i in ids)]
+        if cmd == "FETCH" and args[1] == "(UID INTERNALDATE)":
+            rows = []
+            for i in args[0].split(b","):
+                when = (self.now - dt.timedelta(minutes=30 * int(i))).strftime("%d-%b-%Y %H:%M:%S +0000")
+                rows.append(b"1 (UID " + i + b' INTERNALDATE "' + when.encode() + b'")')
+            return "OK", rows
+        return super().uid(cmd, *args)
+
+
+
+def test_hours_counts_read_and_unread_mail_that_arrived_in_the_window(imap, monkeypatch):
+    now = dt.datetime.now(dt.UTC)
+    conn = TimedIMAP(now)
+    monkeypatch.setattr(connector, "_imap", lambda cfg: conn)
+    out = connector.list_messages(CFG, "inbox", 50, False, "", 1, hours=2)
+    # 30, 60, 90 min ago are in; 120 min is on the edge (the clock moved on), 150+ are out.
+    assert out.startswith("3 emails received in the last 2 hours in every folder"), out
+    search = conn.searches[-1]
+    assert "SINCE" in search and search[-1] == f'"{connector.NOT_RECEIVED}"'  # Gmail: received, not sent
+    assert conn.selected == '"[Gmail]/All Mail"'
+
+
+def test_hours_on_other_servers_reads_the_inbox(imap, monkeypatch):
+    conn = TimedIMAP(dt.datetime.now(dt.UTC), gmail=False)
+    monkeypatch.setattr(connector, "_imap", lambda cfg: conn)
+    out = connector.list_messages(CFG, "inbox", 50, False, "", 1, hours=24)
+    assert out.startswith("10 emails received in the last day in the inbox folder"), out
+
+
+def test_an_empty_unread_listing_says_read_mail_may_exist(imap, monkeypatch):
+    conn = TimedIMAP(dt.datetime.now(dt.UTC))
+    monkeypatch.setattr(connector, "_imap", lambda cfg: conn)
+    out = connector.list_messages(CFG, "inbox", 50, True, "", 1, hours=2)
+    assert out.startswith("No emails unread received") and "read ones may exist" in out
+
+
+def test_summaries_in_a_window_include_read_mail(imap, monkeypatch):
+    conn = TimedIMAP(dt.datetime.now(dt.UTC))
+    monkeypatch.setattr(connector, "_imap", lambda cfg: conn)
+    got = connector.fetch_messages(CFG, "inbox", 40, False, hours=2)
+    assert [m["id"] for m in got] == ["all-1", "all-2", "all-3"]
+
+
+def test_window_labels():
+    assert connector.window_label(24) == "in the last day"
+    assert connector.window_label(48) == "in the last 2 days"
+    assert connector.window_label(1) == "in the last 1 hour"
+    assert connector.window_label(1.5) == "in the last 1.5 hours"
+    assert connector.since_hours(0) is None and connector.since_hours("x") is None
+
+
+def test_summarize_mail_never_reports_an_empty_mailbox_from_unread_only(monkeypatch):
+    from app.orchestrator import tools
+
+    calls = []
+    monkeypatch.setattr(tools, "_mailbox", lambda *a: (CFG, None))
+    monkeypatch.setattr(connector, "fetch_messages", lambda *a, **kw: calls.append((a, kw)) or [])
+    out = tools.summarize_mail({}, category="contact")
+    assert "No UNREAD messages" in out and "does NOT mean" in out and "read_mail with hours" in out
+    tools.summarize_mail({}, category="contact", hours=3)  # a window includes read mail
+    assert calls[-1][0][3] is False and calls[-1][1]["hours"] == 3
