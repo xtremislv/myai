@@ -6,7 +6,7 @@
 #   scripts/start_native.sh status     # show what is up, and the public addresses
 #
 # Logs go to $LOG_DIR (default /var/log/ai-platform). Every service listens on localhost only;
-# the two Cloudflare quick tunnels are the only way in. Setup: "Without Docker" in docs/SERVER_SETUP.md.
+# the Cloudflare tunnel(s) are the only way in (scripts/public_urls.sh: own domain or quick tunnels). Setup: "Without Docker" in docs/SERVER_SETUP.md.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -30,7 +30,7 @@ start_bg() { # name, command...: start it unless its PID file points at a live p
   echo $! > "$LOG_DIR/$name.pid"
 }
 
-tunnel_url() { grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/$1.log" 2>/dev/null | tail -1; }
+source scripts/public_urls.sh
 
 up() { # name, check command
   if eval "$2" >/dev/null 2>&1; then echo "  up    $1"; return 0; fi
@@ -50,13 +50,17 @@ status() {
   up prometheus "curl -sf http://127.0.0.1:9090/-/ready"
   up grafana "curl -sf http://127.0.0.1:3000/api/health"
   [[ -n "$(env_value PROXY_SSH)" ]] && up proxy-tunnel "timeout 8 curl -s -o /dev/null --socks5-hostname 127.0.0.1:1080 https://www.bing.com/"
-  up app-tunnel "alive app-tunnel"
-  up grafana-tunnel "alive grafana-tunnel"
+  if named_tunnel; then
+    up tunnel "alive tunnel && tunnel_ready"
+  else
+    up app-tunnel "alive app-tunnel"
+    up grafana-tunnel "alive grafana-tunnel"
+  fi
   up watchdog "alive watchdog"
   echo
-  echo "  App:        $(tunnel_url app-tunnel)/ui/"
-  echo "  Dashboards: $(tunnel_url grafana-tunnel)/   (user admin, password GRAFANA_PASSWORD in .env)"
-  echo "  The tunnel addresses change whenever the tunnels restart."
+  echo "  App:        $(app_url)/ui/"
+  echo "  Dashboards: $(grafana_url)/   (user admin, password GRAFANA_PASSWORD in .env)"
+  named_tunnel || echo "  The tunnel addresses change whenever the tunnels restart."
 }
 
 if [[ "${1:-}" == "status" ]]; then status; exit 0; fi
@@ -123,9 +127,17 @@ PY="$PY" start_bg retention bash -c 'while true; do "$PY" -m scripts.purge_histo
 # Reminders, morning mail digests, and cleanup of trash and undo copies (scripts/scheduler.py).
 start_bg scheduler "$PY" -m scripts.scheduler
 
-# Public access through Cloudflare quick tunnels: no domain or account, outbound only, no open
-# ports. Each address is random and changes when its tunnel restarts (see `status`).
-if command -v cloudflared >/dev/null; then
+# Public access through Cloudflare: outbound only, no open ports. With CF_TUNNEL set up, one named
+# tunnel serves the own domain (fixed addresses); otherwise two quick tunnels with random addresses
+# that change when they restart (see `status`).
+stop_bg() { alive "$1" && kill "$(cat "$LOG_DIR/$1.pid")" 2>/dev/null; rm -f "$LOG_DIR/$1.pid"; }
+if ! command -v cloudflared >/dev/null; then
+  :
+elif named_tunnel; then
+  stop_bg app-tunnel; stop_bg grafana-tunnel
+  start_bg tunnel cloudflared tunnel --no-autoupdate --metrics "$CF_METRICS" --config "$CF_CONFIG" run "$CF_TUNNEL"
+else
+  stop_bg tunnel
   alive app-tunnel || : > "$LOG_DIR/app-tunnel.log"
   start_bg app-tunnel cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8000
   alive grafana-tunnel || : > "$LOG_DIR/grafana-tunnel.log"
@@ -136,5 +148,9 @@ fi
 start_bg watchdog scripts/watchdog.sh
 
 for _ in $(seq 30); do curl -sf http://127.0.0.1:8000/healthz >/dev/null 2>&1 && break; sleep 1; done
-for _ in $(seq 20); do [[ -n "$(tunnel_url app-tunnel)" && -n "$(tunnel_url grafana-tunnel)" ]] && break; sleep 1; done
+if named_tunnel; then
+  for _ in $(seq 20); do tunnel_ready && break; sleep 1; done
+else
+  for _ in $(seq 20); do [[ -n "$(app_url)" && -n "$(grafana_url)" ]] && break; sleep 1; done
+fi
 status

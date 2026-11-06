@@ -241,6 +241,38 @@ Quick tunnels are meant for testing. **The address changes every time the tunnel
 guarantee, and the login page is on the public internet. For a fixed address, add a domain to Cloudflare and
 use a named tunnel (step 8, option B), ideally with Cloudflare Access in front.
 
+**9b. Own domain (fixed addresses that survive restarts).** Example: `tw-ai.in` for the app, `grafana.tw-ai.in`
+for Grafana. `scripts/public_urls.sh` switches `start_native.sh` and the watchdog from quick tunnels to one
+named tunnel as soon as `CF_TUNNEL` is set and its config file exists.
+
+1. In the Cloudflare dashboard: **Add a domain** (`tw-ai.in`, Free plan), then at the registrar replace the
+   domain's nameservers with the two Cloudflare names it shows. Wait until Cloudflare says the domain is Active.
+2. On the server: `cloudflared tunnel login` prints a link; open it, pick the domain, Authorize. This saves
+   `~/.cloudflared/cert.pem` (keep it private; it can manage the domain's tunnels and DNS).
+3. Create the tunnel and its DNS records:
+   ```bash
+   cloudflared tunnel create tw-ai                     # writes ~/.cloudflared/<tunnel-id>.json
+   cloudflared tunnel route dns tw-ai tw-ai.in
+   cloudflared tunnel route dns tw-ai grafana.tw-ai.in
+   cat > ~/.cloudflared/tw-ai.yml <<YML
+   tunnel: tw-ai
+   credentials-file: /root/.cloudflared/<tunnel-id>.json
+   ingress:
+     - hostname: tw-ai.in
+       service: http://127.0.0.1:8000
+     - hostname: grafana.tw-ai.in
+       service: http://127.0.0.1:3000
+     - service: http_status:404
+   YML
+   ```
+4. In `.env`: `CF_TUNNEL=tw-ai`, `PUBLIC_APP_URL=https://tw-ai.in`, `PUBLIC_GRAFANA_URL=https://grafana.tw-ai.in`.
+   Then `scripts/start_native.sh`: it stops the quick tunnels, starts `tunnel`, and `status` shows the fixed
+   links. The watchdog restarts the tunnel if it has no connection to Cloudflare for 10 minutes and emails
+   the new links once.
+
+Remove `CF_TUNNEL` from `.env` (and rerun `start_native.sh`) to go back to quick tunnels. Recommended next:
+Cloudflare Access (Zero Trust > Access > Applications) in front of `grafana.tw-ai.in`, and optionally the app.
+
 **10. vLLM patch for Turing cards.** Gemma 4's 512-wide attention heads need more shared memory than Turing has
 (64 KB). Apply the patch after every vLLM install or upgrade:
 ```bash
