@@ -28,7 +28,8 @@ curl -s localhost:8000/readyz           # {"ready":true,...}
 - **Grafana:** **https://grafana.tw-ai.in/** (user `admin`, password `GRAFANA_PASSWORD` in `.env`).
 - **Logs:** `/var/log/ai-platform/<service>.log`; PIDs next to them.
 - **Container restarts:** `/etc/rc.local` (copy of `deploy/native/rc.local`) runs `start_native.sh` at container
-  start, and `scripts/watchdog.sh` restarts what goes down and emails the admin new links from `mail/notify` only
+  start, and `scripts/watchdog.sh` restarts what goes down, emails the admin new links, and after every container
+  start emails "back up after a restart" (with the tw-ai.in links) once all services are up, from `mail/notify` only
   (SERVER_SETUP "Auto-start"); alerts and welcome emails use the same sender. **Never use official mailboxes
   (`mail/contact`, `mail/career`, ...) for service mail, or touch them at all, without asking the owner.** Before that existed, an outage on 2026-11-04 (stopped ~16:58 UTC, back 20:36)
   left everything down until a manual start. Postgres recovers from WAL by itself; Redis only keeps its last RDB

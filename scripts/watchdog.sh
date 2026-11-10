@@ -12,15 +12,21 @@
 #      for DEAD_AFTER seconds is restarted (it gets a new link): the process can live on while
 #      Cloudflare has forgotten it ("Tunnel not found"). Named tunnel (own domain): restarted when
 #      cloudflared has had no edge connection for DEAD_AFTER seconds; its links never change;
-#   3. when both links work and differ from the last ones emailed, they're emailed
-#      (scripts/notify_links.py, from the `mail/notify` mailbox). A failed send is retried next round.
+#   3. after a container start (/etc/rc.local leaves $LOG_DIR/boot.pending): once every service is up
+#      and the links work, the admin gets one "back up after a restart" email with the links; if
+#      something is still down after BOOT_GRACE seconds, the email goes anyway and names it;
+#   4. when both links work and differ from the last ones emailed, they're emailed.
+#   Mail goes through scripts/notify_links.py, from the `mail/notify` mailbox only; a failed send is
+#   retried next round.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 LOG_DIR="${LOG_DIR:-/var/log/ai-platform}"
 INTERVAL="${WATCHDOG_INTERVAL:-60}"
 DEAD_AFTER="${WATCHDOG_DEAD_AFTER:-600}"
+DEAD_AFTER_BOOT="${WATCHDOG_BOOT_GRACE:-900}"
 SENT="$LOG_DIR/links.sent"
+BOOTED="$LOG_DIR/boot.pending"
 PY=.venv/bin/python
 
 log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') $*"; }
@@ -50,6 +56,21 @@ check_tunnel() { # name, url getter, path: 0 if its link works
   return 1
 }
 
+boot_notice() { # app, grafana, services down at the start of this round
+  local waited since note=""
+  since=$(cat "$BOOTED")
+  waited=$(( $(date +%s) - $(stat -c %Y "$BOOTED") ))
+  if [[ -n "$3" ]] || ! curl -sf -m 10 http://127.0.0.1:8000/readyz >/dev/null; then
+    (( waited < DEAD_AFTER_BOOT )) && return 0  # still starting (vLLM takes ~2 min): look again next round
+    note="Still not up after $(( waited / 60 )) minutes: ${3:-the gateway is not ready (/readyz)}. The watchdog keeps trying."
+  fi
+  if "$PY" -m scripts.notify_links "$1" "$2" --restarted "$since" --note "$note"; then
+    rm -f "$BOOTED"
+    echo "$1 $2" > "$SENT"
+    log "restart emailed: $1 $2 ${note:+($note)}"
+  fi
+}
+
 round() {
   local down app grafana
   down=$(scripts/start_native.sh status 2>/dev/null | awk '$1 == "down" {print $2}' | tr '\n' ' ')
@@ -58,14 +79,21 @@ round() {
     scripts/start_native.sh >/dev/null 2>&1
   fi
 
+  local links_ok=1
   if named_tunnel; then
-    check_tunnel tunnel app_url || return 0
+    check_tunnel tunnel app_url || links_ok=0
   else
-    check_tunnel app-tunnel app_url /ui/ || return 0
-    check_tunnel grafana-tunnel grafana_url / || return 0
+    check_tunnel app-tunnel app_url /ui/ || links_ok=0
+    (( links_ok )) && { check_tunnel grafana-tunnel grafana_url / || links_ok=0; }
   fi
   app="$(app_url)/ui/"
   grafana="$(grafana_url)/"
+  if [[ -f "$BOOTED" ]]; then
+    (( links_ok )) || down="${down}public link (Cloudflare tunnel) "
+    boot_notice "$app" "$grafana" "$down"
+    return 0
+  fi
+  (( links_ok )) || return 0
   [[ "$app $grafana" == "$(cat "$SENT" 2>/dev/null)" ]] && return 0
   if "$PY" -m scripts.notify_links "$app" "$grafana"; then
     echo "$app $grafana" > "$SENT"

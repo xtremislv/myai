@@ -6,4 +6,6 @@
 # start_native.sh also starts scripts/watchdog.sh, which emails the admin the new links.
 rm -f /var/log/ai-platform/*.pid
 mkdir -p /var/log/ai-platform
+# The watchdog emails the admin once everything is back up after this start, then deletes the file.
+date -u '+%Y-%m-%d %H:%M UTC' > /var/log/ai-platform/boot.pending
 setsid nohup /root/myai/scripts/start_native.sh >> /var/log/ai-platform/boot.log 2>&1 < /dev/null &

@@ -327,6 +327,11 @@ The container has no systemd or cron, and a quick tunnel's link changes on every
 2. **Watchdog:** `start_native.sh` starts `scripts/watchdog.sh` (log: `watchdog.log`). Every minute it restarts
    whatever is down, restarts a tunnel whose link has failed for 10 minutes, and emails the admin the links
    when they change (`links.sent` holds the last ones emailed; delete it to resend).
+   **After every container start** `rc.local` leaves `boot.pending`; once all services are up and the link
+   works, the watchdog emails "AI Platform: back up after a restart" with the links (same `tw-ai.in`
+   addresses with the named tunnel) and deletes the file. If something is still down after 15 minutes
+   (`WATCHDOG_BOOT_GRACE`), the email goes anyway and names it. Test: `date -u > /var/log/ai-platform/boot.pending;
+   scripts/watchdog.sh --once`. Reinstall the hook after changing `deploy/native/rc.local`.
 3. **The sender:** only the vault secret `mail/notify`, the owner's own alert account (Gmail: 2-step verification
    on, then Security > App passwords; the normal password is refused). Never a department's official mailbox
    (`mail/contact`, `mail/career`, ...): the owner's rule is not to touch those without asking. On the admin
