@@ -16,4 +16,6 @@
     <string name="channel_updates">Updates</string>
     <string name="channel_updates_desc">Mail digests, finished background jobs, shares and alerts</string>
     <string name="channel_general">General</string>
+    <string name="channel_app_updates">App updates</string>
+    <string name="channel_app_updates_desc">A new version of TW-ai is ready to install</string>
 </resources>

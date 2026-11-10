@@ -15,11 +15,12 @@ from typing import Literal
 
 from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import devices, push
+from app import app_release, devices, push
 from app.acl.models import Subject
 from app.api.deps import _bearer, current_subject
 from app.auth.security import decode_token, issue_token, verify_password
@@ -77,12 +78,24 @@ class PushIn(BaseModel):
     push_token: str | None = Field(default=None, max_length=512)
 
 
+class AndroidReleaseOut(BaseModel):
+    version_code: int
+    version_name: str
+    sha256: str
+    size: int
+    notes: str = ""
+    min_version_code: int = 0
+    published_at: str = ""
+    url: str
+
+
 class AppConfigOut(BaseModel):
     api_version: int
     push_enabled: bool
     token_ttl_seconds: int
     poll_minutes: int = 15
     attachment_max_bytes: int
+    android: AndroidReleaseOut | None = None  # the app this server offers; None until one is published
 
 
 def _token_out(user: User, chat_key: bytes | None, device_id: str, refresh_token: str) -> DeviceTokenOut:
@@ -195,4 +208,29 @@ def app_config(session: Session = Depends(get_session)) -> AppConfigOut:
     return AppConfigOut(
         api_version=API_VERSION, push_enabled=push.configured(session),
         token_ttl_seconds=settings.jwt_ttl_seconds, attachment_max_bytes=settings.attachment_max_bytes,
+        android=app_release.latest(),
+    )
+
+
+@router.get("/v1/app/android/latest.apk", include_in_schema=False)
+def android_latest() -> RedirectResponse:
+    """A stable link to the newest app; redirects to its versioned file."""
+    release = app_release.latest()
+    if release is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "The Android app hasn't been published on this server yet.")
+    return RedirectResponse(release["url"], status_code=status.HTTP_302_FOUND,
+                            headers={"Cache-Control": "no-store"})
+
+
+@router.get("/v1/app/android/{version_code}.apk", include_in_schema=False)
+def android_apk(version_code: int) -> FileResponse:
+    """The published APK. Only the current version is served; the URL changes with each release,
+    so caches (Cloudflare, the phone) can never hand out an old app under a new name."""
+    release = app_release.latest()
+    if release is None or release["version_code"] != version_code:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "That version of the app isn't available. Get the latest one.")
+    return FileResponse(
+        app_release.apk_path(), media_type="application/vnd.android.package-archive",
+        filename=f"TW-ai-{release['version_name']}.apk",
+        headers={"Cache-Control": "public, max-age=86400, immutable", "X-Content-Type-Options": "nosniff"},
     )

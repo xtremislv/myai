@@ -17,7 +17,8 @@ if (hasFirebase) {
 // Release signing from android/keystore.properties (not committed):
 //   storeFile=/path/to/twai.jks  storePassword=...  keyAlias=twai  keyPassword=...
 val keystoreProps = Properties().apply {
-    val f = rootProject.file("keystore.properties")
+    // TWAI_KEYSTORE_PROPERTIES points at it elsewhere (scripts/publish_android.sh uses ~/.config/twai-android/).
+    val f = System.getenv("TWAI_KEYSTORE_PROPERTIES")?.let { file(it) } ?: rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
@@ -29,8 +30,10 @@ android {
         applicationId = "com.techwiser.twai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // scripts/publish_android.sh passes -PversionCode/-PversionName (from the git history) so every
+        // published build is newer than the last; the app updates itself when the server has a higher one.
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "1.0.0"
         // The server the app talks to; can be changed on the sign-in screen.
         buildConfigField("String", "DEFAULT_SERVER", "\"https://tw-ai.in\"")
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())

@@ -270,3 +270,52 @@ def test_erasing_a_person_removes_their_phones(api):
         counts = erase_user(s, uid, remove_object=lambda key: None)
         assert counts["devices"] == 1
         assert s.query(DeviceSession).count() == 0
+
+
+# ---- the published Android app: download and self-update ----
+def _publish(folder, code: int, data: bytes = b"PK-fake-apk", **meta) -> None:
+    import hashlib
+
+    (folder / "twai.apk").write_bytes(data)
+    (folder / "release.json").write_text(json.dumps({
+        "version_code": code, "version_name": f"1.0.{code}", "sha256": hashlib.sha256(data).hexdigest(),
+        "size": len(data), "notes": "Faster chat", **meta,
+    }))
+
+
+@pytest.fixture
+def release_dir(tmp_path, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "android_release_dir", str(tmp_path))
+    return tmp_path
+
+
+def test_no_app_is_offered_until_one_is_published(api, release_dir):
+    assert api.client.get("/v1/app/config").json()["android"] is None
+    assert api.client.get("/v1/app/android/latest.apk", follow_redirects=False).status_code == 404
+    assert api.client.get("/v1/app/android/1.apk").status_code == 404
+
+
+def test_the_published_app_is_offered_and_downloaded_by_version(api, release_dir):
+    import hashlib
+
+    _publish(release_dir, 42, min_version_code=40)
+    rel = api.client.get("/v1/app/config").json()["android"]
+    assert rel["version_code"] == 42 and rel["version_name"] == "1.0.42" and rel["min_version_code"] == 40
+    assert rel["url"] == "/v1/app/android/42.apk" and rel["notes"] == "Faster chat"
+    latest = api.client.get("/v1/app/android/latest.apk", follow_redirects=False)
+    assert latest.status_code == 302 and latest.headers["location"] == rel["url"]
+    apk = api.client.get(rel["url"])  # no sign-in needed: the APK holds no secrets
+    assert apk.status_code == 200 and apk.headers["content-type"] == "application/vnd.android.package-archive"
+    assert hashlib.sha256(apk.content).hexdigest() == rel["sha256"]
+    assert "TW-ai-1.0.42.apk" in apk.headers["content-disposition"]
+    # An old version's URL is never answered with the new file (caches key on the URL).
+    assert api.client.get("/v1/app/android/41.apk").status_code == 404
+
+
+def test_a_half_written_release_is_not_offered(api, release_dir):
+    _publish(release_dir, 7)
+    (release_dir / "twai.apk").write_bytes(b"truncated")  # the APK no longer matches release.json
+    assert api.client.get("/v1/app/config").json()["android"] is None
+    assert api.client.get("/v1/app/android/7.apk").status_code == 404

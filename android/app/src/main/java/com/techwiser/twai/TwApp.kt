@@ -9,6 +9,8 @@ import com.techwiser.twai.data.Settings
 import com.techwiser.twai.notify.Notifier
 import com.techwiser.twai.notify.Push
 import com.techwiser.twai.notify.SyncWorker
+import com.techwiser.twai.update.UpdateWorker
+import com.techwiser.twai.update.Updater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,6 +34,8 @@ class TwApp : Application() {
         store = SecureStore(this)
         api = Api(this, settings, store)
         Notifier.createChannels(this)
+        Updater.createChannel(this)
+        UpdateWorker.schedule(this)  // signed in or not: an old app should still update
 
         scope.launch {
             api.auth.collect { state ->
@@ -43,6 +47,7 @@ class TwApp : Application() {
                     AuthState.SIGNED_OUT -> {
                         SyncWorker.cancel(this@TwApp)
                         Notifier.cancelAll(this@TwApp)
+                        UpdateWorker.schedule(this@TwApp)  // SyncWorker.cancel stops all work
                     }
                     AuthState.MUST_CHANGE_PASSWORD -> Unit
                 }

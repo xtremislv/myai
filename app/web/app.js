@@ -611,6 +611,7 @@ function loginScreen(message) {
   const username = h("input", { autocomplete: "username", required: true, placeholder: "Your username", id: "login-username" });
   const password = h("input", { type: "password", autocomplete: "current-password", required: true, placeholder: "••••••••••••", id: "login-password" });
   const submit = h("button", { class: "primary wide", type: "submit" }, "Sign in", mi("arrow_forward"));
+  const getApp = h("p", { class: "auth-foot" });
   show(authFrame(h("form", {
     class: "card auth",
     onsubmit: async (event) => {
@@ -642,8 +643,13 @@ function loginScreen(message) {
       iconField("lock", password)),
     h("div", { class: "auth-actions" }, submit),
     h("p", { class: "auth-foot" }, mi("lock"), "Private chats are encrypted with a key only you can unlock."),
+    getApp,
   )));
   username.focus();
+  androidRelease().then((rel) => {
+    if (rel) fill(getApp, mi("download"), h("button", { class: "link small", type: "button", onclick: () => { location.href = rel.url; } },
+      `Get the Android app (${rel.version_name}, ${megabytes(rel.size)})`));
+  });
 }
 
 function firstPasswordScreen(oldPassword) {
@@ -2397,7 +2403,41 @@ async function accountView() {
       h("label", null, "Current password", codePassword),
       h("button", { type: "submit" }, "Create new code"),
     ),
+    await androidCard(),
     helpCard(),
+  );
+}
+
+// ---- the Android app, as published on this server (scripts/publish_android.sh) ----
+async function androidRelease() {
+  try {
+    return (await (await fetch("/v1/app/config")).json()).android || null;
+  } catch {
+    return null;
+  }
+}
+
+function megabytes(bytes) {
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+async function androidCard() {
+  const rel = await androidRelease();
+  if (!rel) return null;
+  return h("div", { class: "card" },
+    h("h2", null, "TW-ai for Android"),
+    h("p", { class: "muted" }, "The app for your phone: chat, reminders and approvals with notifications. It keeps "
+      + "itself up to date. Android may ask you once to allow installing apps from your browser."),
+    h("dl", { class: "facts" },
+      h("dt", null, "Version"), h("dd", null, rel.version_name),
+      h("dt", null, "Size"), h("dd", null, megabytes(rel.size)),
+      rel.published_at && h("dt", null, "Published"),
+      rel.published_at && h("dd", null, new Date(rel.published_at).toLocaleDateString()),
+      rel.notes && h("dt", null, "What's new"), rel.notes && h("dd", null, rel.notes),
+      h("dt", null, "SHA-256"), h("dd", { class: "mono small" }, rel.sha256),
+    ),
+    h("button", { class: "primary", type: "button", onclick: () => { location.href = rel.url; } },
+      mi("download"), "Download the app"),
   );
 }
 

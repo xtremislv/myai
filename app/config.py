@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     search_market: str = "en-IN"
     # Private temporary folder for long jobs (summaries of data bigger than the context).
     work_dir: str = "/var/lib/ai-platform/work"
+    # Published Android app: twai.apk + release.json, written by scripts/publish_android.sh.
+    android_release_dir: str = "/var/lib/ai-platform/android"
     # Most characters of one page or tool result handed to the model.
     web_max_chars: int = 20000
     # Route the agents' web traffic (pages, search APIs, Chromium) through this proxy, e.g.

@@ -85,6 +85,20 @@ data class AppConfig(
     val token_ttl_seconds: Int = 3600,
     val poll_minutes: Int = 15,
     val attachment_max_bytes: Long = 10L * 1024 * 1024,
+    val android: AndroidRelease? = null,
+)
+
+/** The app the server publishes (app/app_release.py), for self-update. */
+@Serializable
+data class AndroidRelease(
+    val version_code: Int,
+    val version_name: String = "",
+    val sha256: String,
+    val size: Long = 0,
+    val notes: String = "",
+    val min_version_code: Int = 0,
+    val published_at: String = "",
+    val url: String,
 )
 
 @Serializable

@@ -77,6 +77,8 @@ import com.techwiser.twai.ui.settings.SettingsScreen
 import com.techwiser.twai.ui.theme.TwTheme
 import com.techwiser.twai.ui.work.WorkScreen
 import com.techwiser.twai.ui.work.workTabs
+import com.techwiser.twai.update.UpdatePrompt
+import com.techwiser.twai.update.Updater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -105,6 +107,7 @@ class MainActivity : FragmentActivity() {
             val theme by app.settings.theme.collectAsStateWithLifecycle()
             TwTheme(theme) {
                 Root(arrivals.asStateFlow(), { arrivals.value = null }, locked.asStateFlow()) { unlock() }
+                UpdatePrompt()
             }
         }
     }
@@ -141,7 +144,9 @@ class MainActivity : FragmentActivity() {
                 val file = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
                 Arrival(link = "twai://chat/new", text = text, file = file)
             }
-            Intent.ACTION_VIEW -> intent.data?.takeIf { it.scheme == "twai" }?.let { Arrival(link = it.toString()) }
+            Intent.ACTION_VIEW -> intent.data?.takeIf { it.scheme == "twai" }?.let {
+                if (it.host == "update") { Updater.prompt(); null } else Arrival(link = it.toString())
+            }
             else -> null
         }
     }

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Mail
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -53,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.techwiser.twai.BuildConfig
 import com.techwiser.twai.TwApp
+import com.techwiser.twai.update.Updater
 import com.techwiser.twai.data.AppConfig
 import com.techwiser.twai.data.DeviceOut
 import com.techwiser.twai.data.Prefs
@@ -252,6 +254,17 @@ fun SettingsScreen() {
                 modifier = Modifier.clickable {
                     runCatching { CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(app.api.webUrl())) }
                         .onFailure { toast(context, "No browser found.") }
+                },
+            )
+            ListItem(
+                leadingContent = { Icon(Icons.Outlined.SystemUpdate, null) },
+                headlineContent = { Text("Check for updates") },
+                supportingContent = { Text("You have version ${BuildConfig.VERSION_NAME}. The app also checks by itself.") },
+                modifier = Modifier.clickable {
+                    scope.launch {
+                        Updater.prompt()
+                        if (Updater.check(context) == null) toast(context, "You have the latest version.")
+                    }
                 },
             )
             ListItem(

@@ -478,6 +478,29 @@ class Api(private val context: Context, private val settings: Settings, private 
         }
     }
 
+    /** Downloads the published app (no sign-in: it holds no secrets) into [out]. */
+    suspend fun downloadUpdate(path: String, out: File, progress: (Long) -> Unit) {
+        val url = base().toHttpUrl().resolve(path) ?: throw ApiException(0, "Bad update address.")
+        if (url.host != base().toHttpUrl().host) throw ApiException(0, "The update must come from this server.")
+        http.newCall(Request.Builder().url(url).build()).await().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, detailOf(response.code, response.body?.string().orEmpty()))
+            val body = response.body ?: throw ApiException(response.code, "The server sent no update.")
+            body.byteStream().use { input ->
+                out.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var done = 0L
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        output.write(buffer, 0, n)
+                        done += n
+                        progress(done)
+                    }
+                }
+            }
+        }
+    }
+
     fun readPicked(uri: Uri, maxBytes: Long): PickedFile {
         val resolver = context.contentResolver
         var name = "file"
