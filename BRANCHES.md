@@ -8,7 +8,7 @@ Update this file whenever a new branch is cut.
 ```
 main                 6ee1b2e  first commit (the original Docker-based platform)
  └─ server-native-setup   +42 commits  (runs natively on the GPU host, tw-ai.in; everything since 2026-11-02)
-     └─ android-app        +3 commits  (native Android app + phone APIs; server-native-setup merged in)
+     └─ android-app        +5 commits  (Android app, phone APIs, download + self-update; server-native-setup merged in)
 ```
 
 `android-app` contains all of `server-native-setup` (merged in on 2026-11-10), so folding it back is a
@@ -41,6 +41,10 @@ One commit, 9ac9e9b, "Add the native Android app and the phone APIs it needs".
 
 **Android app:** the whole `android/` folder (Kotlin, Jetpack Compose). Build with `cd android && ./gradlew assembleDebug`.
 `android/app/google-services.json` (Firebase) is deliberately not committed.
+
+**Download and self-update (2026-11-10):** `scripts/publish_android.sh` publishes a signed APK into
+`ANDROID_RELEASE_DIR`; the website offers it (Settings, sign-in page) and the app updates itself
+(`android/.../update/`). Signing key in `~/.config/twai-android/` (back it up). See ANDROID_APP "Publishing".
 
 **Docs:** `docs/ANDROID_APP.md` (new), plus short additions to `README.md`, `CLAUDE.md`, `docs/USER_GUIDE.md` §6b.
 
@@ -85,6 +89,7 @@ git fetch origin && git switch android-app && git pull
 .venv/bin/alembic upgrade head      # 0009: device_sessions
 kill $(cat /var/log/ai-platform/gateway.pid); scripts/start_native.sh
 curl -s https://tw-ai.in/v1/app/config
+scripts/publish_android.sh "First release"   # the website offers it from then on
 ```
 
 **When the app is tested, fold it into server-native-setup** (fast-forward, no merge commit, no conflicts):

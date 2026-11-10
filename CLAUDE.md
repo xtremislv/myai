@@ -96,6 +96,9 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   only a hash of the rotating refresh part is stored, and the chat key is wrapped by the device secret the server never
   keeps. Pushes (`app/push.py`, vault `push/fcm`) carry no content, only a type and ids: never put reminder, mail or
   chat text in `push.wake(...)`. Revoke devices when a chat key changes (`devices.revoke_all`).
+- After changing `android/`, commit and run `scripts/publish_android.sh "notes"` so the website offers it and installed
+  apps update themselves (`--required` if old apps would break). Never sign with another key than
+  `~/.config/twai-android/release.jks`: phones refuse the update.
 
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing

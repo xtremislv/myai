@@ -85,6 +85,39 @@ EOF
 The server address defaults to `https://tw-ai.in` (`DEFAULT_SERVER` in `app/build.gradle.kts`) and can be changed on
 the sign-in screen ("Server: ..."). Plain HTTP is allowed only for `10.0.2.2` and `localhost` (emulator testing).
 
+## Publishing and auto-update
+
+The server hands out the app itself: the website offers it (**Settings > TW-ai for Android**, and a link on the
+sign-in page), and installed apps keep themselves at the published version. To ship a change:
+
+```bash
+git commit ...                                   # android/ must be committed
+scripts/publish_android.sh "What's new text"     # build, sign, publish (no restart needed)
+scripts/publish_android.sh "..." --required      # older apps must update before they go on
+```
+
+- **Version:** the version code is the number of commits (`git rev-list --count HEAD`), the name `1.0.<code>`.
+  Publishing the same commit twice is refused.
+- **Where:** `ANDROID_RELEASE_DIR` (default `/var/lib/ai-platform/android`): `twai.apk` + `release.json`
+  (version, SHA-256, size, notes, `min_version_code`). `app/app_release.py` reads it on each call.
+- **Endpoints (no sign-in; the APK holds no secrets):** `/v1/app/config` has `android: {version_code, url, sha256, ...}`,
+  `/v1/app/android/<code>.apk` serves it (only the current code, so a cached old file never passes as new),
+  `/v1/app/android/latest.apk` redirects to it.
+- **In the app (`update/`):** checks on every start/resume and every 6 hours, signed in or not. A newer version is
+  downloaded, checked against the SHA-256 and installed with PackageInstaller. In the app: an "Update available"
+  dialog ("Update needed", without "Later", below `min_version_code`); Settings > Check for updates. In the
+  background: installed silently where Android allows it (Android 12+, after the app has installed itself once,
+  while it isn't open), otherwise an "update ready" notification. Android asks once to allow TW-ai to install apps.
+- **Signing key:** every published APK must be signed with the same key, or phones refuse the update and people
+  must uninstall and reinstall. The key is `~/.config/twai-android/release.jks` with its passwords in
+  `keystore.properties` next to it (mode 600, never committed). **Back up that folder somewhere safe.**
+- **Toolchain:** JDK 17 + Android SDK in `TWAI_ANDROID_TOOLCHAIN` (default `/root/.twai-android-toolchain`: `jdk/`,
+  `sdk/`, `gradle/`; about 2.3 GB). To set it up again: Temurin 17 into `jdk/`, Android command-line tools into
+  `sdk/cmdline-tools/latest/`, accept licences with `sdkmanager --licenses`; Gradle fetches the rest.
+- **What auto-update covers:** changes to the app's own screens (`android/`) reach phones only when published.
+  Everything the server does (agents, answers, rules, data) changes for the app at once, since it calls the same
+  API. A server change that old apps can't handle: publish with `--required`.
+
 ## Deploying the server side
 
 The phone endpoints ship with the gateway. On the server:
