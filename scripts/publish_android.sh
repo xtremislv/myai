@@ -15,11 +15,12 @@
 # with jdk/, sdk/ and gradle/ inside). No gateway restart is needed: /v1/app/config reads the
 # release from disk on each call.
 set -euo pipefail
+trap 'echo "publish_android: failed at line $LINENO" >&2' ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOOLCHAIN="${TWAI_ANDROID_TOOLCHAIN:-/root/.twai-android-toolchain}"
 export TWAI_KEYSTORE_PROPERTIES="${TWAI_KEYSTORE_PROPERTIES:-/root/.config/twai-android/keystore.properties}"
-OUT="${ANDROID_RELEASE_DIR:-$(cd "$ROOT" && grep -s '^ANDROID_RELEASE_DIR=' .env | cut -d= -f2-)}"
+OUT="${ANDROID_RELEASE_DIR:-$(cd "$ROOT" && { grep -s '^ANDROID_RELEASE_DIR=' .env || true; } | cut -d= -f2-)}"
 OUT="${OUT:-/var/lib/ai-platform/android}"
 
 NOTES=""
