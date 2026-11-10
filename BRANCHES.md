@@ -8,17 +8,17 @@ Update this file whenever a new branch is cut.
 ```
 main                 6ee1b2e  first commit (the original Docker-based platform)
  └─ server-native-setup   +42 commits  (runs natively on the GPU host, tw-ai.in; everything since 2026-11-02)
-     └─ android-app        +1 commit   (native Android app + phone APIs)
+     └─ android-app        +3 commits  (native Android app + phone APIs; server-native-setup merged in)
 ```
 
-Each branch starts from the tip of the one above it, so **nothing conflicts**: every merge below is a
-fast-forward. `android-app` contains all of `server-native-setup`.
+`android-app` contains all of `server-native-setup` (merged in on 2026-11-10), so folding it back is a
+fast-forward as long as nothing new lands on `server-native-setup` first.
 
 | Branch | Based on | What it is | Status |
 |---|---|---|---|
 | `main` | — | Original platform | Owner's rule: don't push to it directly |
 | `server-native-setup` | `main` @ 6ee1b2e | The platform as deployed on the server (tw-ai.in) | Live on the server |
-| `android-app` | `server-native-setup` @ 4a2b157 | Android app + device sign-in and push APIs | New, not deployed yet |
+| `android-app` | `server-native-setup` @ 83e5e06 (merged) | Android app + device sign-in and push APIs | New, not deployed yet |
 
 ## `android-app` (2026-11-10): what changed
 
@@ -44,10 +44,10 @@ One commit, 9ac9e9b, "Add the native Android app and the phone APIs it needs".
 
 **Docs:** `docs/ANDROID_APP.md` (new), plus short additions to `README.md`, `CLAUDE.md`, `docs/USER_GUIDE.md` §6b.
 
-**Not yet verified:** the Android project hasn't been built yet (the session that wrote it couldn't reach Google's
-Maven). The first build in Android Studio may need small fixes. The server tests pass, apart from
-`test_a_department_mailbox_is_managed_by_its_members_only`, which needs a Postgres host and fails on
-`server-native-setup` too.
+**Verified 2026-11-10:** `./gradlew assembleDebug` builds as committed (JDK 17, SDK platform 35, AGP 8.7.3), and
+every one of the 46 API calls in `data/Api.kt` matches a server route and method. The app has not yet been run on a
+phone against tw-ai.in. `server-native-setup` (Help card, UI asset tagging) is merged in; 648 tests pass.
+Not deployed: the live server is still on `server-native-setup` without migration 0009.
 
 ## `server-native-setup` (2026-11-02 → 2026-11-10): what changed since `main`
 
