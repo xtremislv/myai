@@ -2397,6 +2397,24 @@ async function accountView() {
       h("label", null, "Current password", codePassword),
       h("button", { type: "submit" }, "Create new code"),
     ),
+    helpCard(),
+  );
+}
+
+// A note from the developer, shown at the end of Settings.
+function helpCard() {
+  const out = h("div", { "aria-live": "polite" });
+  return h("div", { class: "card" },
+    h("h2", null, "Help and support"),
+    out,
+    h("button", {
+      type: "button",
+      onclick: () => {
+        out.replaceChildren(h("div", { class: "notice good flash" },
+          "Please contact Lovy Verma if anything breaks and things start to fall apart, "
+          + "or just say hi to him if everything is alright. 👋"));
+      },
+    }, "Help and support"),
   );
 }
 
