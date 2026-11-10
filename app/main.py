@@ -1,6 +1,7 @@
 """FastAPI application entrypoint: wiring, lifespan, observability, routes."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import traceback
 import uuid
@@ -8,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -82,7 +83,29 @@ app.include_router(routes_ops.router)
 app.include_router(routes_templates.router)
 app.include_router(routes_browser.router)
 app.include_router(routes_devices.router)
-app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="ui")
+WEB_DIR = Path(__file__).parent / "web"
+
+
+def _ui_page() -> str:
+    """index.html with app.js/style.css tagged by their content hash.
+
+    Cloudflare tells browsers to keep static files for hours, so without the tag people kept the
+    old code after an update. The page itself isn't cached, so a new tag reaches them at once.
+    """
+    page = (WEB_DIR / "index.html").read_text()
+    for name in ("app.js", "style.css"):
+        tag = hashlib.sha256((WEB_DIR / name).read_bytes()).hexdigest()[:12]
+        page = page.replace(f'"{name}"', f'"{name}?v={tag}"')
+    return page
+
+
+@app.get("/ui/", include_in_schema=False)
+@app.get("/ui/index.html", include_in_schema=False)
+def ui_page() -> HTMLResponse:
+    return HTMLResponse(_ui_page(), headers={"Cache-Control": "no-cache"})
+
+
+app.mount("/ui", StaticFiles(directory=WEB_DIR, html=True), name="ui")
 
 
 @app.middleware("http")

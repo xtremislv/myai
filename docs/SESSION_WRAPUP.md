@@ -7,7 +7,7 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
   `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **629 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **630 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -34,6 +34,8 @@ curl -s localhost:8000/readyz           # {"ready":true,...}
   (`mail/contact`, `mail/career`, ...) for service mail, or touch them at all, without asking the owner.** Before that existed, an outage on 2026-11-04 (stopped ~16:58 UTC, back 20:36)
   left everything down until a manual start. Postgres recovers from WAL by itself; Redis only keeps its last RDB
   snapshot. vLLM takes ~2 min to load; a quick tunnel can need ~1 min to register (530 until then).
+- **UI caching:** Cloudflare makes browsers keep static files for 4 h, so `/ui/` serves `index.html` with
+  `app.js?v=<hash>`/`style.css?v=<hash>` (`app/main.py`, `_ui_page`); UI edits show on the next page load.
 - **After code changes:** restart the gateway: `kill $(cat /var/log/ai-platform/gateway.pid); scripts/start_native.sh`.
   After changing `app/departments/packs.py`: `.venv/bin/python -m scripts.seed_departments`. After a model change in
   `app/db/session.py`: `alembic revision --autogenerate`, then `alembic upgrade head`.
