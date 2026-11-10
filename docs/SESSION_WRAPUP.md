@@ -1,4 +1,4 @@
-# Session wrap-up: state of the platform on 2026-11-05
+# Session wrap-up: state of the platform on 2026-11-10
 
 Read this first in the next session. It is the short, current picture. `docs/HANDOFF.md` has the detailed
 history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.md` the setup steps.
@@ -23,8 +23,9 @@ curl -s localhost:8000/readyz           # {"ready":true,...}
 .venv/bin/python -m scripts.check_connectivity   # what the agents can reach right now
 ```
 
-- **App (public):** the `app-tunnel` quick-tunnel URL printed by `status` + `/ui/` (changes on tunnel restart).
-- **Grafana:** the `grafana-tunnel` URL (user `admin`, password `GRAFANA_PASSWORD` in `.env`).
+- **App (public):** **https://tw-ai.in/ui/** (fixed since 2026-11-10: named Cloudflare tunnel `tw-ai`, config
+  `~/.cloudflared/tw-ai.yml`, `CF_TUNNEL` in `.env`; SERVER_SETUP 9b). Remove `CF_TUNNEL` to fall back to quick tunnels.
+- **Grafana:** **https://grafana.tw-ai.in/** (user `admin`, password `GRAFANA_PASSWORD` in `.env`).
 - **Logs:** `/var/log/ai-platform/<service>.log`; PIDs next to them.
 - **Container restarts:** `/etc/rc.local` (copy of `deploy/native/rc.local`) runs `start_native.sh` at container
   start, and `scripts/watchdog.sh` restarts what goes down and emails the admin new links from `mail/notify` only
@@ -314,7 +315,7 @@ authorised agents), or handing the link to the person (shops already do this).
 `manage_bill`, `inventory_*`, `track_shipment`, `send_notification` return `[stub]`).
 
 **Security / ops gaps**
-- Public login page on a quick tunnel, no failed-login limit (owner's choice), no domain/TLS of our own.
+- Public login page on https://tw-ai.in (no Cloudflare Access yet, also not on Grafana), no failed-login limit (owner's choice).
 - DNS-rebinding window between the guard's check and Chromium's/the proxy's own lookup.
 - Saved details are typed by the server into pages the agent chooses: the site checks (login = its own site;
   card/UPI = allowlisted shops and gateways in `app/wallet.py`) are the main defence against a page tricking the
@@ -356,7 +357,7 @@ authorised agents), or handing the link to the person (shops already do this).
    `github/token` for forum/GitHub research (see §4 Research).
 4. **Off-server backups:** set `BACKUP_DEST` (rclone) and run `backup.sh` daily from the scheduler or
    `onstart.sh`.
-5. **A domain + Cloudflare named tunnel with Access** in front of the login page.
+5. **Cloudflare Access** in front of grafana.tw-ai.in (and maybe the app). Domain + named tunnel: done 2026-11-10.
 6. **Proxy resilience:** health-check the tunnel and fall back to direct (or alert the admin) when it's down.
 7. **Disk space:** clear caches (`uv cache clean`, old logs, `/root/.cache`), or move weights.
 8. Vendor integrations when accounts exist (payments, SMS, ERP).
@@ -379,6 +380,8 @@ authorised agents), or handing the link to the person (shops already do this).
   (`state.TURN_COUNTERS`/`TURN_LISTS`). Add any new per-request field there, or long threads stop working.
 - **Python edits with `str.replace` can silently miss.** Assert the old text exists. And watch apostrophes inside
   single-quoted prompt strings (broke `guards.py` once).
+- **`cloudflared tunnel login` can't finish here** (login.cloudflareaccess.org is unreachable): the owner
+  downloads `cert.pem` in the browser and uploads it to `~/.cloudflared/`. The tunnel API itself works directly.
 - **The network flaps.** If many sites fail at once, check `start_native.sh status` (proxy-tunnel) and
   `check_connectivity.py` before blaming code.
 - **Context vars, not state:** the chat key (`user_key`), attachments (`attachment_text`, `attachment_files`) and
