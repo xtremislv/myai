@@ -8,6 +8,7 @@ app-managed **vault**, a **storage access-control** module, and a full **observa
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full design
 - [`docs/SERVER_SETUP.md`](./docs/SERVER_SETUP.md) — provision & deploy on aiccloud.in
 - [`docs/USER_GUIDE.md`](./docs/USER_GUIDE.md) — how users authenticate & send requests
+- [`docs/ANDROID_APP.md`](./docs/ANDROID_APP.md) — the native Android app (`android/`), device sign-in, push
 - [`docs/PROGRESS_AND_ROADMAP.md`](./docs/PROGRESS_AND_ROADMAP.md) — status, departments, Request Manager, plan
 
 ## Stack

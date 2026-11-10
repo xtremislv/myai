@@ -378,6 +378,25 @@ curl -s -X PUT $BASE/v1/admin/secrets -H "authorization: Bearer $ADMIN_TOKEN" -H
 
 ---
 
+## 6b. The Android app
+
+The TW-ai app for Android (see `docs/ANDROID_APP.md`) signs in once and stays signed in, with reminders, finished
+replies and approvals as phone notifications. Its sign-in endpoints:
+
+```bash
+# sign a phone in: an access token plus a refresh token for this device
+curl -s $BASE/v1/auth/device/login -H 'content-type: application/json' \
+  -d '{"username":"alice","password":"...","name":"Pixel 8","push_token":"<FCM token, optional>"}'
+# a fresh access token (the refresh token is replaced: keep the new one)
+curl -s $BASE/v1/auth/device/refresh -H 'content-type: application/json' \
+  -d '{"device_id":"...","refresh_token":"..."}'
+curl -s $BASE/v1/devices -H "authorization: Bearer $TOKEN"                    # your signed-in phones
+curl -s -X DELETE $BASE/v1/devices/<id> -H "authorization: Bearer $TOKEN"     # sign one out
+curl -s $BASE/v1/app/config                                                   # {"push_enabled": ...}
+```
+
+---
+
 ## 7. Responses & errors
 
 | Code | Meaning | What to do |

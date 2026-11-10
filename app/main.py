@@ -21,6 +21,7 @@ from app.api import (
     routes_browser,
     routes_chat,
     routes_dashboard,
+    routes_devices,
     routes_me,
     routes_ops,
     routes_request,
@@ -80,6 +81,7 @@ app.include_router(routes_me.router)
 app.include_router(routes_ops.router)
 app.include_router(routes_templates.router)
 app.include_router(routes_browser.router)
+app.include_router(routes_devices.router)
 app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="ui")
 
 

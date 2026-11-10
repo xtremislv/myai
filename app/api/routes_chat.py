@@ -336,7 +336,20 @@ class _Refused(Exception):
 FIRST_WAIT = 10  # seconds to wait for a refusal with its own HTTP status before the stream starts
 
 
-def _run_and_relay(subject: Subject, thread_id: str, message: str, kind: str, work) -> StreamingResponse:
+def _wake_phone(bind, owner_id: str, thread_id: str, kind: str, ok: bool) -> None:
+    """Tell the person's phone the reply is ready (or failed), in case they left the app while
+    it was being written. Carries only the chat's id; the app fetches the reply itself."""
+    from app import push
+
+    try:
+        with Session(bind=bind) as session:
+            push.wake(session, owner_id, "chat_done" if ok else "chat_failed", thread=thread_id, run_kind=kind)
+    except Exception:  # noqa: BLE001 - best effort
+        logger.warning("chat push skipped")
+
+
+def _run_and_relay(subject: Subject, thread_id: str, message: str, kind: str, work,
+                   bind=None) -> StreamingResponse:
     """Run work(handover, made, emit) in its own thread and relay what it does as server-sent
     events. The work goes on to the end, and is saved, whatever the browser does; its steps and
     outcome are kept in app/inflight.py for a page that comes back. One run per chat at a time.
@@ -374,6 +387,8 @@ def _run_and_relay(subject: Subject, thread_id: str, message: str, kind: str, wo
             emit("fail", e)
         finally:
             inflight.finish(running, ok)
+            if bind is not None:
+                _wake_phone(bind, subject.id, thread_id, kind, ok)
 
     threading.Thread(target=contextvars.copy_context().run, args=(run,), daemon=True).start()
     try:
@@ -449,7 +464,7 @@ def chat_stream(
     release_connection(session)
     from app.llm.client import token_sink
 
-    return _run_and_relay(subject, body.thread_id, body.message, "message", work)
+    return _run_and_relay(subject, body.thread_id, body.message, "message", work, bind=bind)
 
 
 def _departments_of(subject: Subject) -> dict[str, str]:
@@ -642,7 +657,7 @@ def thread_confirm_stream(
             out = _confirm_now(thread_id, body, subject, key, own, pending, made)
         return {**out.model_dump(), "browser": handover or None, "dashboards": made}
 
-    return _run_and_relay(subject, thread_id, "", "confirm", work)
+    return _run_and_relay(subject, thread_id, "", "confirm", work, bind=bind)
 
 
 def _confirm_now(thread_id: str, body: ConfirmIn, subject: Subject, key: bytes, session: Session,

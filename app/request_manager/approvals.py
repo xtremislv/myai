@@ -44,6 +44,9 @@ def create(
     )
     session.add(row)
     session.commit()
+    from app import push
+
+    push.wake_admins(session, "approval", id=row.id)  # approvers' phones fetch /v1/approvals
     return row
 
 
@@ -85,4 +88,9 @@ def decide(
     row = session.get(Approval, approval_id)
     if row is not None:
         session.refresh(row)
+        if won:
+            from app import push
+
+            push.wake(session, row.subject_id, "approval_decided", id=row.id, thread=row.chat_thread or "",
+                      state=row.state)
     return row, won

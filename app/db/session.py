@@ -251,6 +251,31 @@ class Notification(Base):
     )
 
 
+class DeviceSession(Base):
+    """A signed-in phone (the Android app): it stays signed in with a refresh token instead of
+    the browser's session cookie. Only a hash of the token is stored. The person's chat key is
+    kept here wrapped by a key derived from that token, so, as with the password, the database
+    alone can't open private chats: it takes the token, which lives only on the phone
+    (app/devices.py). Each refresh replaces the token and re-wraps the key."""
+
+    __tablename__ = "device_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    platform: Mapped[str] = mapped_column(String(16), default="android")
+    refresh_hash: Mapped[str] = mapped_column(String(64), index=True)
+    # The token before the last refresh, accepted once more: a phone that lost the answer to a
+    # refresh (a dropped connection) would otherwise be signed out.
+    prev_refresh_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    key_nonce: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    wrapped_chat_key: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Firebase Cloud Messaging registration token, for content-free "check in" pushes (app/push.py).
+    push_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class OpsAlert(Base):
     """A Prometheus alert as last reported, so each one notifies the admin once when it
     starts and once when it resolves, however often Prometheus resends it."""

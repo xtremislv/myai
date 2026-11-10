@@ -115,6 +115,9 @@ def notify(session: Session, owner_id: str, kind: str, title: str, body: str = "
     row.encrypted_body = notes.encrypt(session, body[:20000], f"notification:{row.id}:body")
     session.add(row)
     session.commit()
+    from app import push
+
+    push.wake(session, owner_id, "notification", kind=kind, id=row.id)  # the phone app fetches it
     return row
 
 

@@ -92,6 +92,10 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   person-present tools); results are saved with `_save` and announced with `JOB_STARTED`.
 - Web tools must never pass a block/CAPTCHA page off as content (`extract.block_reason`, `tools._readable`).
   `scripts/check_connectivity.py` shows what this network lets through; it changes over time.
+- The Android app (`android/`, docs/ANDROID_APP.md) signs in as a device (`app/devices.py`, `routes_devices.py`):
+  only a hash of the rotating refresh part is stored, and the chat key is wrapped by the device secret the server never
+  keeps. Pushes (`app/push.py`, vault `push/fcm`) carry no content, only a type and ids: never put reminder, mail or
+  chat text in `push.wake(...)`. Revoke devices when a chat key changes (`devices.revoke_all`).
 
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing

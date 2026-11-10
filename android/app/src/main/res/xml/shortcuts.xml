@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_chat"
+        android:shortcutShortLabel="@string/shortcut_new_chat_short"
+        android:shortcutLongLabel="@string/shortcut_new_chat_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.techwiser.twai"
+            android:targetClass="com.techwiser.twai.ui.MainActivity"
+            android:data="twai://chat/new" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="reminders"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_alarm"
+        android:shortcutShortLabel="@string/shortcut_reminders_short"
+        android:shortcutLongLabel="@string/shortcut_reminders_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.techwiser.twai"
+            android:targetClass="com.techwiser.twai.ui.MainActivity"
+            android:data="twai://reminders" />
+    </shortcut>
+</shortcuts>

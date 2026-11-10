@@ -351,6 +351,9 @@ def reset_password(
     user.password_hash = hash_password(body.password)
     user.chat_key_salt = user.chat_key_nonce = user.wrapped_chat_key = None
     session.commit()
+    from app import devices
+
+    devices.revoke_all(session, user.id)  # their phones hold the old key: they sign in again
     return _user_out(user)
 
 
