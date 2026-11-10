@@ -499,6 +499,21 @@ def test_ui_is_served_with_a_strict_policy(api):
     assert api.client.get("/ui/style.css").status_code == 200
 
 
+def test_ui_assets_are_tagged_by_content_so_updates_reach_browsers(api):
+    import hashlib
+    import re
+
+    from app.main import WEB_DIR
+
+    page = api.client.get("/ui/")
+    assert page.headers["cache-control"] == "no-cache"
+    for name in ("app.js", "style.css"):
+        tag = re.search(rf'"{re.escape(name)}\?v=([0-9a-f]+)"', page.text).group(1)
+        assert hashlib.sha256((WEB_DIR / name).read_bytes()).hexdigest().startswith(tag)
+        assert api.client.get(f"/ui/{name}?v={tag}").status_code == 200
+    assert api.client.get("/ui/index.html").text == page.text
+
+
 def test_ui_has_no_inline_code_or_third_party_assets(api):
     page = api.client.get("/ui/").text
     assert "<style" not in page and "style=" not in page and "onclick=" not in page
