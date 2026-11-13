@@ -88,9 +88,11 @@ def start_metrics_server(port: int | None = None):
     return server
 
 
-def setup_tracing() -> None:
+def setup_tracing(export: bool | None = None) -> TracerProvider:
     provider = TracerProvider(resource=_service_resource())
-    provider.add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint=_settings.otel_exporter_otlp_endpoint, insecure=True))
-    )
+    if _settings.otel_traces_export if export is None else export:
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=_settings.otel_exporter_otlp_endpoint, insecure=True))
+        )
     trace.set_tracer_provider(provider)
+    return provider

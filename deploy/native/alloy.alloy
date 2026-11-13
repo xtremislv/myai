@@ -1,5 +1,6 @@
 // Native stand-in for the OpenTelemetry collector (deploy/otel-collector.yaml): receives OTLP
-// from the gateway on localhost and sends logs to Loki. Traces are accepted and dropped, as in compose.
+// from the gateway on localhost and sends logs to Loki. There is no trace backend: the gateway runs with
+// OTEL_TRACES_EXPORT=false here, since this pipeline rejects traces ("telemetry type is not supported").
 otelcol.receiver.otlp "gateway" {
   grpc {
     endpoint = "127.0.0.1:4317"

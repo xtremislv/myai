@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
+from opentelemetry.instrumentation.dependencies import get_dependency_conflicts
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
@@ -37,6 +38,18 @@ _settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+def instrument_sqlalchemy() -> bool:
+    """Trace database calls, unless the installed SQLAlchemy is newer than the instrumentation supports:
+    then it would do nothing but log an ERROR on every start."""
+    instrumentor = SQLAlchemyInstrumentor()
+    conflict = get_dependency_conflicts(instrumentor.instrumentation_dependencies())
+    if conflict:
+        logger.info("database tracing off: %s", conflict)
+        return False
+    instrumentor.instrument(engine=engine)
+    return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_secrets(_settings)
@@ -48,7 +61,7 @@ async def lifespan(app: FastAPI):
         ensure_bucket()
     except Exception:  # MinIO may not be up yet in some dev flows; don't crash boot.
         pass
-    SQLAlchemyInstrumentor().instrument(engine=engine)
+    instrument_sqlalchemy()
     metrics_server = start_metrics_server() if _settings.metrics_enabled else None
     # Background jobs a restart cut off: tell their owners (in the background: boot doesn't wait).
     import threading

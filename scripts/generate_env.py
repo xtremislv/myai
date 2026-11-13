@@ -78,6 +78,8 @@ BACKUP_KEEP_DAYS=7
 # Observability
 OTEL_EXPORTER_OTLP_ENDPOINT=http://{host['otel-collector']}:4317
 OTEL_SERVICE_NAME=ai-platform-gateway
+# Native hosts have no trace backend (Alloy would reject them).
+OTEL_TRACES_EXPORT={'false' if native else 'true'}
 """
     path.write_text(content)
     path.chmod(0o600)

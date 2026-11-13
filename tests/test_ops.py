@@ -448,6 +448,22 @@ def test_native_settings_point_every_service_at_localhost(tmp_path):
     assert values["REDIS_URL"].startswith("redis://127.0.0.1:")
     assert values["MINIO_ENDPOINT"].startswith("127.0.0.1:")
     assert values["VLLM_MODEL_PATH"] == "/models/x"
+    assert values["OTEL_TRACES_EXPORT"] == "false"   # Alloy rejects traces natively
+
+
+def test_tracing_without_export_adds_no_exporter():
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    procs = lambda p: p._active_span_processor._span_processors  # noqa: E731
+    assert procs(observability.setup_tracing(export=False)) == ()
+    assert any(isinstance(x, BatchSpanProcessor) for x in procs(observability.setup_tracing(export=True)))
+
+
+def test_database_tracing_skips_unsupported_sqlalchemy_quietly(monkeypatch, caplog):
+    import app.main as main
+    monkeypatch.setattr(main, "get_dependency_conflicts", lambda deps: "sqlalchemy 9.9 is too new")
+    with caplog.at_level(logging.INFO):
+        assert main.instrument_sqlalchemy() is False
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 def _run_vllm(tmp_path, extra_args):
