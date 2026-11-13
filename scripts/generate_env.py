@@ -23,6 +23,7 @@ def _token() -> str:
 
 def write_env(path: Path, args: argparse.Namespace) -> None:
     postgres_password = _token()
+    redis_password = _token()
     # --native: services run directly on this host (no Docker), so use localhost instead of
     # compose service names. Needed on container-based GPU hosts that can't run Docker.
     native = getattr(args, "native", False)
@@ -61,7 +62,9 @@ POSTGRES_PASSWORD={postgres_password}
 POSTGRES_DSN=postgresql://ai:{postgres_password}@{host['postgres']}:5432/ai_platform
 
 # Redis
-REDIS_URL=redis://{host['redis']}:6379/0
+REDIS_URL=redis://{(':' + redis_password + '@') if native else ''}{host['redis']}:6379/0
+# Native: also add `requirepass <this>` to /etc/redis/redis.conf (docs/SERVER_SETUP.md).
+REDIS_PASSWORD={redis_password if native else ''}
 
 # MinIO
 MINIO_ENDPOINT={host['minio']}:9000

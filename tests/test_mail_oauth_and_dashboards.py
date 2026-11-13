@@ -239,6 +239,11 @@ def test_run_python_analyses_input_files_and_makes_a_dashboard(monkeypatch):
     "open('/tmp/escape', 'w').write('x')",
     "import ctypes; ctypes.CDLL(None)",
     "print(open('/root/myai/.env').read())",
+    # World-readable files outside the run's folder are refused too (other people's data).
+    "print(open('/etc/passwd').read())",
+    "import os; print(os.listdir('/var/lib'))",
+    "import pathlib; print(list(pathlib.Path('/tmp').iterdir()))",
+    "import numpy; numpy.fromfile('/etc/hostname', dtype='uint8')",
 ])
 def test_the_sandbox_refuses_network_programs_and_outside_files(code):
     result = sandbox.run(code)
@@ -247,7 +252,77 @@ def test_the_sandbox_refuses_network_programs_and_outside_files(code):
 
 
 @needs_sandbox
+def test_the_sandbox_still_runs_ordinary_analysis():
+    code = (
+        "import datetime, zoneinfo, json, os, glob, pandas as pd, numpy as np\n"
+        "df = pd.read_csv('input/d.csv')\n"
+        "print(sorted(os.listdir('input')), glob.glob('input/*.csv'))\n"
+        "print(datetime.datetime(2026, 1, 1, tzinfo=zoneinfo.ZoneInfo('Asia/Kolkata')).isoformat())\n"
+        "print(int(np.arange(df.v.sum()).sum()))\n"
+        "os.makedirs('output/sub', exist_ok=True); df.to_csv('output/sub/out.csv', index=False)\n"
+    )
+    result = sandbox.run(code, {"d.csv": b"v\n1\n2\n3\n"})
+    assert result.ok, result.stderr
+    assert "['d.csv']" in result.stdout and "+05:30" in result.stdout and "15" in result.stdout
+    assert any(name.endswith("out.csv") for name in result.outputs)
+
+
+@needs_sandbox
 def test_the_sandbox_stops_runaway_code(monkeypatch):
     monkeypatch.setattr(sandbox, "WALL_SECONDS", 3)
     result = sandbox.run("while True:\n    pass\n")
     assert not result.ok and (result.timed_out or not result.stderr)
+
+
+# ---- the Google callback finishes only in the browser that started the sign-in (2026-11-13) ----
+@pytest.fixture
+def callback_app(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.acl.models import Subject
+    from app.api import deps, routes_me
+    from app.db.session import get_session
+    from app.main import app
+
+    monkeypatch.setattr(oauth, "client", lambda p: {
+        "client_id": "id", "client_secret": "s", "redirect_uri": "https://x/v1/me/mailbox/oauth/google/callback"})
+    monkeypatch.setattr(oauth, "_post", lambda url, data: {
+        "access_token": "at", "refresh_token": "rt", "expires_in": 3600, "id_token": _id_token({"email": "a@gmail.com"})})
+    saved = []
+    monkeypatch.setattr(routes_me, "_save_signed_in", lambda session, owner, data, box: saved.append(owner))
+    who = {"id": "attacker"}
+    app.dependency_overrides[deps.current_subject] = lambda: Subject(who["id"], ())
+    app.dependency_overrides[get_session] = lambda: iter([None])
+    oauth._flows.clear()
+    yield TestClient(app, base_url="https://testserver"), saved, who
+    app.dependency_overrides.clear()
+    oauth._flows.clear()
+
+
+def _start(client):
+    out = client.post("/v1/me/mailbox/oauth/google/start", json={"address": ""})
+    assert out.status_code == 200 and not out.json()["paste"]
+    cookie = out.cookies.get("tw_oauth")
+    assert cookie and "path=/v1/me/mailbox/oauth/google/callback" in out.headers["set-cookie"].lower()
+    assert "httponly" in out.headers["set-cookie"].lower() and "samesite=lax" in out.headers["set-cookie"].lower()
+    return urllib.parse.parse_qs(urllib.parse.urlsplit(out.json()["url"]).query)["state"][0], cookie
+
+
+def test_the_callback_finishes_in_the_browser_that_started_it(callback_app):
+    client, saved, _ = callback_app
+    state, cookie = _start(client)
+    client.cookies.clear()
+    out = client.get("/v1/me/mailbox/oauth/google/callback", params={"state": state, "code": "c"},
+                     cookies={"tw_oauth": cookie})
+    assert out.status_code == 200 and saved == ["attacker"]
+
+
+def test_a_sign_in_link_from_someone_else_cannot_connect_your_mailbox_to_them(callback_app):
+    client, saved, _ = callback_app
+    state, _cookie = _start(client)  # the attacker starts a sign-in and sends the link on
+    client.cookies.clear()           # the victim's browser has no cookie for it
+    out = client.get("/v1/me/mailbox/oauth/google/callback", params={"state": state, "code": "c"})
+    assert out.status_code == 403 and saved == []
+    out = client.get("/v1/me/mailbox/oauth/google/callback", params={"state": state, "code": "c"},
+                     cookies={"tw_oauth": "guessed"})
+    assert out.status_code == 403 and saved == []

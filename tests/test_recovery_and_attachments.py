@@ -264,13 +264,18 @@ def test_uploaded_path_is_stored_as_a_plain_name(api):
     assert saved["name"] == "passwd.txt"
 
 
+def _latest_user(prompt):
+    return next(m["content"] for m in reversed(prompt) if m["role"] == "user")
+
+
 def test_model_reads_attachment_text_but_it_is_never_checkpointed(api):
     headers = _bearer(_user(api))
     _upload(api, headers, data=b"THE ATTACHED FIGURES")
 
     _chat(api, headers, "summarize my file")
 
-    assert "THE ATTACHED FIGURES" in api.prompts[-1][0]["content"]
+    assert "THE ATTACHED FIGURES" in _latest_user(api.prompts[-1])
+    assert "THE ATTACHED FIGURES" not in api.prompts[-1][0]["content"]  # the cached system prompt stays as is
     stored = api.saver.get_tuple({"configurable": {"thread_id": "x"}})
     assert stored is None
     for thread in api.saver.storage.values():
@@ -288,14 +293,14 @@ def test_team_mode_also_receives_attachment_text(api):
     api.client.post("/v1/chat", headers=headers, json={"message": "go", "thread_id": "t", "mode": "team"})
     # every agent that reads the conversation (planner, researcher, reviewer, writer)
     assert len(api.prompts) >= 2
-    assert all("THE ATTACHED FIGURES" in p[0]["content"] for p in api.prompts)
+    assert all("THE ATTACHED FIGURES" in "".join(m["content"] for m in p) for p in api.prompts)
 
 
 def test_attachment_from_another_thread_is_not_read(api):
     headers = _bearer(_user(api))
     _upload(api, headers, data=b"THE ATTACHED FIGURES", thread="other")
     _chat(api, headers, "hello", thread="t")
-    assert "THE ATTACHED FIGURES" not in api.prompts[-1][0]["content"]
+    assert not any("THE ATTACHED FIGURES" in m["content"] for m in api.prompts[-1])
 
 
 def test_pdf_text_is_read_and_a_broken_pdf_is_stored_but_not_read(api):
@@ -309,14 +314,14 @@ def test_pdf_text_is_read_and_a_broken_pdf_is_stored_but_not_read(api):
     saved = _upload(api, headers, name="broken.pdf", data=b"not a pdf", content_type="application/pdf")
     assert saved.json()["outcome"] == "ok"
     _chat(api, headers, "read it")
-    assert "broken.pdf: this file type cannot be read" in api.prompts[-1][0]["content"]
+    assert "broken.pdf: this file type cannot be read" in _latest_user(api.prompts[-1])
 
 
 def test_binary_file_is_stored_and_the_model_is_told_it_cannot_read_it(api):
     headers = _bearer(_user(api))
     _upload(api, headers, name="photo.png", data=b"\x89PNG", content_type="image/png")
     _chat(api, headers, "what is in my photo?")
-    assert "photo.png: this file type cannot be read" in api.prompts[-1][0]["content"]
+    assert "photo.png: this file type cannot be read" in _latest_user(api.prompts[-1])
 
 
 def test_attachment_text_is_capped(api, monkeypatch):
@@ -325,7 +330,7 @@ def test_attachment_text_is_capped(api, monkeypatch):
     _upload(api, headers, name="a.txt", data=b"x" * 50)
     _upload(api, headers, name="b.txt", data=b"y" * 50)
     _chat(api, headers, "read them")
-    system = api.prompts[-1][0]["content"]
+    system = _latest_user(api.prompts[-1])
     assert "x" * 10 + "\n[truncated: only part of this file fits here" in system
     assert 'summarize_large with source "a.txt"' in system
     assert "b.txt: not included" in system and 'source "b.txt"' in system
@@ -340,7 +345,7 @@ def test_unavailable_file_does_not_block_the_chat(api, monkeypatch):
 
     monkeypatch.setattr(attachments, "_get", _down)
     assert _chat(api, headers, "hello").status_code == 200
-    assert "temporarily unavailable" in api.prompts[-1][0]["content"]
+    assert "temporarily unavailable" in _latest_user(api.prompts[-1])
 
 
 def test_flagged_file_is_rejected_and_reported(api, monkeypatch):

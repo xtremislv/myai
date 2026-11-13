@@ -20,14 +20,13 @@ from typing import Literal
 from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse, RedirectResponse
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import app_release, devices, push
 from app.acl.models import Subject
-from app.api.deps import _bearer, current_subject
-from app.auth.security import decode_token, issue_token, verify_password
+from app.api.deps import checked_claims, current_subject
+from app.auth.security import token_for, verify_password
 from app.config import get_settings
 from app.db.session import User, get_session
 from app.vault import user_keys
@@ -105,7 +104,7 @@ class AppConfigOut(BaseModel):
 
 def _token_out(user: User, chat_key: bytes | None, device_id: str, refresh_token: str) -> DeviceTokenOut:
     return DeviceTokenOut(
-        access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
+        access_token=token_for(user, chat_key),
         expires_in=get_settings().jwt_ttl_seconds,
         refresh_token=refresh_token,
         device_id=device_id,
@@ -113,12 +112,9 @@ def _token_out(user: User, chat_key: bytes | None, device_id: str, refresh_token
     )
 
 
-def _optional_chat_key(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> bytes | None:
+def _optional_chat_key(checked: tuple[dict, Subject] = Depends(checked_claims)) -> bytes | None:
     """The caller's chat key if their token carries one (it doesn't until they set their own password)."""
-    try:
-        claims = decode_token(creds.credentials)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {e}") from e
+    claims = checked[0]
     if not claims.get("ck"):
         return None
     try:

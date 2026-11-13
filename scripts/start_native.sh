@@ -18,6 +18,8 @@ mkdir -p "$LOG_DIR"
 
 [[ -f .env ]] || { echo "No .env: run scripts/generate_env.py --native first." >&2; exit 1; }
 env_value() { grep -m1 "^$1=" .env | cut -d= -f2-; }
+# Redis has a password (requirepass): redis-cli reads it from here, never from the command line.
+export REDISCLI_AUTH="$(env_value REDIS_PASSWORD)"
 
 # Background services are tracked by PID file: matching command lines with pgrep also
 # matches unrelated shells whose text happens to mention the service.
@@ -66,6 +68,12 @@ status() {
 if [[ "${1:-}" == "status" ]]; then status; exit 0; fi
 
 echo "Starting services (logs in $LOG_DIR):"
+
+# Data and logs are for root only: the code sandbox runs as `nobody` (app/sandbox.py) and must not
+# read MinIO's files (department documents are stored there unencrypted), Loki, Prometheus or logs.
+mkdir -p "$LOG_DIR" /var/lib/minio /var/lib/loki /var/lib/prometheus
+chmod 700 "$LOG_DIR" /var/lib/minio /var/lib/loki /var/lib/prometheus
+umask 077
 
 pg_isready -q -h 127.0.0.1 -p 5432 || pg_ctlcluster 16 main start
 redis-cli -h 127.0.0.1 ping >/dev/null 2>&1 || redis-server /etc/redis/redis.conf

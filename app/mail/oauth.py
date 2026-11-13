@@ -155,6 +155,25 @@ def _drop(owner: str) -> None:
         _flows.pop(owner, None)
 
 
+def bind_browser(owner: str) -> str:
+    """A secret for the browser that starts this sign-in (kept in a cookie). The callback only
+    finishes a sign-in in that same browser, so a link someone else started can't be used to
+    connect your mailbox to their account."""
+    secret = secrets.token_urlsafe(32)
+    with _lock:
+        if owner in _flows:
+            _flows[owner]["browser"] = hashlib.sha256(secret.encode()).hexdigest()
+    return secret
+
+
+def same_browser(owner: str, secret: str | None) -> bool:
+    with _lock:
+        expected = (_flows.get(owner) or {}).get("browser")
+    if not expected or not secret:
+        return False
+    return secrets.compare_digest(expected, hashlib.sha256(secret.encode()).hexdigest())
+
+
 def owner_of_state(state: str) -> str | None:
     with _lock:
         return next((o for o, f in _flows.items() if f.get("state") and secrets.compare_digest(f["state"], state)), None)

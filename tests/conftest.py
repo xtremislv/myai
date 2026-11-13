@@ -8,7 +8,6 @@ os.environ.setdefault("JWT_SECRET", "test-only-secret-" + "x" * 32)
 os.environ.setdefault("VAULT_MASTER_KEY", base64.b64encode(b"t" * 32).decode())
 
 import pytest  # noqa: E402
-from fastapi import HTTPException  # noqa: E402
 
 from app import config  # noqa: E402
 from app.acl.models import Subject  # noqa: E402
@@ -38,10 +37,11 @@ def tokens_without_a_user_row(monkeypatch):
     user row falls back to its own roles. test_live_roles.py tests the real behaviour."""
 
     def _lookup(session, claims):
-        try:
-            return _real_subject_from_claims(session, claims)
-        except HTTPException:
+        from app.db.session import User
+
+        if session.get(User, claims["sub"]) is None:
             return Subject(id=claims["sub"], roles=tuple(claims.get("roles", [])))
+        return _real_subject_from_claims(session, claims)  # real accounts get the real checks
 
     monkeypatch.setattr(deps, "subject_from_claims", _lookup)
 

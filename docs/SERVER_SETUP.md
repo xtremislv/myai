@@ -201,6 +201,8 @@ pg_ctlcluster 16 main start
 PGPW=$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)
 su postgres -c "psql -c \"CREATE ROLE ai LOGIN PASSWORD '$PGPW'\"" && su postgres -c "createdb -O ai ai_platform"
 sed -i 's/^bind .*/bind 127.0.0.1 ::1/; s/^daemonize .*/daemonize yes/; s/^supervised .*/supervised no/' /etc/redis/redis.conf
+# A password, so local processes (the code sandbox runs as nobody) can't use Redis:
+echo "requirepass $(grep '^REDIS_PASSWORD=' .env | cut -d= -f2-)" >> /etc/redis/redis.conf && chmod 640 /etc/redis/redis.conf
 ```
 
 **6. MinIO.** MinIO no longer publishes free binaries (dl.min.io returns 410), so build the release that

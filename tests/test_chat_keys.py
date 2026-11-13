@@ -321,3 +321,49 @@ def test_the_session_cookie_renews_the_token_only_with_its_header_and_ends_on_si
                            cookies={"tw_session": "forged"}).status_code == 401
     out = api.client.delete("/v1/auth/session")
     assert out.status_code == 204 and "tw_session=" in out.headers["set-cookie"]
+
+
+# ---- ending sessions (2026-11-13): a copied token must not outlive a password change or sign-out ----
+def _me(api, headers):
+    return api.client.get("/v1/auth/me", headers=headers).status_code
+
+
+def test_a_password_change_ends_every_earlier_token(api):
+    first = _bearer(_change(api, _bearer(_login(api, INITIAL).json()), INITIAL, MINE).json())
+    other_browser = _bearer(_login(api, MINE).json())
+    assert _me(api, first) == 200 and _me(api, other_browser) == 200
+    newest = _bearer(_change(api, other_browser, MINE, "a-third-long-password").json())
+    assert _me(api, first) == 401 and _me(api, other_browser) == 401  # stolen copies stop working
+    assert _me(api, newest) == 200
+    assert _chat_as(api, first).status_code == 401  # nor can they open private chats
+
+
+def test_signing_out_ends_the_other_copies_of_the_session(api):
+    _change(api, _bearer(_login(api, INITIAL).json()), INITIAL, MINE)
+    login = _login(api, MINE)
+    copied = _bearer(login.json())
+    jar = {"tw_session": login.cookies.get("tw_session")}
+    assert api.client.delete("/v1/auth/session", cookies=jar).status_code == 204
+    assert _me(api, copied) == 401
+    assert api.client.post("/v1/auth/session", cookies=jar, headers={"x-tw-session": "1"}).status_code == 401
+    assert _me(api, _bearer(_login(api, MINE).json())) == 200  # signing in again works
+
+
+def test_a_session_cannot_renew_itself_forever(api, monkeypatch):
+    from app.config import get_settings
+
+    _change(api, _bearer(_login(api, INITIAL).json()), INITIAL, MINE)
+    jar = {"tw_session": _login(api, MINE).cookies.get("tw_session")}
+    renewed = api.client.post("/v1/auth/session", cookies=jar, headers={"x-tw-session": "1"})
+    assert renewed.status_code == 200
+    monkeypatch.setattr(get_settings(), "session_max_age_seconds", -1)  # the sign-in is now too old
+    again = {"tw_session": renewed.cookies.get("tw_session") or jar["tw_session"]}
+    assert api.client.post("/v1/auth/session", cookies=again, headers={"x-tw-session": "1"}).status_code == 401
+
+
+def test_an_admin_reset_ends_the_persons_sessions(api):
+    mine = _bearer(_change(api, _bearer(_login(api, INITIAL).json()), INITIAL, MINE).json())
+    alice = _alice(api).id
+    assert api.client.post(f"/v1/auth/users/{alice}/reset-password", headers=ADMIN,
+                           json={"password": "temporary-long-pass"}).status_code == 200
+    assert _me(api, mine) == 401

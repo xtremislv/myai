@@ -445,7 +445,8 @@ def test_native_settings_point_every_service_at_localhost(tmp_path):
     values = _parse(path)
     assert values["LLM_BASE_URL"] == "http://127.0.0.1:8001/v1"
     assert "@127.0.0.1:5432/" in values["POSTGRES_DSN"]
-    assert values["REDIS_URL"].startswith("redis://127.0.0.1:")
+    assert values["REDIS_URL"] == f"redis://:{values['REDIS_PASSWORD']}@127.0.0.1:6379/0"  # requirepass
+    assert len(values["REDIS_PASSWORD"]) >= 32
     assert values["MINIO_ENDPOINT"].startswith("127.0.0.1:")
     assert values["VLLM_MODEL_PATH"] == "/models/x"
     assert values["OTEL_TRACES_EXPORT"] == "false"   # Alloy rejects traces natively

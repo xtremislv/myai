@@ -43,6 +43,13 @@ curl -s localhost:8000/readyz           # {"ready":true,...}
   ~1,000 tokens/s, so a cache miss costs ~6-8 s and a hit ~0.5 s. Keep the system prompt identical between calls:
   the time goes on the latest user message at send time (`app/orchestrator/clock.py`, `place_clock`), never in the
   system prompt. The native gateway runs with `OTEL_TRACES_EXPORT=false` (Alloy has no trace backend).
+- **Security fixes (2026-11-13):** data/log folders are root-only (`start_native.sh` re-applies `chmod 700`), and the
+  code sandbox may read only its own folder and Python/system libraries (`app/sandbox.py`). Redis has a password
+  (`requirepass` in /etc/redis/redis.conf = `REDIS_PASSWORD` in .env; redis-cli uses `REDISCLI_AUTH`). Tokens carry
+  `sv` = `users.session_version`, bumped by a password change, recovery, admin reset and web sign-out (password change
+  and recovery also sign out phones); browser sessions end 30 days after the password was entered. The Google mail
+  callback only finishes in the browser that started it (`tw_oauth` cookie). Attachment text goes on the latest user
+  message, not the system prompt (keeps the prompt cache).
 - **After code changes:** restart the gateway: `kill $(cat /var/log/ai-platform/gateway.pid); scripts/start_native.sh`.
   After changing `app/departments/packs.py`: `.venv/bin/python -m scripts.seed_departments`. After a model change in
   `app/db/session.py`: `alembic revision --autogenerate`, then `alembic upgrade head`.

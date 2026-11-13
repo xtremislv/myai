@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.acl.engine import ACLEngine
 from app.acl.models import Action, Resource, Subject
-from app.auth.security import decode_token
+from app.auth.security import decode_token, session_current
 from app.db.session import User, get_session, release_connection
 from app.vault import user_keys
 
@@ -23,13 +23,17 @@ def subject_from_claims(session: Session, claims: dict) -> Subject:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "this account no longer exists")
     if user.disabled:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
+    if not session_current(user, claims):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "this session was signed out; sign in again")
     return Subject(id=user.id, roles=tuple(user.roles))
 
 
-def current_subject(
+def checked_claims(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
     session: Session = Depends(get_session),
-) -> Subject:
+) -> tuple[dict, Subject]:
+    """The token's claims and its owner, once the token is valid and its session hasn't been ended.
+    current_subject and chat_key share this, so a request decodes and checks its token once."""
     try:
         claims = decode_token(creds.credentials)
     except Exception as e:  # noqa: BLE001
@@ -37,15 +41,28 @@ def current_subject(
     subject = subject_from_claims(session, claims)
     # Routes may call the model next, so don't leave this lookup's transaction open.
     release_connection(session)
-    return subject
+    return claims, subject
 
 
-def chat_key(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> bytes:
+def current_subject(checked: tuple[dict, Subject] = Depends(checked_claims)) -> Subject:
+    return checked[1]
+
+
+def chat_key(checked: tuple[dict, Subject] = Depends(checked_claims)) -> bytes:
     """The caller's private-chat key, carried sealed inside their token."""
+    return chat_key_from_claims(checked[0])
+
+
+def chat_key_from_token(creds: HTTPAuthorizationCredentials) -> bytes:
+    """For a route that already depends on current_subject (which checked the session)."""
     try:
         claims = decode_token(creds.credentials)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {e}") from e
+    return chat_key_from_claims(claims)
+
+
+def chat_key_from_claims(claims: dict) -> bytes:
     sealed = claims.get("ck")
     if sealed is None:
         raise HTTPException(

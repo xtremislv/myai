@@ -11,6 +11,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -48,6 +49,9 @@ class User(Base):
     roles: Mapped[list] = mapped_column(JSON, default=list)
     # A disabled account can't sign in, and its live tokens stop working on the next request.
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
+    # Stamped into every token ("sv"); a token with another number is refused. Bumped by a password
+    # change, a recovery, an admin reset and signing out, so stolen or old tokens stop working.
+    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Private-chat key, wrapped by the user's password (app/vault/user_keys.py).
     # Empty until the user replaces the initial password the admin set.
     chat_key_salt: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

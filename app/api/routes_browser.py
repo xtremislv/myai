@@ -17,7 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.acl.models import Subject
-from app.api.deps import chat_key, current_subject
+from app.api.deps import chat_key_from_token, current_subject
 from app.browsing import logins
 from app.browsing.browser import BrowserError, browser
 from app.browsing.netguard import Blocked
@@ -52,7 +52,7 @@ class CloseIn(BaseModel):
 
 def _scope_key(scope: str, subject: Subject, creds: HTTPAuthorizationCredentials) -> tuple[str, bytes | None]:
     if scope == "private":
-        return logins.session_key(subject.id, scope), chat_key(creds)
+        return logins.session_key(subject.id, scope), chat_key_from_token(creds)
     if scope in subject.roles:  # a department's browser (its saved sign-ins) is for its members
         return logins.session_key(subject.id, scope), None
     raise HTTPException(status.HTTP_403_FORBIDDEN, "you are not in that department")

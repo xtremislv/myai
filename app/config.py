@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="change-me-in-prod")
     jwt_algorithm: str = "HS256"
     jwt_ttl_seconds: int = 3600
+    # A browser session renews its token while the app is open, but never past this long after
+    # the password was entered: then the person signs in again.
+    session_max_age_seconds: int = 30 * 24 * 3600
 
     # --- LLM (vLLM, OpenAI-compatible) ---
     llm_base_url: str = "http://vllm:8001/v1"

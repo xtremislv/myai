@@ -8,7 +8,7 @@ from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -254,12 +254,22 @@ def _oauth_call(fn, *args):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from None
 
 
+OAUTH_BROWSER_COOKIE = "tw_oauth"
+OAUTH_CALLBACK_PATH = "/v1/me/mailbox/oauth/google/callback"
+
+
 @router.post("/me/mailbox/oauth/google/start", response_model=GoogleStartOut)
-def google_start(body: GoogleStartIn, box: str = "personal", subject: Subject = Depends(current_subject)) -> GoogleStartOut:
+def google_start(body: GoogleStartIn, response: Response, box: str = "personal",
+                 subject: Subject = Depends(current_subject)) -> GoogleStartOut:
     from app.mail import oauth
 
     _pending_box[subject.id] = _box_secret(subject, box)
-    return GoogleStartOut(**_oauth_call(oauth.google_start, subject.id, body.address.strip()))
+    out = GoogleStartOut(**_oauth_call(oauth.google_start, subject.id, body.address.strip()))
+    # The callback finishes only in this browser (see oauth.bind_browser). Lax, not Strict: the
+    # callback is a top-level redirect from Google, which Strict would leave without the cookie.
+    response.set_cookie(OAUTH_BROWSER_COOKIE, oauth.bind_browser(subject.id), max_age=oauth.FLOW_SECONDS,
+                        path=OAUTH_CALLBACK_PATH, httponly=True, secure=True, samesite="lax")
+    return out
 
 
 @router.post("/me/mailbox/oauth/google/finish", response_model=MailboxOut)
@@ -274,6 +284,7 @@ def google_finish(body: GoogleFinishIn, subject: Subject = Depends(current_subje
 
 @router.get("/me/mailbox/oauth/google/callback", include_in_schema=False)
 def google_callback(state: str = "", code: str = "", error: str = "",
+                    tw_oauth: str | None = Cookie(default=None),
                     session: Session = Depends(get_session)) -> Response:
     """Where Google sends the browser when the app has a stable redirect_uri (see oauth.py).
     No sign-in token comes with a redirect, so the person is found by the sign-in's state."""
@@ -285,6 +296,9 @@ def google_callback(state: str = "", code: str = "", error: str = "",
     owner = oauth.owner_of_state(state) if state else None
     if owner is None:
         return page("This sign-in has expired. Go back to the app and start it again.", 400)
+    if not oauth.same_browser(owner, tw_oauth):
+        # Someone else's sign-in link: finishing it would connect this mailbox to their account.
+        return page("This sign-in was started in another browser. Start it again from your own app.", 403)
     if error:
         return page(f"Google said: {error}. Go back to the app and try again.", 400)
     try:

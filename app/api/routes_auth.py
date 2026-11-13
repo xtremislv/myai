@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 import uuid
 
 from cryptography.exceptions import InvalidTag
@@ -11,7 +12,15 @@ from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
 from app.api.deps import current_subject, require_admin
-from app.auth.security import hash_password, issue_token, verify_password
+from app.auth.security import (
+    auth_time,
+    end_sessions,
+    hash_password,
+    session_current,
+    token_for,
+    verify_password,
+)
+from app.config import get_settings
 from app.db.session import User, get_session
 from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.vault import user_keys
@@ -92,6 +101,14 @@ SESSION_PATH = "/v1/auth/session"
 SESSION_HEADER = "x-tw-session"
 
 
+def _sign_out_phones(session: Session, user_id: str) -> None:
+    """After a password change or recovery. The app that made the change signs itself in again
+    with the token it got back (re-registering its own device)."""
+    from app import devices
+
+    devices.revoke_all(session, user_id)
+
+
 def _keep_session(response: Response, out: TokenOut) -> TokenOut:
     from app.config import get_settings
 
@@ -118,22 +135,40 @@ def renew_session(
     except Exception as e:  # noqa: BLE001 - expired or forged
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session ended") from e
     user = session.get(User, claims.get("sub"))
-    if user is None or user.disabled:
+    if user is None or user.disabled or not session_current(user, claims):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session ended")
+    signed_in = auth_time(claims)
+    if time.time() - signed_in > get_settings().session_max_age_seconds:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session ended: sign in again")
     chat_key = None
     if claims.get("ck"):
         try:
             chat_key = user_keys.open_from_token(claims["ck"], user.id)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session ended") from e
-    out = TokenOut(access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
+    out = TokenOut(access_token=token_for(user, chat_key, auth_time=signed_in),
                    must_change_password=user.wrapped_chat_key is None)
     return _keep_session(response, out)
 
 
 @router.delete("/session", status_code=status.HTTP_204_NO_CONTENT)
-def end_session(response: Response) -> Response:
-    """Sign out: forget the session cookie."""
+def end_session(
+    response: Response,
+    session: Session = Depends(get_session),
+    tw_session: str | None = Cookie(default=None),
+) -> Response:
+    """Sign out: forget the session cookie, and end every browser session of this person, so a
+    copied token stops working too. Phones keep their own sign-in (Settings > Devices)."""
+    from app.auth.security import decode_token
+
+    try:
+        claims = decode_token(tw_session) if tw_session else None
+    except Exception:  # noqa: BLE001 - expired or forged: nothing to end
+        claims = None
+    user = session.get(User, claims.get("sub")) if claims else None
+    if user is not None and session_current(user, claims):
+        end_sessions(user)
+        session.commit()
     response.delete_cookie(SESSION_COOKIE, path=SESSION_PATH, httponly=True, secure=True, samesite="strict")
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
@@ -148,14 +183,13 @@ def login(body: LoginIn, response: Response, session: Session = Depends(get_sess
         raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
     if user.wrapped_chat_key is None:
         return _keep_session(response, TokenOut(
-            access_token=issue_token(user.id, user.username, user.roles), must_change_password=True
+            access_token=token_for(user), must_change_password=True
         ))
     try:
         chat_key = user_keys.unlock(user, body.password)
     except InvalidTag as e:  # bcrypt only checks 72 bytes; the key needs the whole password
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
-    return _keep_session(response, TokenOut(
-        access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key)))
+    return _keep_session(response, TokenOut(access_token=token_for(user, chat_key)))
 
 
 @router.post("/change-password", response_model=TokenOut)
@@ -180,9 +214,11 @@ def change_password(
     except InvalidTag as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
     user.password_hash = hash_password(body.new_password)
+    end_sessions(user)  # every other session and phone signs in again with the new password
     session.commit()
+    _sign_out_phones(session, user.id)
     return _keep_session(response, TokenOut(
-        access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
+        access_token=token_for(user, chat_key),
         recovery_code=recovery_code,
     ))
 
@@ -202,9 +238,11 @@ def recover(body: RecoverIn, response: Response, session: Session = Depends(get_
     user_keys.wrap_with_password(user, body.new_password, chat_key)
     new_code = user_keys.add_recovery_code(user, chat_key)
     user.password_hash = hash_password(body.new_password)
+    end_sessions(user)
     session.commit()
+    _sign_out_phones(session, user.id)
     return _keep_session(response, TokenOut(
-        access_token=issue_token(user.id, user.username, user.roles, chat_key=chat_key),
+        access_token=token_for(user, chat_key),
         recovery_code=new_code,
     ))
 
@@ -350,6 +388,7 @@ def reset_password(
     user = _other_user(session, user_id, admin)
     user.password_hash = hash_password(body.password)
     user.chat_key_salt = user.chat_key_nonce = user.wrapped_chat_key = None
+    end_sessions(user)
     session.commit()
     from app import devices
 

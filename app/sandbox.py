@@ -11,7 +11,8 @@ isolation is layered rather than a kernel sandbox:
 3. Limits set before any of its code runs: CPU seconds, memory, file size, open files,
    processes; plus a wall-clock timeout that kills the whole process group.
 4. A Python audit hook, also installed first, refuses sockets, starting processes, ctypes,
-   and writing outside the run's own folder. Audit hooks are defence in depth, not a proof:
+   writing outside the run's own folder, and reading or listing anything but that folder, the
+   Python install and shared system libraries. Audit hooks are defence in depth, not a proof:
    code written to get around them could reach services on 127.0.0.1 as `nobody` (Redis
    has no password here). Inputs are the person's own files and the model's own code, but a
    web page or email could try to steer that code, which is why the layers above exist.
@@ -66,13 +67,30 @@ PATH_EVENTS = {"os.remove", "os.rename", "os.rmdir", "os.mkdir", "os.chmod", "os
                "os.symlink", "os.truncate", "os.utime", "shutil.rmtree", "shutil.copyfile", "shutil.move",
                "os.chdir", "os.chflags", "os.lchown", "os.lchmod"}
 WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+LIST_EVENTS = {"os.listdir", "os.scandir", "glob.glob", "os.readlink"}
+
+def _under(real, roots):
+    return any(real == r or real.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+# What the code may read: its own folder, the Python install, shared libraries and data (time
+# zones, certificates), and facts about its own process and the CPU. Nothing else, even where a
+# file is world-readable: other people's data must never be one open() away.
+READ_ROOTS = tuple({work, *(os.path.realpath(p) for p in (sys.prefix, sys.base_prefix, sys.exec_prefix)),
+                    "/usr/lib", "/usr/lib64", "/usr/local/lib", "/usr/share/zoneinfo", "/etc/localtime",
+                    "/etc/ssl", "/dev/null", "/dev/urandom", "/proc/self", os.path.realpath("/proc/self"),
+                    "/proc/cpuinfo", "/proc/meminfo", "/sys/devices/system/cpu", "/sys/fs/cgroup"})
 
 def inside(path):
     try:
-        real = os.path.realpath(os.fsdecode(path))
+        return _under(os.path.realpath(os.fsdecode(path)), (work,))
     except Exception:
         return False
-    return real == work or real.startswith(work + os.sep)
+
+def readable(path):
+    try:
+        return _under(os.path.realpath(os.fsdecode(path)), READ_ROOTS)
+    except Exception:
+        return False
 
 def hook(event, args):
     if event == "open":
@@ -82,6 +100,13 @@ def hook(event, args):
         writing = (mode is not None and any(c in str(mode) for c in "wax+")) or bool((flags or 0) & WRITE_FLAGS)
         if writing and not inside(path):
             raise PermissionError("the code may only write inside its own folder (use output/)")
+        if not writing and not readable(path):
+            raise PermissionError("the code may only read its own files (input/ and its folder)")
+        return
+    if event in LIST_EVENTS:
+        target = args[0] if args else "."
+        if isinstance(target, (str, bytes, os.PathLike)) and not readable(target or "."):
+            raise PermissionError("the code may only look inside its own folder")
         return
     if event.startswith(BLOCKED):
         raise PermissionError(f"not allowed in the sandbox: {event} (no network, no other programs)")
