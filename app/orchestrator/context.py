@@ -33,6 +33,11 @@ def with_attachments(convo: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+# Tool groups the chat route sorted this message into (app/orchestrator/toolsel.py), as
+# (hash of the message, groups). Not graph state: it only narrows which tools are shown this turn.
+tool_groups: ContextVar[tuple[str, frozenset[str] | None] | None] = ContextVar("tool_groups", default=None)
+
+
 # The person's private-chat key during a private run, so tools can open their own files.
 # Like attachment text, it must never be put in graph state (which is checkpointed).
 user_key: ContextVar[bytes | None] = ContextVar("user_key", default=None)

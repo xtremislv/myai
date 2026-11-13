@@ -1,0 +1,60 @@
+{"id": "g01", "msg": "hello", "need": []}
+{"id": "g02", "msg": "thanks a lot!", "need": []}
+{"id": "g03", "msg": "how are you?", "need": []}
+{"id": "g04", "msg": "explain what a mutual fund is", "need": []}
+{"id": "g05", "msg": "write a short poem about monsoon", "need": []}
+{"id": "g06", "msg": "what did I ask you earlier?", "need": []}
+{"id": "g07", "msg": "rewrite this more politely: send me the report now", "need": []}
+{"id": "g08", "msg": "what's the weather in Pune tomorrow?", "need": ["web"]}
+{"id": "g09", "msg": "latest news on the RBI repo rate", "need": ["web"]}
+{"id": "g10", "msg": "find me the cheapest 1TB SSD", "need": ["web"]}
+{"id": "g11", "msg": "who won yesterday's IPL match?", "need": ["web"]}
+{"id": "g12", "msg": "research electric scooter subsidies in Maharashtra and give me a report", "need": ["web"]}
+{"id": "g13", "msg": "open https://example.com/pricing and summarize it", "need": ["web"]}
+{"id": "g14", "msg": "kal Delhi mein mausam kaisa rahega?", "need": ["web"]}
+{"id": "g15", "msg": "summarize my unread mail", "need": ["mail"]}
+{"id": "g16", "msg": "did anyone from HDFC email me this week?", "need": ["mail"]}
+{"id": "g17", "msg": "reply to Rahul's last mail saying I'll join the call", "need": ["mail"]}
+{"id": "g18", "msg": "is my mail account connected?", "need": ["mail"]}
+{"id": "g19", "msg": "mera inbox check karo, koi important mail?", "need": ["mail"]}
+{"id": "g20", "msg": "put all invoices from my mail into a sheet", "need": ["mail"]}
+{"id": "g21", "msg": "remind me to call mom at 7pm", "need": ["reminders"]}
+{"id": "g22", "msg": "what reminders do I have tomorrow?", "need": ["reminders"]}
+{"id": "g23", "msg": "cancel the dentist reminder", "need": ["reminders"]}
+{"id": "g24", "msg": "kal subah 9 baje yaad dilana meeting ke baare mein", "need": ["reminders"]}
+{"id": "g25", "msg": "save these notes to a file called ideas.md", "need": ["files"]}
+{"id": "g26", "msg": "what files do I have?", "need": ["files"]}
+{"id": "g27", "msg": "open my budget file and tell me the total", "need": ["files"]}
+{"id": "g28", "msg": "share the trip plan with Priya", "need": ["files"]}
+{"id": "g29", "msg": "delete old_draft.txt", "need": ["files"]}
+{"id": "g30", "msg": "make a chart of my monthly expenses from expenses.csv", "need": ["files", "data"]}
+{"id": "g31", "msg": "calculate the average of these numbers: 12, 18, 25, 31", "need": []}
+{"id": "g32", "msg": "analyse the attached sales sheet and show a dashboard", "need": ["data"]}
+{"id": "g33", "msg": "summarize this 200 page pdf I attached", "need": ["data"]}
+{"id": "g34", "msg": "make an offer letter for Amit from the template", "need": ["templates"]}
+{"id": "g35", "msg": "what templates do I have?", "need": ["templates"]}
+{"id": "g36", "msg": "save this as a template for future invoices", "need": ["templates"]}
+{"id": "g37", "msg": "order a phone charger on Amazon", "need": ["web"]}
+{"id": "g38", "msg": "book a cab to the airport", "need": ["web"]}
+{"id": "g39", "msg": "log into my electricity board account and download the bill", "need": ["web"]}
+{"id": "g40", "msg": "buy the second one", "need": ["web"], "context": "Assistant: Here are 3 SSDs: 1) Samsung ₹6,999 2) WD ₹5,499 3) Crucial ₹5,199"}
+{"id": "g41", "msg": "yes send it", "need": ["mail"], "context": "Assistant: Here is the draft reply to Rahul: 'Hi Rahul, I'll join the call.' Shall I send it?"}
+{"id": "g42", "msg": "do that", "need": ["reminders"], "context": "Assistant: I can set a reminder for the 5pm call. Want me to?"}
+{"id": "g43", "msg": "and for Mumbai?", "need": ["web"], "context": "User: weather in Pune? Assistant: Pune: 31°C, clear."}
+{"id": "g44", "msg": "save that to my files", "need": ["files"], "context": "Assistant: Here is a summary of the article: ..."}
+{"id": "g45", "msg": "make it a chart", "need": ["data"], "context": "Assistant: Sales by region: North 40, South 25, East 35."}
+{"id": "g46", "msg": "email this summary to my boss", "need": ["mail"], "context": "Assistant: Summary of today's meeting: ..."}
+{"id": "g47", "msg": "find hotels in Goa under 5000 and book the best one", "need": ["web"]}
+{"id": "g48", "msg": "check my mail for the flight ticket and remind me 3 hours before departure", "need": ["mail", "reminders"]}
+{"id": "g49", "msg": "research competitors and save the findings to a file", "need": ["web", "files"]}
+{"id": "g50", "msg": "compare prices of iPhone 16 across sites and make a table", "need": ["web", "data"]}
+{"id": "g51", "msg": "read the attached contract and draft a reply email to the vendor", "need": ["mail"]}
+{"id": "g52", "msg": "what's 15% of 4,800?", "need": []}
+{"id": "g53", "msg": "translate 'good morning' to Tamil", "need": []}
+{"id": "g54", "msg": "tell me a joke", "need": []}
+{"id": "g55", "msg": "plan a 3 day itinerary for Jaipur", "need": ["web"]}
+{"id": "g56", "msg": "what's the status of my background job?", "need": ["data"]}
+{"id": "g57", "msg": "track my Flipkart order", "need": ["web"]}
+{"id": "g58", "msg": "my card details are saved right? use them to pay", "need": ["web"], "context": "Assistant: The cart on croma.com is ready: ₹1,299."}
+{"id": "g59", "msg": "forward the HR policy mail to Neha", "need": ["mail"]}
+{"id": "g60", "msg": "list my files shared with me", "need": ["files"]}

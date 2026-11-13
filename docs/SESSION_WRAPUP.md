@@ -50,6 +50,12 @@ curl -s localhost:8000/readyz           # {"ready":true,...}
   and recovery also sign out phones); browser sessions end 30 days after the password was entered. The Google mail
   callback only finishes in the browser that started it (`tw_oauth` cookie). Attachment text goes on the latest user
   message, not the system prompt (keeps the prompt cache).
+- **Tool selection (2026-11-13):** the single agent sees only the tool groups a message needs
+  (`app/orchestrator/toolsel.py`: web, mail, files, reminders, data, templates; sorted by a short model call that
+  runs alongside triage), plus ungrouped/department tools, groups used in the last 3 turns, and groups it asks for
+  with `more_tools`. Dispatch and ACL are unchanged. Answers ~35-45% faster. After changing its prompt or groups run
+  `.venv/bin/python -m scripts.eval_toolgroups` (60 cases, 58/60 at release). No faster attention backend works on
+  this GPU (FlashInfer/Flex/SDPA/fp8 KV all tested 2026-11-13): stay on Triton.
 - **After code changes:** restart the gateway: `kill $(cat /var/log/ai-platform/gateway.pid); scripts/start_native.sh`.
   After changing `app/departments/packs.py`: `.venv/bin/python -m scripts.seed_departments`. After a model change in
   `app/db/session.py`: `alembic revision --autogenerate`, then `alembic upgrade head`.

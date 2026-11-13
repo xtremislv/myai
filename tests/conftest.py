@@ -47,6 +47,15 @@ def tokens_without_a_user_row(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def tool_sorting_unavailable(monkeypatch):
+    """Tests script the LLM's replies: the tool-group sorter must not consume them. Unsorted means
+    the agent sees every tool, as before. tests/test_toolsel.py tests the sorter itself."""
+    from app.orchestrator import toolsel
+
+    monkeypatch.setattr(toolsel, "classify", lambda message, recent, available=None: None)
+
+
+@pytest.fixture(autouse=True)
 def nsfw_model_unavailable(monkeypatch):
     """Tests script the LLM's replies, so the classifiers must not consume them. Guards
     use their keyword fallback unless a test sets a verdict."""

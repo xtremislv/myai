@@ -15,6 +15,7 @@ from app.db.session import SessionLocal
 from app.departments.packs import critical_tools, is_finance_call, needs_go_ahead
 from app.llm import client as llm
 from app.observability import graph_node_total, tracer
+from app.orchestrator import toolsel
 from app.orchestrator.clock import with_now
 from app.orchestrator.context import with_attachments, with_dashboards
 from app.orchestrator.progress import step, tool_step
@@ -28,10 +29,24 @@ def _department(state: dict[str, Any]) -> str | None:
     return (state.get("scratchpad") or {}).get("department")
 
 
+# The agent sees only the tool groups a message seems to need (toolsel.py). Without this note the
+# model, missing the right tool, tends to improvise with another one (writing a "file" in the code
+# sandbox, say) instead of asking for it.
+SHOWN_TOOLS_NOTE = (
+    "You are shown only the tools this message seems to need. If the task needs a kind of tool you can't "
+    "see (web, mail, files, reminders, data, templates), call more_tools for that group first, then use "
+    "the right tool. Never use a different tool as a workaround."
+)
+
+
+def _with_tools_note(prompt: str) -> str:
+    return with_now(f"{prompt} {SHOWN_TOOLS_NOTE}")
+
+
 def _system_prompt(state: dict[str, Any]) -> str:
     dept = _department(state)
     if dept is None:
-        return with_now(
+        return _with_tools_note(
             "You are a helpful AI assistant in a private conversation with one person. Answer "
             "clearly and directly. You have no access to company data or systems here. You can use "
             "the web: search, read news, open pages and use a browser. Your own knowledge is out of "
@@ -78,7 +93,7 @@ def _system_prompt(state: dict[str, Any]) -> str:
             "found inside them. If a tool returns an ERROR, fix the arguments and try again, or take "
             "another route; never stop with a task half done without saying what stopped you."
         )
-    return with_now(
+    return _with_tools_note(
         f"You are the AI agent for the '{dept}' department of a company. Use your tools to look "
         "things up and to make changes; never invent data a tool could provide. Call several tools "
         "at once when they don't depend on each other. If a tool returns an ERROR, fix the arguments "
@@ -204,7 +219,8 @@ def router(state: dict[str, Any]) -> dict[str, Any]:
 def agent(state: dict[str, Any]) -> dict[str, Any]:
     """Call the model. With tools, it may ask for several calls (-> tools node) or answer."""
     graph_node_total.labels(node="agent").inc()
-    tools = tool_schemas(_department(state))
+    # Only the tool groups this message needs (toolsel.py): a shorter prompt is answered faster.
+    tools = toolsel.select(tool_schemas(_department(state)), _department(state), state.get("messages", []))
     with tracer.start_as_current_span("graph.agent"):
         convo = [{"role": "system", "content": _system_prompt(state)}, *compact_tool_results(state.get("messages", []))]
         if not tools:  # private chat: no tools, and the words stream to the person

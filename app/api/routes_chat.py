@@ -21,6 +21,7 @@ import re
 import threading
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Literal
 from urllib.parse import quote
@@ -42,8 +43,8 @@ from app.db.session import (
     release_connection,
 )
 from app.departments.packs import DEFAULT_DEPARTMENTS
-from app.orchestrator import execution
-from app.orchestrator.context import browser_request, dashboards
+from app.orchestrator import execution, toolsel
+from app.orchestrator.context import browser_request, dashboards, tool_groups
 from app.orchestrator.execution import scoped_thread
 from app.orchestrator.progress import progress_sink, step
 from app.request_manager import approvals as approvals_store
@@ -103,6 +104,10 @@ CONFIRM_TITLES = {
 MAILBOX_LABELS = {"finance": "finance (Accounts' official mailbox)", "career": "careers (HR's official mailbox)",
                   "contact": "contact (Admin's official mailbox)"}
 
+
+
+# Sorts messages into tool groups while triage runs (one short model call each).
+_TOOL_SORTER = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tool-sort")
 
 def confirm_out(pending: dict) -> ConfirmOut:
     args = pending.get("args") or {}
@@ -211,8 +216,15 @@ def _before_the_model(
     recent = history[-RECENT_MESSAGES:]
     mine = _departments_of(subject)
     others = {d.name: d.description for d in DEFAULT_DEPARTMENTS if d.name not in mine and d.name != "admin"}
+    # Which tool groups the message needs (toolsel.py) is asked alongside triage, so it costs no
+    # extra wait; the agent then sees only those tools.
+    sorting = _TOOL_SORTER.submit(toolsel.sort_message, body.message, recent)
     sorted_message = guards.triage(body.message, mine, recent, others)
     mode = sorted_message.mode if body.mode == "auto" else body.mode
+    try:
+        tool_groups.set(sorting.result(timeout=toolsel.TIMEOUT))
+    except Exception:  # noqa: BLE001 - unsorted: the agent sorts it itself, or shows every tool
+        tool_groups.set(None)
 
     if sorted_message.nsfw:
         guards.report_nsfw(session, subject.id, body.message)

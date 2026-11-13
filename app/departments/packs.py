@@ -71,7 +71,7 @@ TEMPLATE_TOOLS = ("list_templates", "read_template", "create_from_template", "sa
 WALLET_TOOLS = ("list_saved_details", "fill_saved", "ask_person_for_secret")
 PRIVATE_TOOLS = (
     *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
-    *WALLET_TOOLS, *DATA_TOOLS,
+    *WALLET_TOOLS, *DATA_TOOLS, "more_tools",
 )
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
@@ -258,6 +258,8 @@ GLOBAL = DepartmentSpec(
         Grant("compute:python", ("write",), subject="*"),
         Grant("compute:dashboard", ("write",), subject="*"),
         Grant("compute:summarize", ("write",), subject="*"),
+        # Asking for more of one's own tools to be shown (more_tools, app/orchestrator/toolsel.py).
+        Grant("tools:list", ("read",), subject="*"),
     ),
     tools=(),
 )

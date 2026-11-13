@@ -65,6 +65,9 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - Mailboxes a person configures are `guarded`: public addresses on mail ports only (`connector.check_servers`).
 - Once a conversation has read mail or files, web tools refuse long URLs/queries (`_leaks` in `tools.py`).
 - After changing the triage prompt, run `scripts/eval_triage.py` (cases in `tests/eval/triage_cases.jsonl`).
+- The single agent is shown only the tool groups a message needs (`app/orchestrator/toolsel.py`); a new tool must be
+  in a group in `toolsel.GROUPS` (or is always shown). After changing groups or the sorting prompt, run
+  `scripts/eval_toolgroups.py`. Never log the groups of a private message.
 - Templates (`app/documents/`): fill with the sandboxed Jinja env in `engine.py` only (never a plain
   `jinja2.Template`: templates come from users). Company templates are work-only; private chat uses the
   person's own templates and attachments (`attachment_files` context var).

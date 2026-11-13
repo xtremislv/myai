@@ -487,6 +487,21 @@ def dt_now_header() -> str:
     return format_datetime(_dt.datetime.now(_dt.timezone.utc))
 
 
+def more_tools(state: dict[str, Any], groups: str) -> str:
+    """Show more tool groups to the model this turn (app/orchestrator/toolsel.py). It reads and
+    changes no data: the tools it reveals are this department's anyway, and each of them is
+    checked again when called."""
+    from app.orchestrator import toolsel
+
+    if (err := _enforce(state, "read", "tools", "list")) is not None:
+        return err
+    wanted = toolsel.requested_groups({"args": {"groups": groups}})
+    if not wanted:
+        return f"ERROR: name one or more of: {', '.join(toolsel.GROUPS)}"
+    return (f"Added: {', '.join(sorted(wanted))}. Those tools are available now: call the one you need, "
+            "or answer if you have what you need.")
+
+
 def job_status(state: dict[str, Any]) -> str:
     """The person's background jobs (e.g. mail_to_sheet) and how far along they are."""
     from app import jobs
@@ -2333,6 +2348,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "summarize_mail": summarize_mail,
     "mail_to_sheet": mail_to_sheet,
     "job_status": job_status,
+    "more_tools": more_tools,
     "list_files": list_files,
     "read_file": read_file,
     "write_file": write_file,
@@ -2396,18 +2412,18 @@ DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
     "account": (
         "balance_lookup", *MAIL_TOOLS, "manage_order", "manage_bill",
         "initiate_payment", "book_service", "inventory_lookup",
-        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
+        *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS, "more_tools",
     ),
-    "hr": (*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS),
+    "hr": (*MAIL_TOOLS, "review_report", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS, "more_tools"),
     "logistics": (
         "inventory_lookup", "inventory_adjust", "track_shipment", "send_notification",
-        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
+        *LOOKUP_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS, "more_tools",
     ),
     "researcher": (
         "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS,
-        *TEMPLATE_TOOLS, *DATA_TOOLS,
+        *TEMPLATE_TOOLS, *DATA_TOOLS, "more_tools",
     ),
-    "superuser": ("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS),
+    "superuser": ("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS, "more_tools"),
     "admin": ("*",),
 }
 
@@ -2445,6 +2461,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                      "background and the person is notified when the file is saved. ALWAYS use this for a "
                      "sheet, table file or list of many emails; never write such a file yourself from "
                      "search_mail pages.",
+    "more_tools": "Get tools you don't have yet in this conversation. groups: one or more of web (search, "
+                  "pages, weather, products, using websites, ordering), mail, files (and sharing), reminders, data "
+                  "(Python, charts, tables, long documents, background jobs), templates. Use it when the task needs "
+                  "a tool you can't see; never tell the person you can't do something before trying it.",
     "job_status": "How far the person's background jobs (e.g. a mail_to_sheet export) have got, or whether "
                   "they finished.",
     "search_mail": "Find ALL emails on a topic: every folder including archived mail, newest first, 50 "
