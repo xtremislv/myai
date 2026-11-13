@@ -39,6 +39,10 @@ curl -s localhost:8000/readyz           # {"ready":true,...}
   snapshot. vLLM takes ~2 min to load; a quick tunnel can need ~1 min to register (530 until then).
 - **UI caching:** Cloudflare makes browsers keep static files for 4 h, so `/ui/` serves `index.html` with
   `app.js?v=<hash>`/`style.css?v=<hash>` (`app/main.py`, `_ui_page`); UI edits show on the next page load.
+- **Prompt caching (speed):** every call carries ~6.4k tokens of tool definitions, and this GPU prefills only
+  ~1,000 tokens/s, so a cache miss costs ~6-8 s and a hit ~0.5 s. Keep the system prompt identical between calls:
+  the time goes on the latest user message at send time (`app/orchestrator/clock.py`, `place_clock`), never in the
+  system prompt. The native gateway runs with `OTEL_TRACES_EXPORT=false` (Alloy has no trace backend).
 - **After code changes:** restart the gateway: `kill $(cat /var/log/ai-platform/gateway.pid); scripts/start_native.sh`.
   After changing `app/departments/packs.py`: `.venv/bin/python -m scripts.seed_departments`. After a model change in
   `app/db/session.py`: `alembic revision --autogenerate`, then `alembic upgrade head`.

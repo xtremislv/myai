@@ -171,7 +171,40 @@ def test_agents_are_told_the_local_date():
 
     line = now_line(dt.datetime(2026, 11, 2, 20, 0, tzinfo=dt.timezone.utc))
     assert "Tuesday, 3 November 2026" in line and "01:30" in line and "Asia/Kolkata" in line  # UTC+5:30
-    assert "Today is" in nodes._system_prompt(LOGISTICS) and "Today is" in nodes._system_prompt({})
+    assert "Today is" in nodes._system_prompt(LOGISTICS) or "[Now:" in nodes._system_prompt(LOGISTICS)
+    from app.orchestrator.clock import CLOCK_MARK, DATE_RULES
+    for state in (LOGISTICS, {}):
+        assert nodes._system_prompt(state).endswith(DATE_RULES + CLOCK_MARK)
+
+
+def test_the_time_goes_after_the_cacheable_prefix():
+    """The system prompt (followed by the tools in the chat template) must not change from one
+    minute to the next, or vLLM recomputes thousands of tokens for every message."""
+    import datetime as dt
+
+    from app.orchestrator.clock import CLOCK_MARK, place_clock, with_now
+
+    def at(minute):
+        msgs = [{"role": "system", "content": with_now("SYS")}, {"role": "user", "content": "old"},
+                {"role": "assistant", "content": "a"}, {"role": "user", "content": "hello"},
+                {"role": "tool", "content": "r", "tool_call_id": "1"}]
+        return msgs, place_clock(msgs, dt.datetime(2026, 11, 2, 20, minute, tzinfo=dt.timezone.utc))
+
+    original, one = at(0)
+    _, two = at(1)
+    assert one[:3] == two[:3]  # system prompt and earlier turns identical across minutes
+    assert CLOCK_MARK not in one[0]["content"] and "Today is" not in one[0]["content"]
+    assert one[3]["content"] == "hello\n\n[Now: Tuesday, 3 November 2026, 01:30 (Asia/Kolkata)]"
+    assert two[3]["content"].endswith("[Now: Tuesday, 3 November 2026, 01:31 (Asia/Kolkata)]")
+    assert one[1]["content"] == "old" and original[3]["content"] == "hello"  # input untouched
+
+
+def test_the_clock_stays_in_the_system_prompt_without_a_user_turn():
+    from app.orchestrator.clock import CLOCK_MARK, place_clock, with_now
+
+    [system] = place_clock([{"role": "system", "content": with_now("SYS")}])
+    assert "Today is" in system["content"] and CLOCK_MARK not in system["content"]
+    assert place_clock([{"role": "user", "content": "x"}]) == [{"role": "user", "content": "x"}]
 
 
 def test_only_turns_handled_as_work_carry_over_to_new_work():

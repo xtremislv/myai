@@ -19,6 +19,7 @@ from app.observability import (
     llm_tokens_total,
     tracer,
 )
+from app.orchestrator.clock import place_clock
 
 _settings = get_settings()
 _client = OpenAI(base_url=_settings.llm_base_url, api_key=_settings.llm_api_key)
@@ -258,7 +259,7 @@ def _chat(
         "temperature": kwargs.get("temperature", _settings.llm_temperature),
     }
     params["messages"], params["max_tokens"] = fit_to_context(
-        [_for_model(m) for m in messages], tools, kwargs.get("max_tokens", _settings.llm_max_tokens))
+        [_for_model(m) for m in place_clock(messages)], tools, kwargs.get("max_tokens", _settings.llm_max_tokens))
     if tools:
         params["tools"] = tools
         params["tool_choice"] = tool_choice or "auto"
