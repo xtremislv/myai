@@ -7,7 +7,8 @@ this file, this file is right.
 
 - Repo: `/root/myai`, GitHub `xtremislv/myai`. The live checkout is on branch **`android-app`** since 2026-11-10
   (it contains all of `server-native-setup`; see `BRANCHES.md`). Never push to `main` (owner's rule).
-- Android app: see `docs/ANDROID_APP.md`. 1.0.70 crashed right after sign-in on Android 13+ (fixed 2026-11-13, see
+- Android app: see `docs/ANDROID_APP.md`. **1.0.71** is published (2026-11-13). 1.0.70 crashed right after sign-in
+  on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
 - Tests: **652 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
@@ -81,7 +82,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 
 | Thing | State |
 |---|---|
-| Host | vast.ai container behind aiccloud.in. Quadro RTX 8000 48 GB (Turing, CC 7.5). No Docker, no systemd. Disk 40 GB, **~7 GB free** (watch it). |
+| Host | vast.ai container behind aiccloud.in. Quadro RTX 8000 48 GB (Turing, CC 7.5). No Docker, no systemd. Disk 40 GB, **~4.3 GB free** on 2026-11-13 (watch it; `/tmp/pip-unpack-*` holds 1.4 GB of stale pip temp files the owner may delete). |
 | Model | `google/gemma-4-26B-A4B-it`, AWQ/compressed-tensors INT4 (`cyankiwi/...qat-AWQ-INT4` in `/root/models/gemma-4-26b`), vLLM 0.32.0 in `/root/vllm-env`, `--dtype half`, Turing patch applied, **64k context** (`LLM_CONTEXT_TOKENS` must match), KV cache 683k tokens, `--max-num-seqs 16`, tool parser `gemma4`. |
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |

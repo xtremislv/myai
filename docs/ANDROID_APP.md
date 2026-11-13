@@ -97,11 +97,12 @@ cd android && ./gradlew testDebugUnitTest   # Robolectric: starts the app, signs
   the gateway log: `grep -A40 "ANDROID CRASH" /var/log/ai-platform/gateway.log`.
 - **Errors shown in the app** are logged with their cause (`friendly()` in `ui/Common.kt`, tag `TwApp`): with a
   phone on USB, `adb logcat -s TwApp AndroidRuntime`.
-- **Emulator on this server** (no KVM, so slow: ~8 min to boot Android 13): system image and AVD in `/dev/shm`
+- **Emulator on this server** (no KVM, so slow: ~8 min to boot Android 13; removed after use to save disk:
+  `sdkmanager "emulator" "system-images;android-33;default;x86_64"`): system image and AVD in `/dev/shm`
   (the root disk is too full; point the SDK's `.temp` there too), `emulator -avd ... -no-window -accel off`. Reach a
   private copy of the gateway with `adb reverse tcp:8765 tcp:8765` and server `http://localhost:8765` (10.0.2.2 did
   not connect). If "System UI isn't responding" sticks, choose "Close app".
-- **1.0.70 crash (fixed in 1.0.71):** right after sign-in on Android 13+, asking for notification permission threw
+- **1.0.70 crash (fixed in 1.0.71, published 2026-11-13):** right after sign-in on Android 13+, asking for notification permission threw
   "Can only use lower 16 bits for requestCode": `biometric` 1.1.0 pulled in `fragment` 1.2.5, whose
   `FragmentActivity` rejects the request codes `activity` 1.9 uses. `fragment` 1.8.5 is now a direct dependency.
   Also fixed: response bodies were read on the main thread (`Api.exchange` now reads on the I/O dispatcher).
