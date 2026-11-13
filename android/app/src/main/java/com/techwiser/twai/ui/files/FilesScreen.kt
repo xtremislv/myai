@@ -1,5 +1,6 @@
 package com.techwiser.twai.ui.files
 
+import com.techwiser.twai.ui.theme.TwTitle
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -155,7 +156,7 @@ fun FilesScreen() {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("My files") }) },
+        topBar = { TopAppBar(title = { TwTitle("Personal · Files", "My files") }) },
         floatingActionButton = {
             if (!ui.trash) ExtendedFloatingActionButton(
                 onClick = { pick.launch(arrayOf("*/*")) },

@@ -1,5 +1,6 @@
 package com.techwiser.twai.ui.work
 
+import com.techwiser.twai.ui.theme.TwTitle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -131,7 +132,7 @@ fun WorkScreen() {
         vm.refresh()
         onPauseOrDispose { }
     }
-    Scaffold(topBar = { TopAppBar(title = { Text("Work") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { TwTitle("Workspace · Work", "Work") }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             if (ui.tabs.isEmpty()) {
                 EmptyState(Icons.Outlined.VerifiedUser, "Nothing to review",

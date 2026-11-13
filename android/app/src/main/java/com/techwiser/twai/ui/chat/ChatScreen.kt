@@ -1,5 +1,16 @@
 package com.techwiser.twai.ui.chat
 
+import com.techwiser.twai.ui.theme.ButtonShape
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.ui.graphics.Color
 import android.app.Activity
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -308,25 +319,30 @@ private fun MessageBubble(m: UiMessage) {
     val mine = m.role == "user"
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         Box {
+            val extra = LocalExtra.current
             Surface(
-                color = if (mine) LocalExtra.current.mine else MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(
-                    topStart = 16.dp, topEnd = 16.dp,
-                    bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp,
-                ),
-                tonalElevation = if (mine) 0.dp else 1.dp,
+                // Web: .msg.user is a --mine bubble (12/12/4/12); .msg.assistant a raised card with a
+                // bronze rule on the left (4/12/12/4).
+                color = if (mine) extra.mine else MaterialTheme.colorScheme.surface,
+                shape = if (mine) RoundedCornerShape(12.dp, 12.dp, 4.dp, 12.dp) else RoundedCornerShape(4.dp, 12.dp, 12.dp, 4.dp),
+                border = BorderStroke(1.dp, extra.line),
+                shadowElevation = if (mine) 0.dp else 1.dp,
                 modifier = Modifier
-                    .widthIn(max = if (mine) 320.dp else 640.dp)
+                    .then(if (mine) Modifier.widthIn(max = 320.dp) else Modifier.fillMaxWidth())
                     .combinedClickable(onClick = {}, onLongClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         menu = true
                     }),
             ) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    if (mine) {
-                        Text(m.text, style = MaterialTheme.typography.bodyLarge)
-                    } else {
-                        SelectionContainer { Markdown(m.text) }
+                if (mine) {
+                    Text(m.text, style = MaterialTheme.typography.bodyMedium, color = extra.inkStrong,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                } else {
+                    Row(Modifier.height(IntrinsicSize.Min)) {
+                        Box(Modifier.width(2.dp).fillMaxHeight().background(extra.bronze))
+                        Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                            SelectionContainer { Markdown(m.text) }
+                        }
                     }
                 }
             }
@@ -349,9 +365,13 @@ private fun MessageBubble(m: UiMessage) {
 
 @Composable
 private fun LiveReply(steps: List<String>, streaming: String?) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp), tonalElevation = 1.dp,
+    val extra = LocalExtra.current
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(4.dp, 12.dp, 12.dp, 4.dp),
+        border = BorderStroke(1.dp, extra.line), shadowElevation = 1.dp,
         modifier = Modifier.fillMaxWidth().animateContentSize()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Row(Modifier.height(IntrinsicSize.Min)) {
+        Box(Modifier.width(2.dp).fillMaxHeight().background(extra.bronze))
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             steps.takeLast(6).forEachIndexed { i, s ->
                 val last = i == steps.takeLast(6).lastIndex && streaming.isNullOrEmpty()
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -372,6 +392,7 @@ private fun LiveReply(steps: List<String>, streaming: String?) {
                 }
             }
         }
+      }
     }
 }
 
@@ -413,15 +434,15 @@ private fun ConfirmCard(p: ConfirmOut, enabled: Boolean, onDecide: (Boolean, Boo
         if (p.purchase) {
             Text("Is this for personal use or for work? Work orders go to the Accounts team, who pay with the company's details.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = { onDecide(true, false) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Personal: place it") }
-            OutlinedButton(onClick = { onDecide(false, true) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Work: send to Accounts") }
+            Button(shape = ButtonShape, onClick = { onDecide(true, false) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Personal: place it") }
+            OutlinedButton(shape = ButtonShape, onClick = { onDecide(false, true) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Work: send to Accounts") }
             TextButton(onClick = { onDecide(false, false) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onDecide(true, false) }, enabled = enabled) {
+                Button(shape = ButtonShape, onClick = { onDecide(true, false) }, enabled = enabled) {
                     Text(if (p.tool == "send_mail") "Send" else "Yes, go ahead")
                 }
-                OutlinedButton(onClick = { onDecide(false, false) }, enabled = enabled) { Text("No") }
+                OutlinedButton(shape = ButtonShape, onClick = { onDecide(false, false) }, enabled = enabled) { Text("No") }
             }
         }
     }
@@ -530,7 +551,7 @@ private fun LiveBrowser(api: Api, scope: String, reason: String, onDone: () -> U
             TextButton(onClick = { act("scroll", y = 600) }) { Text("Down") }
             TextButton(onClick = { act("back") }) { Text("Back") }
         }
-        Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done, carry on") }
+        Button(shape = ButtonShape, onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done, carry on") }
     }
 }
 
@@ -544,26 +565,46 @@ private fun Composer(
     onAttach: () -> Unit,
     onMic: () -> Unit,
 ) {
-    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.navigationBarsPadding().imePadding()) {
-            AnimatedVisibility(uploading) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            Row(Modifier.padding(8.dp), verticalAlignment = Alignment.Bottom) {
-                IconButton(onClick = onAttach) { Icon(Icons.Outlined.AttachFile, contentDescription = "Attach a file") }
-                OutlinedTextField(
+    // Web: .composer, a raised card with a line and a soft shadow, the send button a dark 8 dp square.
+    val extra = LocalExtra.current
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).navigationBarsPadding().imePadding()) {
+        AnimatedVisibility(uploading) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, extra.line),
+            shadowElevation = 4.dp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Column(Modifier.padding(start = 16.dp, end = 10.dp, top = 6.dp, bottom = 8.dp)) {
+                TextField(
                     value = text,
                     onValueChange = onText,
-                    placeholder = { Text("Ask anything") },
+                    placeholder = { Text("Ask anything", color = extra.ink3) },
                     maxLines = 6,
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier.weight(1f),
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.width(6.dp))
-                if (text.isBlank() && !busy) {
-                    IconButton(onClick = onMic) { Icon(Icons.Outlined.Mic, contentDescription = "Speak") }
-                } else {
-                    FilledIconButton(onClick = onSend, enabled = text.isNotBlank() && !busy) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onAttach) { Icon(Icons.Outlined.AttachFile, contentDescription = "Attach a file", tint = extra.ink2) }
+                    IconButton(onClick = onMic) { Icon(Icons.Outlined.Mic, contentDescription = "Speak", tint = extra.ink2) }
+                    Spacer(Modifier.weight(1f))
+                    FilledIconButton(
+                        onClick = onSend,
+                        enabled = text.isNotBlank() && !busy,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                    ) {
                         if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                        else Icon(Icons.Filled.ArrowUpward, contentDescription = "Send")
                     }
                 }
             }

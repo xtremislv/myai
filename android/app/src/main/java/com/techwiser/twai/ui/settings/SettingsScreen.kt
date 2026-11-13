@@ -1,5 +1,6 @@
 package com.techwiser.twai.ui.settings
 
+import com.techwiser.twai.ui.theme.TwTitle
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -139,7 +140,7 @@ fun SettingsScreen() {
         onPauseOrDispose { }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Settings") }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { TwTitle("Personal · Settings", "Settings") }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
             ui.error?.let { ErrorBanner(it, Modifier.padding(12.dp)) { vm.refresh() } }
 
@@ -323,9 +324,11 @@ fun SettingsScreen() {
 
 @Composable
 private fun Section(title: String) {
-    HorizontalDivider(Modifier.padding(top = 8.dp))
-    Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary,
-        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp))
+    // Web: the .caps label over a group of settings.
+    HorizontalDivider(Modifier.padding(top = 8.dp), color = com.techwiser.twai.ui.theme.LocalExtra.current.line)
+    Text(title.uppercase(), style = com.techwiser.twai.ui.theme.CapsStyle,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 6.dp))
 }
 
 @Composable

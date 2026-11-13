@@ -165,7 +165,7 @@ fun AlertsScreen(startTab: Int = 0) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Alerts") },
+                title = { com.techwiser.twai.ui.theme.TwTitle("Personal · Alerts", "Alerts") },
                 actions = {
                     if (tab == 0) {
                         TextButton(onClick = { vm.digest { toast(context, it) } }) {

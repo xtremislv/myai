@@ -10,7 +10,11 @@ the phone's keystore instead (app/devices.py). A typical app session:
 """
 from __future__ import annotations
 
+import collections
 import datetime as dt
+import logging
+import threading
+import time
 from typing import Literal
 
 from cryptography.exceptions import InvalidTag
@@ -29,6 +33,7 @@ from app.db.session import User, get_session
 from app.vault import user_keys
 
 router = APIRouter(tags=["devices"])
+logger = logging.getLogger(__name__)
 
 API_VERSION = 1
 
@@ -234,3 +239,31 @@ def android_apk(version_code: int) -> FileResponse:
         filename=f"TW-ai-{release['version_name']}.apk",
         headers={"Cache-Control": "public, max-age=86400, immutable", "X-Content-Type-Options": "nosniff"},
     )
+
+
+# ---- crash reports from the Android app ----
+class CrashIn(BaseModel):
+    version_code: int = 0
+    version_name: str = Field(default="", max_length=32)
+    android: int = 0
+    device: str = Field(default="", max_length=128)
+    trace: str = Field(min_length=1, max_length=16000)
+
+
+_crash_lock = threading.Lock()
+_crash_times: collections.deque[float] = collections.deque(maxlen=30)
+
+
+@router.post("/v1/app/crash", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+def app_crash(body: CrashIn) -> None:
+    """A stack trace from a phone that crashed, sent on its next start, written to the gateway log
+    for the developer. No sign-in (the app may crash before it), so at most 30 a minute are kept;
+    the app sends only the exception and stack frames, never chat or mail text."""
+    now = time.monotonic()
+    with _crash_lock:
+        if len(_crash_times) == _crash_times.maxlen and now - _crash_times[0] < 60:
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many crash reports; try later.")
+        _crash_times.append(now)
+    trace = "".join(ch if ch.isprintable() or ch in "\n\t" else "?" for ch in body.trace)
+    logger.warning("ANDROID CRASH app=%s (%s) android=%s device=%r\n%s",
+                   body.version_name, body.version_code, body.android, body.device, trace)

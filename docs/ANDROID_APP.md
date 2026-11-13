@@ -85,6 +85,27 @@ EOF
 The server address defaults to `https://tw-ai.in` (`DEFAULT_SERVER` in `app/build.gradle.kts`) and can be changed on
 the sign-in screen ("Server: ..."). Plain HTTP is allowed only for `10.0.2.2` and `localhost` (emulator testing).
 
+## Tests, crash reports and debugging
+
+```bash
+cd android && ./gradlew testDebugUnitTest   # Robolectric: starts the app, signs in against a fake server (Android 13-15,
+                                            # light/dark), and guards the 1.0.70 crash (PermissionCrashTest)
+```
+
+- **Crash reports:** `CrashReporter` saves an uncaught crash's stack trace (exception and frames only, no chat, mail or
+  file text) and sends it on the next start to `POST /v1/app/crash` (no sign-in, at most 30 a minute). It lands in
+  the gateway log: `grep -A40 "ANDROID CRASH" /var/log/ai-platform/gateway.log`.
+- **Errors shown in the app** are logged with their cause (`friendly()` in `ui/Common.kt`, tag `TwApp`): with a
+  phone on USB, `adb logcat -s TwApp AndroidRuntime`.
+- **Emulator on this server** (no KVM, so slow: ~8 min to boot Android 13): system image and AVD in `/dev/shm`
+  (the root disk is too full; point the SDK's `.temp` there too), `emulator -avd ... -no-window -accel off`. Reach a
+  private copy of the gateway with `adb reverse tcp:8765 tcp:8765` and server `http://localhost:8765` (10.0.2.2 did
+  not connect). If "System UI isn't responding" sticks, choose "Close app".
+- **1.0.70 crash (fixed in 1.0.71):** right after sign-in on Android 13+, asking for notification permission threw
+  "Can only use lower 16 bits for requestCode": `biometric` 1.1.0 pulled in `fragment` 1.2.5, whose
+  `FragmentActivity` rejects the request codes `activity` 1.9 uses. `fragment` 1.8.5 is now a direct dependency.
+  Also fixed: response bodies were read on the main thread (`Api.exchange` now reads on the I/O dispatcher).
+
 ## Publishing and auto-update
 
 The server hands out the app itself: the website offers it (**Settings > TW-ai for Android**, and a link on the

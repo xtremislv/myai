@@ -53,8 +53,10 @@ inline fun <reified VM : ViewModel> appViewModel(key: String? = null, crossinlin
     return viewModel(key = key, factory = viewModelFactory { initializer { make(app) } })
 }
 
-/** What to tell the person when something fails. */
-fun friendly(e: Throwable): String = when (e) {
+/** What to tell the person when something fails (and the cause, in logcat, for the developer). */
+fun friendly(e: Throwable): String = friendlyText(e).also { android.util.Log.w("TwApp", "shown to the person: $it", e) }
+
+private fun friendlyText(e: Throwable): String = when (e) {
     is ApiException -> e.message
     is SignedOutException -> e.message ?: "Signed out."
     is IOException -> "Can't reach the server. Check your connection."

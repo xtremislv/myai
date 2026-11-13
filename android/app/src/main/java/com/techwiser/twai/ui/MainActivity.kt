@@ -1,5 +1,6 @@
 package com.techwiser.twai.ui
 
+import com.techwiser.twai.ui.theme.ButtonShape
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -174,7 +175,7 @@ private fun LockScreen(unlock: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text("TW-ai is locked", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(16.dp))
-            Button(onClick = unlock) { Text("Unlock") }
+            Button(shape = ButtonShape, onClick = unlock) { Text("Unlock") }
         }
     }
 }
@@ -206,7 +207,9 @@ private fun Main(arrivals: StateFlow<Arrival?>, consumed: () -> Unit) {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33 && !com.techwiser.twai.notify.Notifier.canPost(context)) {
-            permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            // A permission prompt must never take the app down (see fragment in libs.versions.toml).
+            runCatching { permission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                .onFailure { android.util.Log.w("TwApp", "couldn't ask for notification permission", it) }
         }
     }
     LifecycleResumeEffect(Unit) {

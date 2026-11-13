@@ -1,13 +1,15 @@
-# Session wrap-up: state of the platform on 2026-11-10
+# Session wrap-up: state of the platform on 2026-11-13
 
 Read this first in the next session. It is the short, current picture. `docs/HANDOFF.md` has the detailed
 history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.md` the setup steps.
 `ARCHITECTURE.md` and `docs/PROGRESS_AND_ROADMAP.md` are older (they assume Docker); where they disagree with
 this file, this file is right.
 
-- Repo: `/root/myai`, GitHub `xtremislv/myai`, branch **`server-native-setup`** (pushed, clean). Never push to
-  `main` (owner's rule). See `git log -1` for the last commit.
-- Tests: **630 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Repo: `/root/myai`, GitHub `xtremislv/myai`. The live checkout is on branch **`android-app`** since 2026-11-10
+  (it contains all of `server-native-setup`; see `BRANCHES.md`). Never push to `main` (owner's rule).
+- Android app: see `docs/ANDROID_APP.md`. 1.0.70 crashed right after sign-in on Android 13+ (fixed 2026-11-13, see
+  "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
+- Tests: **652 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -84,7 +86,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
 | Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**, **watchdog**: all started by `scripts/start_native.sh`. |
-| Database | Postgres 16, migration **0008** (head). |
+| Database | Postgres 16, migration **0009** (head, `device_sessions` for phones). |
 | Network | Agents' web traffic goes through the owner's VPS (see §5.6). Without it this network poisons DNS and cuts many sites. |
 | Backups | `scripts/backup.sh` works natively and was verified with `restore.sh --verify`; **no off-server destination set** (`BACKUP_DEST` empty), no schedule on this host. |
 

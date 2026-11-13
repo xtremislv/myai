@@ -18,7 +18,7 @@ fast-forward as long as nothing new lands on `server-native-setup` first.
 |---|---|---|---|
 | `main` | — | Original platform | Owner's rule: don't push to it directly |
 | `server-native-setup` | `main` @ 6ee1b2e | The platform as deployed on the server (tw-ai.in) | Live on the server |
-| `android-app` | `server-native-setup` @ 83e5e06 (merged) | Android app + device sign-in and push APIs | New, not deployed yet |
+| `android-app` | `server-native-setup` @ 83e5e06 (merged) | Android app + device sign-in and push APIs | Live on the server since 2026-11-10 |
 
 ## `android-app` (2026-11-10): what changed
 
@@ -51,7 +51,11 @@ One commit, 9ac9e9b, "Add the native Android app and the phone APIs it needs".
 **Verified 2026-11-10:** `./gradlew assembleDebug` builds as committed (JDK 17, SDK platform 35, AGP 8.7.3), and
 every one of the 46 API calls in `data/Api.kt` matches a server route and method. The app has not yet been run on a
 phone against tw-ai.in. `server-native-setup` (Help card, UI asset tagging) is merged in; 648 tests pass.
-Not deployed: the live server is still on `server-native-setup` without migration 0009.
+Deployed 2026-11-10 (live checkout on `android-app`, migration 0009); 1.0.70 published the same day.
+
+**2026-11-13:** 1.0.70 crashed right after sign-in on Android 13+ (old `androidx.fragment` from `biometric`; see
+docs/ANDROID_APP.md "Tests, crash reports and debugging"). Fixed, plus: response bodies read off the main thread,
+crash reports (`POST /v1/app/crash`, needs a gateway restart), Robolectric tests, and the app restyled like the website.
 
 ## `server-native-setup` (2026-11-02 → 2026-11-10): what changed since `main`
 

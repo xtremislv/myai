@@ -319,3 +319,21 @@ def test_a_half_written_release_is_not_offered(api, release_dir):
     (release_dir / "twai.apk").write_bytes(b"truncated")  # the APK no longer matches release.json
     assert api.client.get("/v1/app/config").json()["android"] is None
     assert api.client.get("/v1/app/android/7.apk").status_code == 404
+
+
+def test_a_crash_report_is_logged_and_limited(api, caplog):
+    import logging
+
+    from app.api import routes_devices
+
+    routes_devices._crash_times.clear()
+    body = {"version_code": 70, "version_name": "1.0.70", "android": 34, "device": "Pixel 8",
+            "trace": "java.lang.IllegalStateException: boom\n\tat com.techwiser.twai.TwApp.onCreate(TwApp.kt:38)"}
+    with caplog.at_level(logging.WARNING, logger="app.api.routes_devices"):
+        assert api.client.post("/v1/app/crash", json=body).status_code == 204  # no sign-in needed
+    assert "ANDROID CRASH app=1.0.70" in caplog.text and "TwApp.kt:38" in caplog.text
+    assert api.client.post("/v1/app/crash", json={**body, "trace": ""}).status_code == 422
+    for _ in range(29):
+        api.client.post("/v1/app/crash", json=body)
+    assert api.client.post("/v1/app/crash", json=body).status_code == 429
+    routes_devices._crash_times.clear()

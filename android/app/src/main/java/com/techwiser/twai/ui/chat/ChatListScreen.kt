@@ -1,5 +1,6 @@
 package com.techwiser.twai.ui.chat
 
+import com.techwiser.twai.ui.theme.TwTitle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -87,7 +88,7 @@ fun ChatListScreen(onOpen: (String) -> Unit, onNew: () -> Unit) {
         onPauseOrDispose { }
     }
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Chats") }) },
+        topBar = { TopAppBar(title = { TwTitle("Personal · Chats", "Chats") }) },
         floatingActionButton = {
             ExtendedFloatingActionButton(onClick = onNew, icon = { Icon(Icons.Outlined.Add, null) }, text = { Text("New chat") })
         },

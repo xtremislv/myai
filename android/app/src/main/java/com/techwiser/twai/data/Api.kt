@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -234,11 +236,21 @@ class Api(private val context: Context, private val settings: Settings, private 
             ?: if (method == "POST" || method == "PUT") "".toRequestBody(JSON_TYPE) else null
         val builder = Request.Builder().url(base() + path).method(method, requestBody)
         if (bearer != null) builder.header("Authorization", "Bearer $bearer")
-        http.newCall(builder.build()).await().use { response ->
+        return exchange(builder.build()) { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw ApiException(response.code, detailOf(response.code, text))
-            return text
+            text
         }
+    }
+
+    /**
+     * Runs a request and reads its response on the I/O dispatcher. `await()` resumes on the caller's
+     * thread, which is the main thread for every screen: reading the body there throws
+     * NetworkOnMainThreadException whenever the body hasn't fully arrived with the headers (common over
+     * HTTP/2 through Cloudflare), which broke sign-in and screens on real phones.
+     */
+    private suspend fun <T> exchange(request: Request, read: (Response) -> T): T = withContext(Dispatchers.IO) {
+        http.newCall(request).await().use(read)
     }
 
     /** One authenticated request; a 401 renews the token once and tries again. */
@@ -397,11 +409,11 @@ class Api(private val context: Context, private val settings: Settings, private 
     suspend fun browserScreen(scope: String): ByteArray {
         val request = Request.Builder().url(base() + "/v1/browser/${q(scope)}/screen")
             .header("Authorization", "Bearer ${token()}").build()
-        http.newCall(request).await().use { response ->
+        return exchange(request) { response ->
             if (!response.isSuccessful) {
                 throw ApiException(response.code, detailOf(response.code, response.body?.string().orEmpty()))
             }
-            return response.body?.bytes() ?: ByteArray(0)
+            response.body?.bytes() ?: ByteArray(0)
         }
     }
 
@@ -466,7 +478,7 @@ class Api(private val context: Context, private val settings: Settings, private 
     /** Downloads into the app's cache (shared with other apps only through the FileProvider). */
     suspend fun download(path: String, name: String): File {
         val request = Request.Builder().url(base() + path).header("Authorization", "Bearer ${token()}").build()
-        http.newCall(request).await().use { response ->
+        return exchange(request) { response ->
             if (!response.isSuccessful) {
                 throw ApiException(response.code, detailOf(response.code, response.body?.string().orEmpty()))
             }
@@ -474,7 +486,7 @@ class Api(private val context: Context, private val settings: Settings, private 
             val safe = name.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._ -]"), "_").ifBlank { "file" }
             val out = File(dir, safe)
             response.body?.byteStream()?.use { input -> out.outputStream().use { input.copyTo(it) } }
-            return out
+            out
         }
     }
 
@@ -482,7 +494,7 @@ class Api(private val context: Context, private val settings: Settings, private 
     suspend fun downloadUpdate(path: String, out: File, progress: (Long) -> Unit) {
         val url = base().toHttpUrl().resolve(path) ?: throw ApiException(0, "Bad update address.")
         if (url.host != base().toHttpUrl().host) throw ApiException(0, "The update must come from this server.")
-        http.newCall(Request.Builder().url(url).build()).await().use { response ->
+        exchange(Request.Builder().url(url).build()) { response ->
             if (!response.isSuccessful) throw ApiException(response.code, detailOf(response.code, response.body?.string().orEmpty()))
             val body = response.body ?: throw ApiException(response.code, "The server sent no update.")
             body.byteStream().use { input ->

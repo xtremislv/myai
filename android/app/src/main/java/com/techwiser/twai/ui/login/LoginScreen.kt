@@ -1,5 +1,23 @@
 package com.techwiser.twai.ui.login
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.outlined.Lock
+import com.techwiser.twai.ui.theme.LocalExtra
+import com.techwiser.twai.ui.theme.EyebrowStyle
+import com.techwiser.twai.ui.theme.ButtonShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -69,14 +87,45 @@ private fun PasswordField(value: String, onValue: (String) -> Unit, label: Strin
     )
 }
 
+/** The web app's sign-in: a raised 14 dp card on the page, brand mark on top. */
 @Composable
 private fun Page(content: @Composable () -> Unit) {
+    val extra = LocalExtra.current
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
+            Modifier.safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 40.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(Modifier.widthIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, extra.line),
+                shadowElevation = 8.dp,
+                modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(horizontal = 28.dp, vertical = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+/** The web app's brand: a dark "TW" tile, "TW-ai" and "BY TW LABS". */
+@Composable
+fun BrandMark(modifier: Modifier = Modifier) {
+    val extra = LocalExtra.current
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(extra.inkStrong),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("TW", style = Mono.copy(fontWeight = FontWeight.Bold, fontSize = 14.sp), color = MaterialTheme.colorScheme.background)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column {
+            Text("TW-ai", style = MaterialTheme.typography.titleSmall, color = extra.inkStrong)
+            Text("BY TW LABS", style = EyebrowStyle.copy(fontSize = 9.5.sp, letterSpacing = 0.14.em), color = extra.ink3)
         }
     }
 }
@@ -121,11 +170,12 @@ fun LoginScreen() {
     }
 
     Page {
-        Spacer(Modifier.height(32.dp))
-        Text("TW-ai", style = MaterialTheme.typography.headlineLarge)
-        Text(if (recovering) "Set a new password with your recovery code." else "Sign in to your assistant.",
-            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(8.dp))
+        BrandMark(Modifier.padding(bottom = 22.dp))
+        Text(if (recovering) "Reset your password" else "Welcome back", style = MaterialTheme.typography.headlineLarge,
+            color = LocalExtra.current.inkStrong)
+        Text(if (recovering) "Set a new password with your recovery code." else "Sign in to your private workspace",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = username, onValueChange = { username = it }, label = { Text("Username") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Next),
@@ -141,9 +191,13 @@ fun LoginScreen() {
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
         Button(onClick = ::submit, enabled = !busy && username.isNotBlank() &&
             (if (recovering) code.isNotBlank() && newPassword.isNotBlank() else password.isNotEmpty()),
-            modifier = Modifier.fillMaxWidth()) {
-            if (busy) CircularProgressIndicator(Modifier.height(18.dp), strokeWidth = 2.dp)
-            else Text(if (recovering) "Set password" else "Sign in")
+            shape = ButtonShape, modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp).padding(top = 6.dp)) {
+            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+            else {
+                Text(if (recovering) "Set password" else "Sign in", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
         }
         TextButton(onClick = { recovering = !recovering; error = null }) {
             Text(if (recovering) "Back to sign in" else "Forgot your password?")
@@ -153,9 +207,13 @@ fun LoginScreen() {
             OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Server address") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
         }
-        Text("Your private chats are encrypted with a key only your password (or recovery code) unlocks. " +
-            "This phone keeps its sign-in in the Android Keystore.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        HorizontalDivider(color = LocalExtra.current.line, modifier = Modifier.padding(top = 4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Lock, contentDescription = null, tint = LocalExtra.current.ink3, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Private chats are encrypted with a key only you can unlock.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 
     newCode?.let { RecoveryCodeDialog(it) { newCode = null; app.api.publishAuth() } }
@@ -197,7 +255,7 @@ fun ChangePasswordScreen() {
     }
 
     Page {
-        Spacer(Modifier.height(32.dp))
+        BrandMark(Modifier.padding(bottom = 22.dp))
         Text("Choose your own password", style = MaterialTheme.typography.headlineMedium)
         Text("Your admin set your first password, so private chat stays off until you replace it. " +
             "Only your new password will unlock your private chats.",
@@ -206,7 +264,7 @@ fun ChangePasswordScreen() {
         PasswordField(new, { new = it }, "New password (12+ characters)")
         PasswordField(again, { again = it }, "New password again", last = true, onDone = ::submit)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = ::submit, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+        Button(shape = ButtonShape, onClick = ::submit, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
             if (busy) CircularProgressIndicator(Modifier.height(18.dp), strokeWidth = 2.dp) else Text("Save password")
         }
         TextButton(onClick = { scope.launch { app.api.signOut() } }) { Text("Sign out") }
@@ -231,6 +289,6 @@ fun RecoveryCodeDialog(code: String, onDone: () -> Unit) {
                 TextButton(onClick = { shareText(context, code) }) { Text("Save to password manager…") }
             }
         },
-        confirmButton = { Button(onClick = onDone) { Text("I've saved it") } },
+        confirmButton = { Button(shape = ButtonShape, onClick = onDone) { Text("I've saved it") } },
     )
 }

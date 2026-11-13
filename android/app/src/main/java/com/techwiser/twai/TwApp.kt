@@ -30,24 +30,26 @@ class TwApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashReporter.install(this)  // first, so a crash anywhere below is reported
         settings = Settings(this)
+        CrashReporter.sendPending(this, settings.server)
         store = SecureStore(this)
         api = Api(this, settings, store)
         Notifier.createChannels(this)
         Updater.createChannel(this)
-        UpdateWorker.schedule(this)  // signed in or not: an old app should still update
+        runCatching { UpdateWorker.schedule(this) }  // signed in or not: an old app should still update
 
         scope.launch {
             api.auth.collect { state ->
                 when (state) {
                     AuthState.SIGNED_IN -> {
-                        SyncWorker.schedule(this@TwApp)
+                        runCatching { SyncWorker.schedule(this@TwApp) }
                         Push.register(this@TwApp)
                     }
                     AuthState.SIGNED_OUT -> {
-                        SyncWorker.cancel(this@TwApp)
+                        runCatching { SyncWorker.cancel(this@TwApp) }
                         Notifier.cancelAll(this@TwApp)
-                        UpdateWorker.schedule(this@TwApp)  // SyncWorker.cancel stops all work
+                        runCatching { UpdateWorker.schedule(this@TwApp) }  // SyncWorker.cancel stops all work
                     }
                     AuthState.MUST_CHANGE_PASSWORD -> Unit
                 }
