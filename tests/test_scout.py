@@ -377,3 +377,14 @@ def test_a_review_can_say_why_and_lands_in_the_file(client, db, files):
     ws = load_workbook(io.BytesIO(files[key]))["Below threshold"]
     header = [c.value for c in ws[1]]
     assert header[-1] == "Review note" and list(ws.iter_rows(min_row=2, values_only=True))[0][-1] == "actually fine"
+
+
+def test_a_score_labelled_with_extra_words_still_counts():
+    st = scouts.clean_settings(scouts.GADGETWISER)
+
+    def chat(system, user, n):
+        return json.dumps({"scores": {**{k: 8 for k in GW if k != "Available in India"},
+                                      "Available in India (required)": 9}, "summary": "s", "why": "w"})
+
+    out = scouts.judge({"name": "Desk Cube"}, VIDEO, "evidence", st, chat)
+    assert out["scores"]["Available in India"] == 9 and out["passed"]

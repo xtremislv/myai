@@ -260,7 +260,7 @@ def _brief(settings: dict) -> str:
     if settings.get("market"):
         parts.append(f"It must be available to buy in {settings['market']}.")
     parts.append("Criteria: " + "; ".join(
-        f"{c['name']}{' (required)' if c.get('required') else ''}: {c['description']}" for c in settings["criteria"]))
+        f"{c['name']}: {c['description']}{' [must be met]' if c.get('required') else ''}" for c in settings["criteria"]))
     if settings.get("_lessons"):
         parts.append("The team's past decisions on finds for THIS brief (learn the pattern: score and pick like "
                      "they would):\n" + settings["_lessons"])
@@ -374,7 +374,7 @@ def rescore(session: Session, scout: Scout) -> int:
 
 def judge(candidate: dict, video: tuple[str, str, int, str] | None, evidence: str, settings: dict, chat) -> dict:
     crit = settings["criteria"]
-    listing = "\n".join(f"- {c['name']}{' (required)' if c.get('required') else ''}: {c['description']}" for c in crit)
+    listing = "\n".join(f"- {c['name']}: {c['description']}{' [must be met]' if c.get('required') else ''}" for c in crit)
     video_text = (f"Reference video: {video[1]} ({video[2]:,} views) {video[0]}\n{video[3]}" if video
                   else "No reference video was found.")
     extra = "\n".join(p for p in (
@@ -399,8 +399,11 @@ def judge(candidate: dict, video: tuple[str, str, int, str] | None, evidence: st
     if not raw:  # an unreadable answer is no verdict: the product stays unjudged and comes up again
         raise ValueError("the model's verdict couldn't be read")
     scores = {}
+    def plain(k: str) -> str:  # "Available in India (required)" -> "available in india"
+        return re.sub(r"\s*[(\[].*?[)\]]\s*$", "", str(k)).strip().lower()
+
     for c in crit:
-        value = raw.get(c["name"], next((v for k, v in raw.items() if k.lower() == c["name"].lower()), 0))
+        value = raw.get(c["name"], next((v for k, v in raw.items() if plain(k) == c["name"].lower()), 0))
         try:
             scores[c["name"]] = min(max(float(value), 0.0), 10.0)
         except (TypeError, ValueError):
