@@ -1043,7 +1043,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .scout-tabs { gap: 6px; margin-bottom: 12px; }
 .findings { display: flex; flex-direction: column; gap: 12px; }
 .finding { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--raised); }
-.finding h3 { margin: 0; }
+.finding h3 { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .finding p { margin: 8px 0; }
 .finding-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 6px 0; }
 .finding-links .mi { width: 14px; height: 14px; vertical-align: -2px; margin-right: 3px; }

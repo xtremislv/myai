@@ -191,6 +191,8 @@ the web, read and answer mail, manage files, make documents from templates, set 
   optional **reason** (`review_note`): `scout.lessons` feeds this scout's own kept/rejected finds and reasons into its
   idea, pick, shortlist and judge prompts, so it learns the team's taste. Each person can **mute** each scout
   (`scout_mutes`, `PUT /v1/scouts/{id}/mute`); the bell skips them for that scout only.
+- The Scouts page never reloads itself (owner): rounds run in the background and new finds arrive as a
+  notification; the page changes only on Refresh. Keep/Reject/reason/Mute update just that card or button.
 - Everything judged is stored (`scout_findings`, statuses new/kept/rejected/below), so nothing is judged twice;
   rounds in `scout_runs` (migration **0011**). Report file `shared/<dept>/Scout/<name>.xlsx` (Findings, Below
   threshold, Runs, Settings) rewritten every round; department members get a bell notification for new finds.

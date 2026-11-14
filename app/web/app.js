@@ -3185,7 +3185,7 @@ async function templatesView(refresh) {
 }
 
 // ---- scouts: research that keeps running in the background (app/scout.py) ----
-const scoutPage = { id: null, tab: "found", timer: null, adding: false };
+const scoutPage = { id: null, tab: "found", adding: false };
 const SCOUT_TABS = [["found", "Found"], ["new", "New"], ["kept", "Kept"], ["rejected", "Rejected"], ["below", "Below threshold"], ["all", "All judged"]];
 const SOURCE_NAMES = { youtube: "YouTube", reddit: "Reddit", stores: "Gadget brand stores", web: "Web search" };
 
@@ -3208,7 +3208,6 @@ function extLink(url, text) {
 }
 
 async function scoutsView(refresh) {
-  clearTimeout(scoutPage.timer);
   const list = await api("/v1/scouts");
   const error = errorBox();
   if (!list.length || scoutPage.adding) return scoutStart(refresh, error, list.length > 0);
@@ -3235,9 +3234,8 @@ async function scoutsView(refresh) {
     scoutRuns(scout),
     scout.can_edit && scoutSettings(scout, refresh, error),
   );
-  if (scout.running) {  // follow a running round until it ends
-    scoutPage.timer = setTimeout(() => { if (page.isConnected) refresh(); }, 15000);
-  }
+  // No automatic reloading while someone reads or reviews (owner, 2026-11-14): rounds run in the background,
+  // new finds arrive as a notification, and the page changes only when Refresh is pressed.
   return page;
 }
 
@@ -3281,6 +3279,24 @@ async function scoutStart(refresh, error, cancelable = false) {
   );
 }
 
+// Mute/unmute changes only this button (no page reload).
+function muteButton(scout, error) {
+  const button = h("button", { type: "button", title: "Only for you, only this scout" });
+  const show = () => button.replaceChildren(mi(scout.muted ? "notifications_off" : "notifications"),
+    scout.muted ? "Unmute" : "Mute notifications");
+  button.addEventListener("click", async () => {
+    error.clear();
+    button.disabled = true;
+    try {
+      const out = await api(`/v1/scouts/${scout.id}/mute`, { method: "PUT", body: { muted: !scout.muted } });
+      scout.muted = out.muted;
+      show();
+    } catch (err) { error.fail(err); } finally { button.disabled = false; }
+  });
+  show();
+  return button;
+}
+
 function scoutStatus(scout, refresh, error) {
   const st = scout.settings;
   const pill = scout.running ? h("span", { class: "pill dot info" }, "Searching now")
@@ -3297,11 +3313,7 @@ function scoutStatus(scout, refresh, error) {
           + (st.pass_rule === "count" ? `passes at ${st.min_met} of ${st.criteria.length} criteria` : `pass mark ${st.threshold}/10`)
           + ` · up to ${st.per_round} products judged per round` + (st.market ? ` · must be sold in ${st.market}` : "")),
         st.brief && h("p", { class: "small" }, st.brief)),
-      h("div", { class: "row" },
-        h("button", { type: "button", title: "Only for you, only this scout",
-          onclick: act("/mute", { method: "PUT", body: { muted: !scout.muted } }) },
-        mi(scout.muted ? "notifications_off" : "notifications"), scout.muted ? "Unmute" : "Mute notifications"),
-      ),
+      h("div", { class: "row" }, muteButton(scout, error)),
       scout.can_edit && h("div", { class: "row" },
         h("button", { type: "button", class: "primary", disabled: scout.running, onclick: act("/run", { method: "POST" }) }, "Run now"),
         h("button", { type: "button", onclick: act("", { method: "PUT", body: { enabled: !scout.enabled } }) }, scout.enabled ? "Pause" : "Resume"),
@@ -3314,14 +3326,21 @@ function scoutStatus(scout, refresh, error) {
       h("div", null, h("strong", null, scout.running ? "running" : scout.next_run_at ? untilText(scout.next_run_at) : "paused"),
         h("span", { class: "small muted" }, "Next round")),
     ),
+    scout.running && h("p", { class: "notice" }, "A round is running in the background. You'll get a notification when it "
+      + "finds something; press Refresh to see it here."),
     h("p", { class: "small muted" }, "Report file (department files): ", h("span", { class: "mono" }, scout.file)),
   );
 }
 
 function scoutFindings(scout, found, refresh, error) {
-  const review = (f, body) => async () => {
+  // Reviewing redraws only that card (no page reload: the place, and reasons typed elsewhere, stay put).
+  const review = (f, body) => async (event) => {
     error.clear();
-    try { await api(`/v1/scouts/${scout.id}/findings/${f.id}`, { method: "PATCH", body }); refresh(); } catch (err) { error.fail(err); }
+    const old = event.currentTarget.closest(".finding");
+    try {
+      const updated = await api(`/v1/scouts/${scout.id}/findings/${f.id}`, { method: "PATCH", body });
+      old.replaceWith(card(updated));
+    } catch (err) { error.fail(err); }
   };
   // Why it was kept or rejected (optional): this scout's model reads these and learns the team's taste.
   const reviewRow = (f) => {
@@ -3340,9 +3359,16 @@ function scoutFindings(scout, found, refresh, error) {
   return h("div", { class: "card" },
     h("div", { class: "row wrap scout-tabs" }, SCOUT_TABS.map(([id, label]) =>
       h("button", { type: "button", class: id === scoutPage.tab ? "primary" : "", onclick: () => { scoutPage.tab = id; refresh(); } }, label))),
-    found.length ? h("div", { class: "findings" }, found.map((f) => h("article", { class: "finding" },
+    found.length ? h("div", { class: "findings" }, found.map((f) => card(f))) : h("div", { class: "empty" }, scoutPage.tab === "found"
+      ? "Nothing has passed yet. The first round starts within a minute of creating the scout; Run now starts one at once."
+      : "Nothing here."),
+  );
+
+  function card(f) {
+    return h("article", { class: "finding" },
       h("div", { class: "row spread wrap" },
-        h("h3", null, f.name),
+        h("h3", null, f.name, f.status === "kept" ? h("span", { class: "pill good" }, "Kept")
+          : f.status === "rejected" ? h("span", { class: "pill warn" }, "Rejected") : null),
         h("span", { class: `pill ${f.status === "below" || f.status === "rejected" ? "warn" : "good"}` },
           scout.settings.pass_rule === "count" ? `meets ${metOf(scout, f).length} · ${f.total.toFixed(1)} / 10` : `${f.total.toFixed(1)} / 10`),
       ),
@@ -3357,10 +3383,8 @@ function scoutFindings(scout, found, refresh, error) {
       f.why && h("details", null, h("summary", { class: "small" }, "Why"), h("p", { class: "small muted" }, f.why)),
       !scout.can_edit && f.review_note && h("p", { class: "small" }, `Reason: ${f.review_note}`),
       scout.can_edit && reviewRow(f),
-    ))) : h("div", { class: "empty" }, scoutPage.tab === "found"
-      ? "Nothing has passed yet. The first round starts within a minute of creating the scout; Run now starts one at once."
-      : "Nothing here."),
-  );
+    );
+  }
 }
 
 function metOf(scout, f) {
