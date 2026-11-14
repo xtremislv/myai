@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # The company's own YouTube channels (id=name, comma-separated), which agents know as "ours"
     # (app/browsing/youtube.py). The API key is the vault secret youtube/api.
     youtube_own_channels: str = "UCdp6GUwjKscp5ST4M4WgIpw=TechWiser,UCakfrdHa0lItW8e5qpZd5lA=GadgetWiser"
+    # Brand stores for gadget research (app/browsing/stores.py), "name=https://store,..."; a "web:" prefix
+    # searches that store through a site-limited web search. Empty = the built-in list.
+    gadget_stores: str = ""
     # Headless Chromium sessions: one per person, closed after this many idle seconds.
     browser_max_sessions: int = 6
     browser_idle_seconds: int = 600

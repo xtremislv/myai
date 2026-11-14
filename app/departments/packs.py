@@ -42,7 +42,7 @@ MAIL_TOOLS = ("list_mailboxes", "read_mail", "search_mail", "open_mail", "mark_m
 LOOKUP_TOOLS = (
     "web_search", "news_search", "scholar_search", "product_search", "product_page", "fetch_page", "scrape_page",
     "weather", "forum_search", "github_search", "read_thread", "web_research",
-    "youtube_search", "youtube_channel", "youtube_video",
+    "youtube_search", "youtube_channel", "youtube_video", "gadget_search",
 )
 BROWSE_TOOLS = (
     "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",

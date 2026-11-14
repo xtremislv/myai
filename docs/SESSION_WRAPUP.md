@@ -10,7 +10,7 @@ this file, this file is right.
 - Android app: see `docs/ANDROID_APP.md`. **1.0.71** is published (2026-11-13). 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **695 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **706 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -142,6 +142,21 @@ the web, read and answer mail, manage files, make documents from templates, set 
   extraction), merges duplicates across sources and saves an Excel sheet ranked by how many sources
   mention each item, with links. `criteria=` (plus the person's own words) filters sources, rows and the
   final list. Live 2026-11-05: "android apps", 20 sources -> 58 apps in ~5 min.
+
+**Gadget and product research** (2026-11-14, the owner's main research use)
+- `gadget_search` (`app/browsing/stores.py`): ~20 Indian brand stores at once through Shopify's public storefront
+  JSON (boAt, Noise, Portronics, Zebronics, Ambrane, UGREEN India, Stuffcool, Callmate, Wecool, Ultraprolink,
+  Lifelong, Agaro = agarolifestyle.com, Bigsmall, Atomberg, Geeklane = geeklane.in, Sharge, Conceptkart, Instacuppa,
+  Xech; DailyObjects via site-limited web search). Price, MRP, discount, stock, listing date, link; sorts, price
+  filters, `days` for newest listings, `save=true` for a sheet. ~10 s for all stores. List: `GADGET_STORES` in .env.
+  Left out: octor.in (now an unrelated blog). Shopify throttles bursts from this server (429
+  "local_rate_limited", product `.js` pages most): answers cached 10 min; `product_page` falls back to the browser.
+- `web_research` adds store products as rows (sites "all" includes `stores`; `sites="stores"` alone).
+- Prompts (`PRODUCT_HINT`): brand stores first, then `product_search` (Amazon/Flipkart/Reliance), `product_page`,
+  YouTube reviews. The research specialist now really has `product_search`/`product_page`.
+- **Link check** (`app/orchestrator/links.py`): every final answer's links are compared with this turn's tool
+  results; a link on a returned site that isn't one of them (Gemma shortens long Shopify links) is replaced by
+  the closest real one.
 
 **YouTube** (2026-11-14, `app/browsing/youtube.py`, official YouTube Data API v3, key = vault secret `youtube/api`)
 - The company's channels are **TechWiser** (`@techwiser`) and **GadgetWiser** (`@wisergadget`, chosen 2026-11-14: the

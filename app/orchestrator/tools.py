@@ -1522,17 +1522,85 @@ def product_page(state: dict[str, Any], url: str) -> str:
     from app.browsing.netguard import check_url
 
     def go() -> str:
+        from app.browsing import stores
+
         check_url(url)
-        try:
-            facts = products.details(url)
-        except ValueError as e:
-            return f"ERROR: {e}"
+        facts = None
+        if stores.is_store_page(url):  # a brand store on Shopify: its own product data, no browser
+            try:
+                facts = stores.details(url)
+            except Exception as e:  # noqa: BLE001 - fall back to reading the page
+                logger.info("store product data unavailable: %s", type(e).__name__)
+        if facts is None:
+            try:
+                facts = products.details(url)
+            except ValueError as e:
+                return f"ERROR: {e}"
         lines = [f"{k}: {v}" for k, v in facts.items() if k != "features"]
         if facts.get("features"):
             lines.append("features:\n" + "\n".join(f"- {f}" for f in facts["features"]))
         return "\n".join(lines)
 
     return untrusted(url, _web_call(go))
+
+
+def gadget_search(
+    state: dict[str, Any], query: str = "", stores: str = "all", sort: str = "relevance", max_price: int = 0,
+    min_price: int = 0, in_stock: bool = False, save: bool = False, days: int = 0,
+) -> str:
+    """Search ~20 Indian gadget brand stores at once (boAt, Noise, Portronics, ...): price, MRP, discount,
+    stock, launch date, link. No query = each store's newest products. save=true: all results as a sheet."""
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    if _leaks(state, text=query + stores):
+        return LEAK_REFUSAL
+    from app.browsing import search
+    from app.browsing import stores as shop
+
+    chosen, unknown = shop.pick(stores)
+    if not chosen:
+        return f"ERROR: no such store ({', '.join(unknown)}). Stores: {', '.join(shop.stores())}"
+    sort = sort if sort in shop.SORTS else "relevance"
+    query = " ".join(query.split())
+    api = _search_api()
+
+    def go() -> str:
+        per_store = 10 if query else (25 if len(chosen) <= 3 or days else 6)
+        found, problems, webbed = shop.search_all(query, chosen, per_store,
+                                                  web=lambda q: search.render(search.web(q, api=api)[:5]))
+        found = shop.arrange(found, "new" if not query and sort == "relevance" else sort,
+                             float(min_price or 0), float(max_price or 0), bool(in_stock), query)
+        if days and int(days) > 0 and not query:  # search results carry no listing date; newest lists do
+            from datetime import date, timedelta
+
+            since = (date.today() - timedelta(days=int(days))).isoformat()
+            found = [p for p in found if p.published >= since]
+        searched = len(chosen) - len(problems)
+        head = (f"{len(found)} products from {searched} of {len(chosen)} stores"
+                + (f" for '{query}'" if query else " (newest listings)") + f", sorted by {sort}.")
+        parts = [head]
+        if save and found:
+            from app import bigsummary
+
+            rows = [p.row() for p in found]
+            cols = list(rows[0])
+            name = _out_path("", f"Gadgets - {query or 'new arrivals'}", "xlsx")
+            saved = _save(state, name, bigsummary.to_xlsx(f"Gadgets: {query or 'new arrivals'}", cols, rows, [
+                ("Search", query or "newest listings"), ("Stores", ", ".join(chosen)), ("Sort", sort),
+                ("Made", made_at(state))]))
+            parts.append(saved)
+        parts.append(shop.render(found, 30))
+        for name, text in webbed:
+            parts.append(f"\n{name} (via web search, its site has no product search for the assistant):\n{text}")
+        if problems:
+            parts.append("\nNot searched: " + "; ".join(problems))
+        if unknown:
+            parts.append(f"\nUnknown stores ignored: {', '.join(unknown)}")
+        if query and not found:
+            parts.append("\nTry fewer or more general words (e.g. 'earbuds' rather than a model name).")
+        return "\n".join(parts)
+
+    return untrusted("gadget brand stores", _web_call(go))
 
 
 def scholar_search(state: dict[str, Any], query: str) -> str:
@@ -1946,6 +2014,39 @@ def _started(job, what: str, files: list[str], state: dict[str, Any], minutes: s
             "exactly this. Do NOT say it is finished.")
 
 
+def _store_rows(topic: str, what: str, cols: list[str]) -> list[dict]:
+    """Products from the gadget brand stores as research rows, matched to the sheet's columns by name."""
+    from app.browsing import stores as shop
+
+    rows: list[dict] = []
+    for query in dict.fromkeys(q for q in (" ".join(what.split()), " ".join(topic.split())) if q):
+        try:
+            found, _, _ = shop.search_all(query, shop.stores())
+        except Exception as e:  # noqa: BLE001 - the stores are one source among many
+            logger.info("store search failed: %s", type(e).__name__)
+            continue
+        for p in found:
+            row: dict = {"_source": p.url}
+            for i, c in enumerate(cols):
+                low = c.lower()
+                if i == 0:
+                    row[c] = p.title
+                elif "price" in low or "cost" in low:
+                    row[c] = f"₹{p.price:,.0f}" + (f" (MRP ₹{p.mrp:,.0f})" if p.discount else "") if p.price else ""
+                elif "link" in low or "url" in low:
+                    row[c] = p.url
+                elif any(w in low for w in ("brand", "store", "seller", "where", "maker", "company")):
+                    row[c] = p.store
+                elif any(w in low for w in ("category", "type", "kind")):
+                    row[c] = p.kind
+                elif "stock" in low or "availab" in low:
+                    row[c] = "" if p.available is None else "in stock" if p.available else "out of stock"
+                elif any(w in low for w in ("launch", "listed", "date", "new")):
+                    row[c] = p.published
+            rows.append(row)
+    return rows
+
+
 def web_research(
     state: dict[str, Any], topic: str, what: str = "", criteria: str = "", columns: str = "", sites: str = "all",
     period: str = "year", max_sources: int = 25, save_as: str = "", email: bool = False, remind_at: str = "",
@@ -1977,7 +2078,7 @@ def web_research(
     fits = next((c for c in cols if "fit" in c.lower() or c.lower().startswith("why")), "Why it fits")
     picked = [x.strip().lower() for x in re.split(r"[,\s]+", sites or "") if x.strip()]
     if not picked or "all" in picked:
-        picked = [p for p in picked if p != "all"] + [*community.SITES, "github", "web", "news"]
+        picked = [p for p in picked if p != "all"] + [*community.SITES, "github", "web", "news", "stores"]
     chosen = tuple(dict.fromkeys(picked))
     n = max(5, min(int(max_sources or research.DEFAULT_SOURCES), research.MAX_SOURCES))
     path = _out_path(save_as, f"{topic} - {what or 'findings'}", "xlsx")
@@ -2025,15 +2126,24 @@ def web_research(
         reply = bigsummary._ask(bigsummary._rows_prompt(focus, cols), f"Source: {url}\n\n{text}", 3000)
         return bigsummary._parse_rows(reply)
 
+    use_stores = "stores" in chosen
+    others = tuple(x for x in chosen if x != "stores")
+
     def make(progress) -> str:
+        direct: list[dict] = []
+        if use_stores:
+            progress("Searching the gadget brand stores")
+            direct = _store_rows(topic, what, cols)
         progress("Finding sources on every site")
         found, listings, notes = research.find_sources(
-            topic, chosen, when, web=lambda q: search.web(q, api=api), news=lambda q: search.news(q, api=api),
-            reddit_creds=reddit_creds, gh_token=gh_token, github_created_after=created_after)
-        if not found and not listings:
+            topic, others, when, web=lambda q: search.web(q, api=api), news=lambda q: search.news(q, api=api),
+            reddit_creds=reddit_creds, gh_token=gh_token, github_created_after=created_after) if others else ([], [], [])
+        if not found and not listings and not direct:
             raise RuntimeError("no sources found for that topic; try broader words")
+        if direct:
+            notes = [f"{len(direct)} products from the brand stores"] + notes
         report = research.collect(topic, what, cols, found, listings, reader, extract, progress, n, pick,
-                                  check if criteria else None)
+                                  check if criteria else None, direct=direct)
         report.notes = notes + report.notes
         progress("Saving the sheet")
         data = bigsummary.to_xlsx(f"{topic}: {what or 'findings'}", report.columns, report.rows, [
@@ -2454,6 +2564,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "scholar_search": scholar_search,
     "forum_search": forum_search,
     "github_search": github_search,
+    "gadget_search": gadget_search,
     "youtube_search": youtube_search,
     "youtube_channel": youtube_channel,
     "youtube_video": youtube_video,
@@ -2626,6 +2737,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                      "topics, link. query: words and GitHub qualifiers, e.g. 'topic:android-app', 'notes "
                      "language:kotlin'. created_after: YYYY-MM-DD for new projects only. min_stars to skip "
                      "small ones. sort: stars or updated. read_thread a repository link for its README.",
+    "gadget_search": "Search about 20 Indian gadget and appliance BRAND STORES at once (boAt, Noise, Portronics, "
+                     "Zebronics, Ambrane, UGREEN, Stuffcool, Callmate, Wecool, Ultraprolink, Lifelong, Agaro, "
+                     "Bigsmall, Atomberg, Geeklane, Sharge, Conceptkart, Instacuppa, Xech, DailyObjects): each "
+                     "product's price, MRP, discount, stock, listing date and link. query: a few product words "
+                     "('power bank', 'neckband', 'smart watch'); leave it empty for each store's NEWEST products. "
+                     "stores: 'all' or names, comma-separated. sort: relevance, price_low, price_high, discount or "
+                     "new. max_price/min_price in rupees, in_stock=true to skip sold-out ones. days: with no query, only "
+                     "products listed in the last N days (7 = this week). save=true saves "
+                     "every result as an Excel sheet. Use product_page on a link for full details.",
     "youtube_search": "Search YouTube (official API): videos with links, channel, date, length, views, likes and "
                       "comments. query: a few key words, no years. order: relevance, date (newest), viewCount or "
                       "rating. days: only videos from the last N days. channel: limit to one channel ('ours' = "
@@ -2657,8 +2777,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "open_shared": "Open one share by id (its full note and files); with file (a name or number) read that file, "
                    "or save it into the person's files with save_to (a path or folder).",
     "web_research": "Research a topic across MANY websites at once in the background and get one merged Excel "
-                    "sheet: it searches forums (Hacker News incl. launches, Reddit, Lemmy and any other forum or "
-                    "site), GitHub, the web and news, reads up to max_sources pages and threads (default 25, most "
+                    "sheet: it searches the gadget brand stores (products with price and link), forums (Hacker News incl. "
+                    "launches, Reddit, Lemmy and any other forum or site), GitHub, the web and news (sites='stores' "
+                    "for the brand stores only), reads up to max_sources pages and threads (default 25, most "
                     "60), picks out every matching item, merges duplicates and ranks them by how many sources "
                     "mention them, with links. Use it for 'find all / list of / collect' requests over many sites "
                     "(new apps, tools, products, companies, events). topic: 2-4 key words to search for, no years "

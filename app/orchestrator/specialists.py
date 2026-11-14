@@ -25,9 +25,10 @@ from app.llm import client as llm
 from app.observability import graph_node_total, tracer
 from app.orchestrator.agents import _conversation
 from app.orchestrator.clock import with_now
-from app.orchestrator.context import with_attachments, with_dashboards
+from app.orchestrator.context import with_attachments
 from app.orchestrator.nodes import (
     JOB_NOTE,
+    PRODUCT_HINT,
     READ_SOURCES,
     VIDEO_HINT,
     _department,
@@ -35,6 +36,7 @@ from app.orchestrator.nodes import (
     calls_in,
     compact_tool_results,
     execute_calls,
+    final_message,
     pending_calls,
     searched_without_reading,
     started_background,
@@ -87,7 +89,8 @@ SPECIALISTS: dict[str, Specialist] = {
                   "prices, facts, comparisons, anything that may have changed recently",
             tools=(
                 "web_search", "news_search", "scholar_search", "weather", "fetch_page", "scrape_page",
-                "forum_search", "read_thread", "github_search", "youtube_search", "youtube_channel",
+                "gadget_search", "product_search", "product_page", "forum_search", "read_thread", "github_search",
+                "youtube_search", "youtube_channel",
                 "youtube_video", "web_research", "start_background_task",
                 "save_table", "read_document", "list_documents", "read_file", "list_files",
             ),
@@ -99,8 +102,7 @@ SPECIALISTS: dict[str, Specialist] = {
                 "for the rest, with short queries of a few key words and no dates (news_search already "
                 "returns the newest first). Your search tools are live: what they return is real and "
                 "current, even when it is newer than anything you remember. For scientific, technical or "
-                "medical questions also use scholar_search (papers with abstracts). For products and "
-                "prices use product_search and product_page. For what the media are saying, use "
+                "medical questions also use scholar_search (papers with abstracts). " + PRODUCT_HINT + " For what the media are saying, use "
                 "news_search (source= narrows to one outlet) and compare coverage across outlets. Then open the two "
                 "or three most relevant results with "
                 "fetch_page; a "
@@ -361,7 +363,9 @@ SUPERVISOR_PROMPT = (
     "happens next for the person's request.\n\nSpecialists:\n{team}\n\n"
     "Give one specialist one clear task at a time, with every detail it needs (names, dates, "
     "places, links from earlier reports), because it does not see this conversation's history. "
-    "Use research for anything about the current world. When the person wants videos, ads, or products seen in "
+    "Use research for anything about the current world. For products and gadgets (what's available, prices, "
+    "launches, best under a budget, comparisons) tell research to search the brand stores with gadget_search, "
+    "then marketplaces with product_search, and to give the price, store and link of each. When the person wants videos, ads, or products seen in "
     "them, or asks about YouTube channels (ours are TechWiser and GadgetWiser), tell research to use youtube_search, "
     "youtube_channel and youtube_video, and for ads to find creators' videos that show or test them (the "
     "descriptions list the products). Don't write calendar dates into tasks: "
@@ -608,7 +612,7 @@ def writer(state: dict[str, Any]) -> dict[str, Any]:
             {"role": "user", "content": writer_brief(state)},
         ]
         answer = llm.chat(with_attachments(convo), stream=True)
-    return {"messages": [with_dashboards({"role": "assistant", "content": answer})], "next": "__end__"}
+    return {"messages": [final_message(answer, state)], "next": "__end__"}
 
 
 def describe_tools() -> dict[str, list[str]]:

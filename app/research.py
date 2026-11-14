@@ -246,8 +246,10 @@ def find_sources(topic: str, sites: tuple[str, ...], period: str, *, web: Callab
 def collect(topic: str, what: str, columns: list[str], sources: list[Source], listings: list[Source],
             reader: Callable[[str], str], extract: Callable[[str, str], list[dict]],
             progress: Callable[[str], None], max_sources: int = DEFAULT_SOURCES,
-            pick: Callable[[str], str] | None = None, check: Callable[[str], str] | None = None) -> Report:
-    """Read the best sources, extract records from each (and from the listings), merge."""
+            pick: Callable[[str], str] | None = None, check: Callable[[str], str] | None = None,
+            direct: list[dict] | None = None) -> Report:
+    """Read the best sources, extract records from each (and from the listings), merge. `direct` rows are
+    already records (products from the brand stores, each with its own `_source`) and skip extraction."""
     progress("Choosing the most useful sources")
     chosen = choose(sources, max(1, min(max_sources, MAX_SOURCES)), pick)
     done = [0]
@@ -283,6 +285,7 @@ def collect(topic: str, what: str, columns: list[str], sources: list[Source], li
         except Exception as e:  # noqa: BLE001 - one unreadable reply must not sink the rest
             logger.warning("extraction failed: %s", type(e).__name__)
             report.notes.append(f"couldn't read the model's table for {s.url}")
+    rows += direct or []
     report.rows = merge(rows, columns[0], columns)
     if check is not None and report.rows:
         progress("Checking every item against the criteria")

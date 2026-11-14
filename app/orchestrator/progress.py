@@ -81,6 +81,7 @@ TOOL_STEPS = {
     "shared_with_me": "Checking what's been shared with you",
     "open_shared": "Opening what was shared",
     "github_search": "Searching GitHub for {query}",
+    "gadget_search": "Searching the gadget stores for {query}",
     "youtube_search": "Searching YouTube for {query}",
     "youtube_channel": "Checking the YouTube channel {channel}",
     "youtube_video": "Looking at the YouTube videos",
