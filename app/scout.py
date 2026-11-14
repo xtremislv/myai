@@ -586,7 +586,7 @@ def report_xlsx(session: Session, scout: Scout) -> bytes:
         ["Products judged per round", settings["per_round"]], ["Video lookups per day", settings["daily_lookups"]],
         ["Reference video required", "yes" if settings["require_video"] else "no"],
         ["Sources", ", ".join(settings["sources"])], ["Avoid", settings["avoid"]],
-        *[[f"Criterion: {c['name']} (met at {c['min']}, weight {c['weight']}{', required' if c.get('required') else ''})",
+        *[[f"Criterion: {c['name']} (minimum score {c['min']}, weight {c['weight']}{', required' if c.get('required') else ''})",
            c["description"]]
           for c in settings["criteria"]],
         ["Search ideas", "; ".join(settings["ideas"])],

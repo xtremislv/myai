@@ -3434,7 +3434,7 @@ function scoutSettings(scout, refresh, error) {
       h("textarea", { class: "c-desc", rows: 2, placeholder: "What it means", maxLength: 400 }, c.description),
       h("label", { class: "small" }, "Weight", h("input", { class: "c-weight", type: "number", min: 0, max: 100, step: 1, value: c.weight,
         title: "Relative weight in the weighted score (e.g. 30 for 30%); 0 = doesn't count towards the score" })),
-      h("label", { class: "small" }, "Met at", h("input", { class: "c-min", type: "number", min: 0, max: 10, step: 0.5, value: c.min })),
+      h("label", { class: "small" }, "Minimum score", h("input", { class: "c-min", type: "number", min: 0, max: 10, step: 0.5, value: c.min })),
       h("label", { class: "small check", title: "A find that doesn't meet this is never kept, whatever its other scores" },
         h("input", { class: "c-req", type: "checkbox", checked: !!c.required }), "Required"),
       h("button", { type: "button", class: "link danger", onclick: () => row.remove(), title: "Remove" }, mi("delete")),
@@ -3462,10 +3462,10 @@ function scoutSettings(scout, refresh, error) {
     } catch (err) { error.fail(err); }
   } },
     h("h2", null, "Settings"),
-    h("p", { class: "small muted" }, "Each criterion is scored 0-10 and counts as met at its \"Met at\" score. "
+    h("p", { class: "small muted" }, "Each criterion is scored 0-10 and counts as met when it reaches its \"Minimum score\". "
       + "With \"At least N criteria met\" a product is kept when it meets N of them (any N). With \"Weighted score\" "
-      + "its weighted average (by the weights, e.g. 30/25/22) must reach the pass mark and every criterion its \"Met at\" "
-      + "score. A \"Required\" criterion must always be met. Changing these re-sorts what was already judged. "
+      + "its weighted average (by the weights, e.g. 30/25/22) must reach the pass mark and every criterion its \"Minimum score\". "
+      + "A \"Required\" criterion must always be met. Changing these re-sorts what was already judged. "
       + "Reasons given when keeping or rejecting finds teach this scout (only this one) what you want."),
     h("label", null, "Name", name),
     h("label", null, "Who it's for (brief)", brief),
