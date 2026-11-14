@@ -1626,6 +1626,83 @@ def github_search(
         community.github(query, created_after, int(min_stars or 0), sort, 15, token))))
 
 
+# ---- YouTube (app/browsing/youtube.py, YouTube Data API v3) ----
+def _youtube_key() -> str | None:
+    """The YouTube Data API key (vault secret youtube/api). Read by the tool, never shown to the model."""
+    try:
+        with SessionLocal() as session:
+            return (AESGCMVault(session).get("youtube/api") or "").strip() or None
+    except Exception as e:  # noqa: BLE001
+        logger.info("youtube key unavailable: %s", type(e).__name__)
+        return None
+
+
+NO_YOUTUBE_KEY = ("ERROR: YouTube isn't connected (no youtube/api key on the Credentials page). Use "
+                  "scrape_page on https://www.youtube.com/results?search_query=... with what=links instead.")
+
+
+def _youtube(state: dict[str, Any], text: str, fn) -> str:
+    if (err := _enforce(state, "read", "web", "search")) is not None:
+        return err
+    if _leaks(state, text=text):
+        return LEAK_REFUSAL
+    key = _youtube_key()
+    if key is None:
+        return NO_YOUTUBE_KEY
+    from app.browsing.youtube import YouTubeError
+
+    def go() -> str:
+        try:
+            return fn(key)
+        except YouTubeError as e:
+            return f"ERROR: {e}"
+
+    return untrusted("YouTube", _web_call(go))
+
+
+def youtube_search(
+    state: dict[str, Any], query: str, order: str = "relevance", days: int = 0, channel: str = "", limit: int = 10,
+) -> str:
+    """YouTube videos with links, views, likes, comments, length and date."""
+    from app.browsing import youtube
+
+    return _youtube(state, f"{query} {channel}", lambda key: youtube.render_videos(
+        youtube.search(query, key, order, int(days or 0), channel, int(limit or 10))))
+
+
+def youtube_channel(state: dict[str, Any], channel: str = "ours", videos: int = 15) -> str:
+    """A channel's numbers and its latest uploads with their performance; 'ours' = the company's channels."""
+    from app.browsing import youtube
+
+    def go(key: str) -> str:
+        found = youtube.channels(youtube.channel_ids(channel, key), key)
+        if not found:
+            return f"No YouTube channel found for '{channel}'."
+        n = max(0, min(int(videos or 0), 50))
+        return "\n\n".join(youtube.render_channel(c, youtube.recent_uploads(c, key, n) if n else []) for c in found)
+
+    return _youtube(state, channel, go)
+
+
+def youtube_video(state: dict[str, Any], videos: str, comments: int = 0) -> str:
+    """Stats, tags and description of YouTube videos (links or ids, comma-separated), optionally top comments."""
+    from app.browsing import youtube
+
+    refs = [r for r in re.split(r"[,\s]+", videos or "") if r]
+    ids = [i for i in (youtube.video_id(r) for r in refs) if i][:10]
+    if not ids:
+        return "ERROR: give YouTube video links or 11-character video ids."
+
+    def go(key: str) -> str:
+        found = youtube._videos(ids, key)
+        if not found:
+            return "No such videos (deleted or private)."
+        n = max(0, min(int(comments or 0), 30))
+        return "\n\n".join(youtube.render_details(v, youtube.top_comments(v.id, key, n) if n else []) for v in found)
+
+    return _youtube(state, videos, go)
+
+
 def read_thread(state: dict[str, Any], url: str) -> str:
     """A Hacker News, Reddit or Lemmy thread with its top comments, or a GitHub repository's README."""
     if (err := _enforce(state, "read", "web", "fetch")) is not None:
@@ -2377,6 +2454,9 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "scholar_search": scholar_search,
     "forum_search": forum_search,
     "github_search": github_search,
+    "youtube_search": youtube_search,
+    "youtube_channel": youtube_channel,
+    "youtube_video": youtube_video,
     "read_thread": read_thread,
     "save_table": save_table,
     "web_research": web_research,
@@ -2546,6 +2626,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                      "topics, link. query: words and GitHub qualifiers, e.g. 'topic:android-app', 'notes "
                      "language:kotlin'. created_after: YYYY-MM-DD for new projects only. min_stars to skip "
                      "small ones. sort: stars or updated. read_thread a repository link for its README.",
+    "youtube_search": "Search YouTube (official API): videos with links, channel, date, length, views, likes and "
+                      "comments. query: a few key words, no years. order: relevance, date (newest), viewCount or "
+                      "rating. days: only videos from the last N days. channel: limit to one channel ('ours' = "
+                      "TechWiser and GadgetWiser, a name, @handle or link). limit up to 25.",
+    "youtube_channel": "A YouTube channel's numbers: subscribers, total views, video count, lifetime average, and its "
+                       "latest uploads (videos=N, up to 50) with views, likes, comments, views per day, Shorts vs "
+                       "long videos, engagement and upload pace. channel: 'ours' (default: the company's own "
+                       "channels TechWiser and GadgetWiser), one of their names, or any other channel's name, "
+                       "@handle or link. Public numbers only: watch time, CTR, revenue and audience aren't available.",
+    "youtube_video": "Details of YouTube videos: views, likes, comments, ratios, views per day, tags, description; "
+                     "comments=N adds the top N comments (what viewers say). videos: links or ids, comma-separated.",
     "read_thread": "Read a discussion thread with its top comments (Hacker News, Reddit or Lemmy link from "
                    "forum_search), or a GitHub repository's README and facts. Comments name the things people "
                    "recommend and why.",

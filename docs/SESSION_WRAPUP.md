@@ -1,4 +1,4 @@
-# Session wrap-up: state of the platform on 2026-11-13
+# Session wrap-up: state of the platform on 2026-11-14
 
 Read this first in the next session. It is the short, current picture. `docs/HANDOFF.md` has the detailed
 history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.md` the setup steps.
@@ -10,7 +10,7 @@ this file, this file is right.
 - Android app: see `docs/ANDROID_APP.md`. **1.0.71** is published (2026-11-13). 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **652 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **695 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -104,7 +104,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
 | Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**, **watchdog**: all started by `scripts/start_native.sh`. |
-| Database | Postgres 16, migration **0009** (head, `device_sessions` for phones). |
+| Database | Postgres 16, migration **0010** (head, `users.session_version`). |
 | Network | Agents' web traffic goes through the owner's VPS (see §5.6). Without it this network poisons DNS and cuts many sites. |
 | Backups | `scripts/backup.sh` works natively and was verified with `restore.sh --verify`; **no off-server destination set** (`BACKUP_DEST` empty), no schedule on this host. |
 
@@ -142,6 +142,17 @@ the web, read and answer mail, manage files, make documents from templates, set 
   extraction), merges duplicates across sources and saves an Excel sheet ranked by how many sources
   mention each item, with links. `criteria=` (plus the person's own words) filters sources, rows and the
   final list. Live 2026-11-05: "android apps", 20 sources -> 58 apps in ~5 min.
+
+**YouTube** (2026-11-14, `app/browsing/youtube.py`, official YouTube Data API v3, key = vault secret `youtube/api`)
+- The company's channels are **TechWiser** (`@techwiser`) and **GadgetWiser** (`@wisergadget`, chosen 2026-11-14: the
+  `@gadgetwiser` handle is an empty channel); change them with `YOUTUBE_OWN_CHANNELS`. Agents call them "ours".
+- `youtube_channel` (subs, views, latest uploads with views/day, Shorts vs long, engagement, upload pace; "ours" or
+  any channel), `youtube_search` (video links + stats; order, days, channel), `youtube_video` (details, tags,
+  description, top comments). Public numbers only: watch time, CTR, revenue and audience need the YouTube Analytics
+  API with the channel owner's OAuth sign-in (not built). Quota 10k units/day, a search = 100; answers cached 10 min.
+- `fetch_page` on a watch link also shows YouTube's shopping shelf (products with shop links), which the API lacks.
+  Instagram and TikTok send everything to a login page from here.
+- Questions about "our channel" triage as **work** (admin/researcher); other channels and topics stay private.
 
 **Sharing with colleagues** (2026-11-05)
 - "Send this to sayan": `share_with` delivers a note and files to another user (notification + Files > Shared
@@ -347,12 +358,12 @@ authorised agents), or handing the link to the person (shops already do this).
   prompt-injected exfiltration, not a proof.
 - The code sandbox is user `nobody` + rlimits + an audit hook, not kernel isolation (no user namespaces,
   seccomp or firewall rights in this container). Code that defeats the hook could reach 127.0.0.1 services as
-  `nobody`; Redis there has no password. A `requirepass` on Redis would close the easiest target.
+  `nobody` (Redis has a password since 2026-11-13).
 - Backups stay on this server (`BACKUP_DEST` empty), and nothing runs them on a schedule here.
 - `GatewayDown` can't reach the admin bell (it's delivered by the gateway). No email/chat alert channel.
 - The proxy depends on one VPS with a shared IP; if it's down, agents' web access fails (no automatic fallback
   to direct).
-- Disk: ~7 GB free of 40 GB.
+- Disk: ~3.9 GB free of 40 GB (2026-11-14).
 
 **Product limits**
 - 64k context; pages are clipped (20,000 chars per page, older tool results to 3,000); overlong prompts drop their oldest turns. Prompts near 50k tokens take minutes to prefill on the Quadro.
@@ -389,6 +400,11 @@ authorised agents), or handing the link to the person (shops already do this).
 
 ## 8. Gotchas for the next session
 
+- **Specialists that answer without a tool** (2026-11-14): Gemma refused a research task naming 2026 as "the
+  future" without searching, and the refusal became the answer. `specialists.NO_TOOL_NUDGE` sends a first reply
+  without a tool call back once. Gemma follows the supervisor's task wording far more than the system prompt:
+  routing hints (e.g. "use youtube_search") belong in `SUPERVISOR_PROMPT`.
+
 - **Never run `tests/test_postgres.py` against the live DB.** Use a throwaway one:
   `su postgres -c "createdb -O ai ai_platform_itest"`, run with
   `POSTGRES_INTEGRATION=1 POSTGRES_DSN=<.env DSN with /ai_platform_itest>`, then `dropdb`. A run against the live
@@ -411,6 +427,6 @@ authorised agents), or handing the link to the person (shops already do this).
   the browser handover (`browser_request`) live in `app/orchestrator/context.py`; anything in graph state is
   checkpointed forever (and `str` fields are stored unencrypted).
 - **Commits:** use the repo's existing author identity (see `git log`; no global git identity is set); push with
-  plain `git push` (credentials in a repo-local helper, never print it). Branch `server-native-setup` only.
+  plain `git push` (credentials in a repo-local helper, never print it). Live branch: `android-app`; never `main`.
 - Routing around this network's filtering *on Claude's own initiative* was blocked as containment escape on
   2026-11-03; the VPS proxy was set up at the owner's explicit request with their own server.

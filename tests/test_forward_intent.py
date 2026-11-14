@@ -149,7 +149,7 @@ def test_every_tool_has_an_acl_gate():
 
     # Shared helpers that run the ACL check for the tools that call them.
     gates = ("_enforce(", "_subject(", "_mailbox(", "_browse(", "_my_files(", "_dept_files(", "_save(",
-             "_resolve_template(", "_wallet_owner(")
+             "_resolve_template(", "_wallet_owner(", "_youtube(")
     assert "_enforce(" in inspect.getsource(tools._wallet_owner)
     # Company templates: every lookup goes through the store, which asks the ACL engine per template.
     from app.documents import store
@@ -157,7 +157,7 @@ def test_every_tool_has_an_acl_gate():
     assert "store.find(" in inspect.getsource(tools._resolve_template)
     assert "_my_files(" in inspect.getsource(tools._resolve_template)
     assert "ACLEngine(" in inspect.getsource(store.visible) and "enforce(" in inspect.getsource(store.save)
-    for helper in (tools._mailbox, tools._browse, tools._my_files):
+    for helper in (tools._mailbox, tools._browse, tools._my_files, tools._youtube):
         assert "_enforce(" in inspect.getsource(helper)
     # Department files go through DeptFiles, which asks the ACL engine before every operation.
     assert "ACLEngine(" in inspect.getsource(tools._dept_files)

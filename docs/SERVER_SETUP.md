@@ -402,3 +402,8 @@ The agents' headless browser needs Chromium and its system libraries:
 For good web search, add a Tavily or Serper API key on the admin Credentials page as `search/tavily` or
 `search/serper`. Without one, search falls back to Bing, which gives weaker results to servers.
 
+
+For YouTube (channel stats, video search, comments), add a YouTube Data API v3 key on the Credentials page as
+`youtube/api` (Google Cloud console: enable "YouTube Data API v3", create an API key, restrict it to that API).
+The company's own channels are `YOUTUBE_OWN_CHANNELS` in `.env` (`<channel id>=<name>,...`). Without a key the
+agents read YouTube's search page instead (titles and views, links via `scrape_page`).

@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # http://user:pass@host:3128 or socks5h://host:1080. Empty = direct. The model server, mail and
     # internal services never use it. The network guard still applies (see netguard).
     outbound_proxy: str = ""
+    # The company's own YouTube channels (id=name, comma-separated), which agents know as "ours"
+    # (app/browsing/youtube.py). The API key is the vault secret youtube/api.
+    youtube_own_channels: str = "UCdp6GUwjKscp5ST4M4WgIpw=TechWiser,UCakfrdHa0lItW8e5qpZd5lA=GadgetWiser"
     # Headless Chromium sessions: one per person, closed after this many idle seconds.
     browser_max_sessions: int = 6
     browser_idle_seconds: int = 600

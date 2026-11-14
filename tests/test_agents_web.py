@@ -343,6 +343,7 @@ def test_supervisor_does_not_repeat_a_task_already_reported(monkeypatch, fake_we
     replies = iter([
         json.dumps({"next": "research", "task": task}),
         "Report: three points.",
+        "Report: three points.",  # again, after the nudge to use a tool (NO_TOOL_NUDGE)
         json.dumps({"next": "research", "task": task + " again"}),  # the same task: refused
         "Answer.",
     ])
@@ -351,3 +352,31 @@ def test_supervisor_does_not_repeat_a_task_already_reported(monkeypatch, fake_we
     final = graph.invoke(_initial(), config={"configurable": {"thread_id": "t"}, "recursion_limit": 100})
     assert final["research_notes"] == ["[research] Report: three points."]
     assert final["messages"][-1]["content"] == "Answer."
+
+
+def test_a_specialist_that_refuses_without_tools_is_sent_back_to_search(monkeypatch, fake_web):
+    """2026-11-14: research refused a task naming 2026 as 'the future' without calling a tool, and
+    the refusal became the answer. A first reply without a tool call is sent back once."""
+    sup = iter([json.dumps({"next": "research", "task": "Find news from 2026 about AI ads"}),
+                json.dumps({"next": "finish"})])
+    nudged = []
+
+    def _chat(messages, **kwargs):
+        system = messages[0]["content"]
+        if system.startswith("You are the SUPERVISOR"):
+            return next(sup)
+        if system.startswith("You are the RESEARCH"):
+            if messages[-1]["content"] == specialists.NO_TOOL_NUDGE:
+                nudged.append(True)
+                return _call("news_search", query="AI ads")
+            if not nudged:
+                return "I cannot search for information from the future."
+            return "Brand X was criticised for an AI ad (news, 2026-11-03)."
+        return "answer"
+
+    monkeypatch.setattr(specialists.llm, "chat", _chat)
+    graph = build_agents_graph().compile(checkpointer=MemorySaver())
+    final = graph.invoke(_initial(), config={"configurable": {"thread_id": "t"}, "recursion_limit": 100})
+    assert nudged == [True]
+    assert final["research_notes"] == ["[research] Brand X was criticised for an AI ad (news, 2026-11-03)."]
+    assert any("Story about AI ads" in m["content"] for m in final["messages"] if m["role"] == "tool")

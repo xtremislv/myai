@@ -29,6 +29,7 @@ from app.orchestrator.context import with_attachments, with_dashboards
 from app.orchestrator.nodes import (
     JOB_NOTE,
     READ_SOURCES,
+    VIDEO_HINT,
     _department,
     assistant_calls,
     calls_in,
@@ -63,6 +64,16 @@ class Specialist:
     core: tuple[str, ...] = ()
 
 
+# Gemma sometimes answers a task from memory without calling a tool, e.g. refusing a task that
+# names 2026 as "the future" (2026-11-14, a private research request). A specialist's first reply
+# without a tool call is sent back once with this.
+NO_TOOL_NUDGE = (
+    "You replied without using any tool. Your tools are live and reach today's web: the date given "
+    "with the task is the real date, and anything up to it can be found. Don't refuse or answer from "
+    "memory: call the right tool now (search with a few key words and no years). Only if this task "
+    "truly needs no tool, write your report again."
+)
+
 SPECIALISTS: dict[str, Specialist] = {
     s.name: s
     for s in (
@@ -76,7 +87,8 @@ SPECIALISTS: dict[str, Specialist] = {
                   "prices, facts, comparisons, anything that may have changed recently",
             tools=(
                 "web_search", "news_search", "scholar_search", "weather", "fetch_page", "scrape_page",
-                "forum_search", "read_thread", "github_search", "web_research", "start_background_task",
+                "forum_search", "read_thread", "github_search", "youtube_search", "youtube_channel",
+                "youtube_video", "web_research", "start_background_task",
                 "save_table", "read_document", "list_documents", "read_file", "list_files",
             ),
             max_rounds=6,
@@ -98,7 +110,7 @@ SPECIALISTS: dict[str, Specialist] = {
                 "or popular apps, tools, services, opinions) use forum_search (Hacker News, Reddit, Lemmy, or "
                 "any forum or site domain in sites=) with 2-4 key words and no years, then read_thread the best "
                 "threads (any link works: thread comments, GitHub READMEs, ordinary pages); for open-source "
-                "projects use github_search (created_after for new ones). If one site is rate-limited or "
+                "projects use github_search (created_after for new ones). " + VIDEO_HINT + " If one site is rate-limited or "
                 "blocked, use the others; never conclude nothing exists from one empty search. When the "
                 "person wants everything collected from many sites, or the result in a sheet, call "
                 "web_research (it reads dozens of sources in the background and saves a merged, ranked Excel "
@@ -349,7 +361,10 @@ SUPERVISOR_PROMPT = (
     "happens next for the person's request.\n\nSpecialists:\n{team}\n\n"
     "Give one specialist one clear task at a time, with every detail it needs (names, dates, "
     "places, links from earlier reports), because it does not see this conversation's history. "
-    "Use research for anything about the current world. Don't write calendar dates into tasks: "
+    "Use research for anything about the current world. When the person wants videos, ads, or products seen in "
+    "them, or asks about YouTube channels (ours are TechWiser and GadgetWiser), tell research to use youtube_search, "
+    "youtube_channel and youtube_video, and for ads to find creators' videos that show or test them (the "
+    "descriptions list the products). Don't write calendar dates into tasks: "
     "say 'this week', 'today' or 'latest' instead. Never hand out a task that a report already "
     "covers: if the reports answer the request, even partly, finish. When the reports so far answer the "
     "request, or a specialist needs information only the person can give, finish. "
@@ -506,6 +521,12 @@ def make_specialist(name: str):
                     convo.append({"role": "user", "content": "Call a tool, or write your report."})
                     reply = llm.chat(convo, tools=tools)
                     calls = calls_in(reply)
+                if not calls and rounds == 0:
+                    step("Checking the sources")
+                    convo.append({"role": "assistant", "content": str(reply)})
+                    convo.append({"role": "user", "content": NO_TOOL_NUDGE})
+                    reply = llm.chat(convo, tools=tools)
+                    calls = calls_in(reply)
                 own = state.get("messages", [])[state.get("agent_start", 0):]
                 can_read = any(t["function"]["name"] == "fetch_page" for t in tools)
                 if not calls and can_read and rounds < spec.max_rounds - 1 and searched_without_reading(own):
@@ -560,7 +581,8 @@ WRITER_PROMPT = (
 WRITER_BRIEF = (
     "[instructions] Write your reply to the person's LATEST message now, from the reports of THIS "
     "request above. Your earlier replies in this conversation may be out of date or wrong (tools and "
-    "results change): never copy or repeat them."
+    "results change): never copy or repeat them. Lead with what was found (names, links, numbers); if part of "
+    "the request couldn't be met, say so briefly after it, never open with what you can't do."
 )
 
 

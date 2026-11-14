@@ -47,7 +47,8 @@ GROUPS: dict[str, tuple[str, ...]] = {
 GROUP_OF: dict[str, str] = {tool: group for group, tools in GROUPS.items() for tool in tools}
 
 DESCRIPTIONS = {
-    "web": "anything on the internet: search, news, products and prices, weather, forums, GitHub, open or read "
+    "web": "anything on the internet: search, news, products and prices, weather, forums, GitHub, YouTube videos "
+           "and channels (incl. our TechWiser/GadgetWiser channel stats), open or read "
            "a web page or link, deep research; and using websites in a browser: sign in, fill forms, book, "
            "order, buy, pay, track an order, saved cards/addresses/logins",
     "mail": "email: read, search, summarize, open, send, reply or forward mail, mail to a spreadsheet",
