@@ -13,7 +13,16 @@ from sqlalchemy.pool import StaticPool
 
 from app import scout as scouts
 from app.auth.security import issue_token
-from app.db.session import Base, Notification, Scout, ScoutFinding, ScoutRun, User, get_session
+from app.db.session import (
+    Base,
+    Notification,
+    Scout,
+    ScoutFinding,
+    ScoutMute,
+    ScoutRun,
+    User,
+    get_session,
+)
 from app.departments.registry import seed_departments
 from app.main import app
 from app.storage import objects
@@ -161,7 +170,9 @@ def test_settings_are_checked_and_kept_in_range():
     st = scouts.clean_settings({"threshold": 42, "interval_minutes": 1, "sources": ["youtube", "bogus"],
                                 "criteria": [{"name": " Fun ", "weight": 9, "min": -3}], "ideas": "a\n\nb"})
     assert st["threshold"] == 10 and st["interval_minutes"] == 15 and st["sources"] == ["youtube"]
-    assert st["criteria"] == [{"name": "Fun", "description": "", "weight": 3, "min": 0.0}] and st["ideas"] == ["a", "b"]
+    assert st["criteria"] == [{"name": "Fun", "description": "", "weight": 9, "min": 0.0, "required": False}]
+    assert st["ideas"] == ["a", "b"]
+    assert scouts.clean_settings({"criteria": [{"name": "x", "weight": 500}]})["criteria"][0]["weight"] == 100
     with pytest.raises(ValueError):
         scouts.clean_settings({"criteria": [{"name": ""}]})
 
@@ -266,3 +277,103 @@ def test_a_video_that_does_not_show_the_product_does_not_count(db, files):
     with db() as s:
         f = s.query(ScoutFinding).one()
         assert f.video_url == "" and "no reference video" in f.why
+
+
+# ---- two scouts, own criteria, never mixed (owner, 2026-11-14) ----
+GW = {"Extremely affordable": 8, "Solves an everyday problem": 8, "Highly aesthetic": 7,
+      "Looks one way, acts another way": 5, "Fresh or little-known": 6, "Available in India": 9}
+
+
+def test_gadgetwiser_is_weighted_and_needs_india():
+    st = scouts.clean_settings(scouts.GADGETWISER)
+    assert [c["weight"] for c in st["criteria"]] == [30, 25, 22, 18, 15, 0] and st["market"] == "India"
+    total, reasons = scouts.verdict(GW, st, True)
+    assert total == 7.04 and reasons == []  # (8*30 + 8*25 + 7*22 + 5*18 + 6*15) / 110
+    total, reasons = scouts.verdict({**GW, "Available in India": 2}, st, True)
+    assert reasons == ["required but not met: Available in India"]  # a great score can't make up for it
+    assert scouts.verdict({**GW, "Extremely affordable": 2, "Solves an everyday problem": 3}, st, True)[1]
+    # required works under the count rule too
+    tw = scouts.clean_settings({**scouts.TECHWISER_INSTAGRAM, "criteria": [
+        *scouts.DEFAULTS["criteria"], {"name": "Safe", "description": "", "weight": 1, "min": 5, "required": True}]})
+    assert "required but not met: Safe" in scouts.verdict(HIGH, tw, True)[1]
+
+
+def test_review_reasons_teach_only_their_own_scout(db, files):
+    with db() as s:
+        tw = scouts.create(s, "researcher", "TechWiser Instagram", "r1", {**scouts.TECHWISER_INSTAGRAM, "sources": ["web"]})
+        gw = scouts.create(s, "researcher", "GadgetWiser", "r1", {**scouts.GADGETWISER, "sources": ["web"]})
+        s.add(ScoutFinding(id="t1", scout_id=tw.id, key="spin top", name="Spin Top", status="rejected",
+                           review_note="too much like a toy"))
+        s.add(ScoutFinding(id="g1", scout_id=gw.id, key="cable clip", name="Cable Clip", status="kept",
+                           review_note="cheap and fixes messy desks"))
+        s.commit()
+        assert "too much like a toy" in scouts.lessons(s, tw.id) and "Cable Clip" not in scouts.lessons(s, tw.id)
+        assert "KEPT: Cable Clip (reason: cheap and fixes messy desks)" in scouts.lessons(s, gw.id)
+    prompts: list[tuple[str, str]] = []
+    web_queries: list[str] = []
+    tools = fake_tools({"Desk Cube": GW})
+    real = tools.chat
+
+    def chat(system, user, n):
+        prompts.append((system, user))
+        return real(system, user, n)
+
+    tools.chat = chat
+    tools.web = lambda q: web_queries.append(q) or f"web results for {q}"
+    run = scouts.run_now(db, gw.id, tools)
+    assert run.added == 1
+    judged = [p for p in prompts if p[0].startswith("You judge one product")]
+    assert judged and "cheap and fixes messy desks" in judged[0][0] and "Market: India" in judged[0][0]
+    everything = " ".join(a + b for a, b in prompts)
+    assert "too much like a toy" not in everything and "Spin Top" not in everything  # the other scout's
+    assert "GadgetWiser" in everything and "Reels" not in everything
+    assert "Desk Cube price India" in web_queries  # availability and price where it must be sold
+    with db() as s:
+        assert {f.scout_id for f in s.query(ScoutFinding).filter(ScoutFinding.name == "Desk Cube")} == {gw.id}
+
+
+def test_each_person_mutes_each_scout_separately(client, db, files):
+    r1, r2 = _as("r1", ["researcher"]), _as("r2", ["researcher"])
+    a = client.post("/v1/scouts", json={"name": "TechWiser Instagram", "department": "researcher"}, headers=r1).json()
+    b = client.post("/v1/scouts", json={"name": "GadgetWiser", "department": "researcher",
+                                        "settings": scouts.GADGETWISER}, headers=r1).json()
+    assert client.put(f"/v1/scouts/{a['id']}/mute", json={"muted": True}, headers=r1).json()["muted"] is True
+    assert client.get(f"/v1/scouts/{a['id']}", headers=r2).json()["muted"] is False
+    assert client.get(f"/v1/scouts/{b['id']}", headers=r1).json()["muted"] is False
+    assert client.get(f"/v1/scouts/{b['id']}", headers=r1).json()["settings"]["market"] == "India"
+    scouts.run_now(db, a["id"], fake_tools({"Lumi Lamp Speaker": HIGH}))
+    with db() as s:
+        assert sorted(n.owner_id for n in s.query(Notification)) == ["r2"]  # r1 muted this one
+        s.query(Notification).delete()
+        s.commit()
+    with db() as s:
+        row = s.get(Scout, b["id"])
+        row.settings = scouts.clean_settings({**row.settings, "sources": ["web"]})
+        s.commit()
+    scouts.run_now(db, b["id"], fake_tools({"Desk Cube": GW}))
+    with db() as s:
+        notes = list(s.query(Notification))
+        assert sorted(n.owner_id for n in notes) == ["r1", "r2"]  # the other scout still reaches r1
+    assert client.put(f"/v1/scouts/{a['id']}/mute", json={"muted": False}, headers=r1).json()["muted"] is False
+    with db() as s:
+        assert s.query(ScoutMute).count() == 0
+
+
+def test_a_review_can_say_why_and_lands_in_the_file(client, db, files):
+    r1 = _as("r1", ["researcher"])
+    sc = _scout(db)
+    scouts.run_now(db, sc.id, fake_tools({"Lumi Lamp Speaker": HIGH}))
+    with db() as s:
+        fid = s.query(ScoutFinding).one().id
+    out = client.patch(f"/v1/scouts/{sc.id}/findings/{fid}", json={"status": "rejected", "note": " seen  everywhere "},
+                       headers=r1).json()
+    assert out["status"] == "rejected" and out["review_note"] == "seen everywhere"
+    out = client.patch(f"/v1/scouts/{sc.id}/findings/{fid}", json={"note": "actually fine"}, headers=r1).json()
+    assert out["status"] == "rejected" and out["review_note"] == "actually fine"
+    assert client.patch(f"/v1/scouts/{sc.id}/findings/{fid}", json={}, headers=r1).status_code == 422
+    with db() as s:
+        scouts.save_report(s, s.get(Scout, sc.id))
+    [key] = [k for k in files if k.startswith("shared/researcher/Scout/")]
+    ws = load_workbook(io.BytesIO(files[key]))["Below threshold"]
+    header = [c.value for c in ws[1]]
+    assert header[-1] == "Review note" and list(ws.iter_rows(min_row=2, values_only=True))[0][-1] == "actually fine"

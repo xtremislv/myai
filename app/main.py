@@ -29,6 +29,7 @@ from app.api import (
     routes_request,
     routes_scouts,
     routes_templates,
+    routes_voice,
 )
 from app.config import get_settings, validate_secrets
 from app.db.session import engine, init_db
@@ -98,6 +99,7 @@ app.include_router(routes_templates.router)
 app.include_router(routes_browser.router)
 app.include_router(routes_devices.router)
 app.include_router(routes_scouts.router)
+app.include_router(routes_voice.router)
 WEB_DIR = Path(__file__).parent / "web"
 
 

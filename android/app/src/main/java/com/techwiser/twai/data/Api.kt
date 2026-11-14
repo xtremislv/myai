@@ -400,6 +400,14 @@ class Api(private val context: Context, private val settings: Settings, private 
         return json.decodeFromString(UploadOut.serializer(), send("POST", "/v1/chat/attachments", null, form))
     }
 
+    /** Voice input: the server's Whisper turns a recording into text for the chat box. */
+    suspend fun transcribe(audio: ByteArray, mime: String = "audio/mp4", name: String = "voice.m4a"): TranscriptOut {
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("audio", name, audio.toRequestBody(mime.toMediaTypeOrNull()))
+            .build()
+        return json.decodeFromString(TranscriptOut.serializer(), send("POST", "/v1/voice/transcribe", null, form))
+    }
+
     suspend fun deleteAttachment(id: String) {
         send("DELETE", "/v1/chat/attachments/${q(id)}", null)
     }

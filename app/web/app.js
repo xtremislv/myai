@@ -118,6 +118,7 @@ const MI = {
   monitoring: "M120-120v-76l60-60v136h-60Zm165 0v-236l60-60v296h-60Zm165 0v-296l60 61v235h-60Zm165 0v-235l60-60v295h-60Zm165 0v-396l60-60v456h-60ZM120-356v-85l280-278 160 160 280-281v85L560-474 400-634 120-356Z",
   more_vert: "M479.86-160Q460-160 446-174.14t-14-34Q432-228 446.14-242t34-14Q500-256 514-241.86t14 34Q528-188 513.86-174t-34 14Zm0-272Q460-432 446-446.14t-14-34Q432-500 446.14-514t34-14Q500-528 514-513.86t14 34Q528-460 513.86-446t-34 14Zm0-272Q460-704 446-718.14t-14-34Q432-772 446.14-786t34-14Q500-800 514-785.86t14 34Q528-732 513.86-718t-34 14Z",
   north_east: "m202-160-42-42 498-498H364v-60h396v396h-60v-294L202-160Z",
+  notifications_off: "M160-200v-60h80v-304q0-31 9-61t25-56l46 46q-9 17-14.5 35t-5.5 36v304h300L56-800l42-42 764 764-42 42-120-120H160Zm560-150-60-60v-154q0-75-52.5-127.5T480-744q-35 0-66.5 12.5T357-697l-43-43q20-17 44-30t50-20v-30q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820v22q81 17 130.5 83.5T720-564v214Zm-246-82Zm6 352q-33 0-56.5-23.5T400-160h160q0 33-23.5 56.5T480-80Zm11-462Z",
   notifications: "M160-200v-60h80v-304q0-84 49.5-150.5T420-798v-22q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820v22q81 17 130.5 83.5T720-564v304h80v60H160Zm320-302Zm0 422q-33 0-56.5-23.5T400-160h160q0 33-23.5 56.5T480-80ZM300-260h360v-304q0-75-52.5-127.5T480-744q-75 0-127.5 52.5T300-564v304Z",
   person: "M372-523q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42ZM160-160v-94q0-38 19-65t49-41q67-30 128.5-45T480-420q62 0 123 15.5T731-360q31 14 50 41t19 65v94H160Zm60-60h520v-34q0-16-9.5-30.5T707-306q-64-31-117-42.5T480-360q-57 0-111 11.5T252-306q-14 7-23 21.5t-9 30.5v34Zm324.5-346.5Q570-592 570-631t-25.5-64.5Q519-721 480-721t-64.5 25.5Q390-670 390-631t25.5 64.5Q441-541 480-541t64.5-25.5ZM480-631Zm0 411Z",
   person_add: "M730-400v-130H600v-60h130v-130h60v130h130v60H790v130h-60ZM252-523q-42-42-42-108t42-108q42-42 108-42t108 42q42 42 42 108t-42 108q-42 42-108 42t-108-42ZM40-160v-94q0-35 17.5-63.5T108-360q75-33 133.5-46.5T360-420q60 0 118 13.5T611-360q33 15 51 43t18 63v94H40Zm60-60h520v-34q0-16-9-30.5T587-306q-71-33-120-43.5T360-360q-58 0-107.5 10.5T132-306q-15 7-23.5 21.5T100-254v34Zm324.5-346.5Q450-592 450-631t-25.5-64.5Q399-721 360-721t-64.5 25.5Q270-670 270-631t25.5 64.5Q321-541 360-541t64.5-25.5ZM360-631Zm0 411Z",
@@ -125,6 +126,8 @@ const MI = {
   receipt_long: "M222-80q-43.75 0-74.37-30.63Q117-141.25 117-185v-125h127v-570l59.8 60 59.8-60 59.8 60 59.8-60 59.8 60 60-60 60 60 60-60 60 60 60-60v695q0 43.75-30.62 74.37Q781.75-80 738-80H222Zm516-60q20 0 32.5-12.5T783-185v-595H304v470h389v125q0 20 12.5 32.5T738-140ZM357-622v-60h240v60H357Zm0 134v-60h240v60H357Zm333-134q-12 0-21-9t-9-21q0-12 9-21t21-9q12 0 21 9t9 21q0 12-9 21t-21 9Zm0 129q-12 0-21-9t-9-21q0-12 9-21t21-9q12 0 21 9t9 21q0 12-9 21t-21 9ZM221-140h412v-110H177v65q0 20 12.65 32.5T221-140Zm-44 0v-110 110Z",
   restart_alt: "M451-122q-123-10-207-101t-84-216q0-77 35.5-145T295-695l43 43q-56 33-87 90.5T220-439q0 100 66 173t165 84v60Zm60 0v-60q100-12 165-84.5T741-439q0-109-75.5-184.5T481-699h-20l60 60-43 43-133-133 133-133 43 43-60 60h20q134 0 227 93.5T801-439q0 125-83.5 216T511-122Z",
   schedule: "m627-287 45-45-159-160v-201h-60v225l174 181ZM480-80q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-82 31.5-155t86-127.5Q252-817 325-848.5T480-880q82 0 155 31.5t127.5 86Q817-708 848.5-635T880-480q0 82-31.5 155t-86 127.5Q708-143 635-111.5T480-80Zm0-400Zm0 340q140 0 240-100t100-240q0-140-100-240T480-820q-140 0-240 100T140-480q0 140 100 240t240 100Z",
+  mic: "M480-400q-50 0-85-35t-35-85v-240q0-50 35-85t85-35q50 0 85 35t35 85v240q0 50-35 85t-85 35Zm0-240Zm-30 520v-136q-106-11-178-89t-72-184h60q0 91 64.29 153t155.5 62q91.21 0 155.71-62Q730-438 730-529h60q0 106-72 184t-178 89v136h-60Zm30-340q26 0 43-17.25T540-520v-240q0-25.5-17.25-42.75T480-820q-25.5 0-42.75 17.25T420-760v240q0 25.5 17.25 42.75T480-460Z",
+  stop: "M300-660v360-360Zm-60 420v-480h480v480H240Zm60-60h360v-360H300v360Z",
   science: "M172-120q-41.78 0-59.39-39T124-230l248-280v-270h-52q-12.75 0-21.37-8.68-8.63-8.67-8.63-21.5 0-12.82 8.63-21.32 8.62-8.5 21.37-8.5h320q12.75 0 21.38 8.68 8.62 8.67 8.62 21.5 0 12.82-8.62 21.32-8.63 8.5-21.38 8.5h-52v270l248 280q29 32 11.39 71T788-120H172Zm-12-60h640L528-488v-292h-96v292L160-180Zm318-300Z",
   search: "M796-121 533-384q-30 26-70 40.5T378-329q-108 0-183-75t-75-181q0-106 75-181t182-75q106 0 180.5 75T632-585q0 43-14 83t-42 75l264 262-44 44ZM377-389q81 0 138-57.5T572-585q0-81-57-138.5T377-781q-82 0-139.5 57.5T180-585q0 81 57.5 138.5T377-389Z",
   settings: "m388-80-20-126q-19-7-40-19t-37-25l-118 54-93-164 108-79q-2-9-2.5-20.5T185-480q0-9 .5-20.5T188-521L80-600l93-164 118 54q16-13 37-25t40-18l20-127h184l20 126q19 7 40.5 18.5T669-710l118-54 93 164-108 77q2 10 2.5 21.5t.5 21.5q0 10-.5 21t-2.5 21l108 78-93 164-118-54q-16 13-36.5 25.5T592-206L572-80H388Zm48-60h88l14-112q33-8 62.5-25t53.5-41l106 46 40-72-94-69q4-17 6.5-33.5T715-480q0-17-2-33.5t-7-33.5l94-69-40-72-106 46q-23-26-52-43.5T538-708l-14-112h-88l-14 112q-34 7-63.5 24T306-642l-106-46-40 72 94 69q-4 17-6.5 33.5T245-480q0 17 2.5 33.5T254-413l-94 69 40 72 106-46q24 24 53.5 41t62.5 25l14 112Zm44-210q54 0 92-38t38-92q0-54-38-92t-92-38q-54 0-92 38t-38 92q0 54 38 92t92 38Zm0-130Z",
@@ -175,6 +178,73 @@ function mi(name, label) {
   path.setAttribute("d", MI[name] || "");
   svg.append(path);
   return svg;
+}
+
+// Voice input: record in the browser, the server transcribes it (Whisper, /v1/voice/transcribe) and the text
+// lands in the box for the person to check and send. Nothing is sent to the agents until they press send.
+const VOICE_MAX_SECONDS = 180;
+function voiceButton(input, onText, error) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") return null;
+  let recorder = null;
+  let tick = null;
+  const time = h("span", { class: "voice-time", hidden: true });
+  const button = h("button", { type: "button", class: "round voice", "aria-label": "Speak", title: "Speak: voice to text" }, mi("mic"));
+  const show = (mode, seconds = 0) => {
+    button.className = `round voice ${mode}`;
+    button.disabled = mode === "working";
+    button.replaceChildren(mi(mode === "recording" ? "stop" : "mic"));
+    button.setAttribute("aria-label", mode === "recording" ? "Stop and transcribe" : "Speak");
+    button.title = mode === "recording" ? "Stop and turn into text" : mode === "working" ? "Turning speech into text..." : "Speak: voice to text";
+    time.hidden = mode === "idle";
+    time.textContent = mode === "working" ? "Transcribing..." : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  };
+  const type = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4", "audio/webm"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  const start = async () => {
+    error.clear();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch {
+      error.fail(new Error("The microphone isn't available. Allow microphone access for this site and try again."));
+      return;
+    }
+    const chunks = [];
+    recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => {
+      clearInterval(tick);
+      stream.getTracks().forEach((t) => t.stop());
+      recorder = null;
+      const blob = new Blob(chunks, { type: chunks[0]?.type || type || "audio/webm" });
+      if (!blob.size) { show("idle"); return; }
+      show("working");
+      try {
+        const form = new FormData();
+        form.append("audio", blob, blob.type.includes("mp4") ? "voice.m4a" : "voice.webm");
+        const out = await api("/v1/voice/transcribe", { method: "POST", form });
+        if (out.text) onText(out.text);
+        else error.fail(new Error("No speech was heard. Try again a little closer to the microphone."));
+      } catch (err) {
+        error.fail(err);
+      } finally {
+        show("idle");
+      }
+    };
+    recorder.start(1000);
+    const began = Date.now();
+    show("recording");
+    tick = setInterval(() => {
+      const seconds = Math.floor((Date.now() - began) / 1000);
+      show("recording", seconds);
+      if (seconds >= VOICE_MAX_SECONDS && recorder) recorder.stop();
+    }, 500);
+  };
+  button.addEventListener("click", () => {
+    if (recorder) recorder.stop();
+    else start();
+  });
+  show("idle");
+  return h("span", { class: "voice-wrap" }, button, time);
 }
 
 // The brand: "TW" on a dark square, then the name. Size comes from the CSS class.
@@ -1375,6 +1445,11 @@ async function chatView(thread, { reloadThreads, paint, open }) {
     h("div", { class: "composer-actions" },
       h("div", { class: "composer-tools" },
         h("button", { type: "button", class: "round", "aria-label": "Attach a file", title: "Attach a file (text, CSV, PDF, Word)", onclick: () => picker.click() }, mi("attach_file")),
+        voiceButton(input, (text) => {
+          input.value = `${input.value.trimEnd()} ${text}`.trim();
+          grow();
+          input.focus();
+        }, error),
         h("button", { type: "button", class: "round", "aria-label": "Open the live browser", title: "Live browser (sign in to shops, see what the assistant sees)", onclick: () => openBrowser("private", "") }, mi("language")),
         h("span", { class: "divider", "aria-hidden": "true" }),
         h("span", { class: "composer-hint" }, "Enter to send · Shift+Enter for a new line"),
@@ -3110,7 +3185,7 @@ async function templatesView(refresh) {
 }
 
 // ---- scouts: research that keeps running in the background (app/scout.py) ----
-const scoutPage = { id: null, tab: "found", timer: null };
+const scoutPage = { id: null, tab: "found", timer: null, adding: false };
 const SCOUT_TABS = [["found", "Found"], ["new", "New"], ["kept", "Kept"], ["rejected", "Rejected"], ["below", "Below threshold"], ["all", "All judged"]];
 const SOURCE_NAMES = { youtube: "YouTube", reddit: "Reddit", stores: "Gadget brand stores", web: "Web search" };
 
@@ -3136,7 +3211,7 @@ async function scoutsView(refresh) {
   clearTimeout(scoutPage.timer);
   const list = await api("/v1/scouts");
   const error = errorBox();
-  if (!list.length) return scoutStart(refresh, error);
+  if (!list.length || scoutPage.adding) return scoutStart(refresh, error, list.length > 0);
   if (!list.some((s) => s.id === scoutPage.id)) scoutPage.id = list[0].id;
   const [scout, found] = await Promise.all([
     api(`/v1/scouts/${scoutPage.id}`),
@@ -3146,10 +3221,14 @@ async function scoutsView(refresh) {
     heading("Scouts", "Research that keeps running in the background and reports what it finds. Edit the criteria, "
       + "threshold and search ideas below; the next round uses them.",
       { eyebrow: ["Workspace", "Scouts"], actions: [
-        list.length > 1 && h("select", { onchange: (e) => { scoutPage.id = e.target.value; refresh(); } },
-          list.map((s) => h("option", { value: s.id, selected: s.id === scout.id }, s.name))),
         h("button", { type: "button", onclick: () => refresh() }, mi("restart_alt"), "Refresh"),
+        list.some((s) => s.can_edit) && h("button", { type: "button", onclick: () => { scoutPage.adding = true; refresh(); } }, mi("add"), "New scout"),
       ] }),
+    // One scout at a time: its own findings, settings and rounds, never mixed with another's.
+    list.length > 1 && h("div", { class: "row wrap scout-switch", role: "tablist", "aria-label": "Scouts" }, list.map((s) =>
+      h("button", { type: "button", role: "tab", "aria-selected": String(s.id === scout.id), class: s.id === scout.id ? "primary" : "",
+        onclick: () => { scoutPage.id = s.id; scoutPage.tab = "found"; refresh(); } },
+      s.name, s.counts.new ? h("span", { class: "pill" }, String(s.counts.new)) : null, s.muted ? mi("notifications_off", "muted") : null))),
     error,
     scoutStatus(scout, refresh, error),
     scoutFindings(scout, found, refresh, error),
@@ -3162,9 +3241,18 @@ async function scoutsView(refresh) {
   return page;
 }
 
-async function scoutStart(refresh, error) {
+async function scoutStart(refresh, error, cancelable = false) {
   const info = await api("/v1/scouts/defaults");
-  const name = h("input", { required: true, maxLength: 128, value: "Rare gadget finds" });
+  const presets = Object.keys(info.presets || {});
+  const name = h("input", { required: true, maxLength: 128, value: presets[0] || "Rare gadget finds" });
+  const preset = h("select", { onchange: () => { if (preset.value) name.value = preset.value; } },
+    presets.map((p) => h("option", { value: p }, p)), h("option", { value: "" }, "Blank (the general gadget brief)"));
+  const describe = (p) => {
+    const st = (info.presets || {})[p] || info.settings;
+    return `${st.brief || "General gadget brief."} Criteria: ${st.criteria.map((c) => c.name + (c.required ? " (required)" : "")).join(", ")}.`;
+  };
+  const about = h("p", { class: "small muted" }, describe(preset.value));
+  preset.addEventListener("change", () => { about.textContent = describe(preset.value); });
   const dept = h("select", null, info.departments.map((d) => h("option", { value: d, selected: d === "researcher" }, departmentName(d))));
   return h("div", null,
     heading("Scouts", "Research that keeps running in the background and reports what it finds.", { eyebrow: ["Workspace", "Scouts"] }),
@@ -3173,17 +3261,22 @@ async function scoutStart(refresh, error) {
       event.preventDefault();
       error.clear();
       try {
-        const made = await api("/v1/scouts", { method: "POST", body: { name: name.value, department: dept.value } });
+        const settings = preset.value ? info.presets[preset.value] : undefined;
+        const made = await api("/v1/scouts", { method: "POST", body: { name: name.value, department: dept.value, settings } });
         scoutPage.id = made.id;
+        scoutPage.adding = false;
         refresh();
       } catch (err) { error.fail(err); }
     } },
       h("h2", null, "Start a scout"),
-      h("p", { class: "muted small" }, "It starts with the gadget brief: daily use, a cool transformation, several "
-        + "features, cool, very visual on camera, rare; each find with a short summary and a reference video. "
-        + "Everything can be changed afterwards."),
+      h("p", { class: "small muted" }, "Each scout has its own brief, criteria, findings, file and notifications. "
+        + "Every find comes with a short summary and a reference video. Everything can be changed afterwards."),
+      h("label", null, "Start from", preset),
+      about,
       h("div", { class: "row wrap" }, h("label", { class: "grow" }, "Name", name), h("label", null, "Department", dept)),
-      h("button", { class: "primary", type: "submit" }, "Start the scout"),
+      h("div", { class: "row" },
+        h("button", { class: "primary", type: "submit" }, "Start the scout"),
+        cancelable && h("button", { type: "button", onclick: () => { scoutPage.adding = false; refresh(); } }, "Cancel")),
     ) : h("div", { class: "card empty" }, "Scouts belong to a department; you aren't in one that can run them."),
   );
 }
@@ -3202,7 +3295,13 @@ function scoutStatus(scout, refresh, error) {
       h("div", null, h("h2", null, scout.name, " ", pill),
         h("div", { class: "small muted" }, `${departmentName(scout.department)} · every ${st.interval_minutes} min · `
           + (st.pass_rule === "count" ? `passes at ${st.min_met} of ${st.criteria.length} criteria` : `pass mark ${st.threshold}/10`)
-          + ` · up to ${st.per_round} products judged per round`)),
+          + ` · up to ${st.per_round} products judged per round` + (st.market ? ` · must be sold in ${st.market}` : "")),
+        st.brief && h("p", { class: "small" }, st.brief)),
+      h("div", { class: "row" },
+        h("button", { type: "button", title: "Only for you, only this scout",
+          onclick: act("/mute", { method: "PUT", body: { muted: !scout.muted } }) },
+        mi(scout.muted ? "notifications_off" : "notifications"), scout.muted ? "Unmute" : "Mute notifications"),
+      ),
       scout.can_edit && h("div", { class: "row" },
         h("button", { type: "button", class: "primary", disabled: scout.running, onclick: act("/run", { method: "POST" }) }, "Run now"),
         h("button", { type: "button", onclick: act("", { method: "PUT", body: { enabled: !scout.enabled } }) }, scout.enabled ? "Pause" : "Resume"),
@@ -3220,9 +3319,22 @@ function scoutStatus(scout, refresh, error) {
 }
 
 function scoutFindings(scout, found, refresh, error) {
-  const review = (f, status) => async () => {
+  const review = (f, body) => async () => {
     error.clear();
-    try { await api(`/v1/scouts/${scout.id}/findings/${f.id}`, { method: "PATCH", body: { status } }); refresh(); } catch (err) { error.fail(err); }
+    try { await api(`/v1/scouts/${scout.id}/findings/${f.id}`, { method: "PATCH", body }); refresh(); } catch (err) { error.fail(err); }
+  };
+  // Why it was kept or rejected (optional): this scout's model reads these and learns the team's taste.
+  const reviewRow = (f) => {
+    const note = h("input", { class: "grow", maxLength: 1000, value: f.review_note || "",
+      placeholder: "Why keep or reject it? (optional; teaches this scout)", "aria-label": `Reason for ${f.name}` });
+    const withNote = (status) => review(f, { status, note: note.value });
+    return h("div", { class: "row wrap review-row" },
+      note,
+      f.status !== "kept" && h("button", { type: "button", onclick: withNote("kept") }, mi("check_circle"), "Keep"),
+      f.status !== "rejected" && h("button", { type: "button", class: "danger", onclick: withNote("rejected") }, mi("block"), "Reject"),
+      (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", onclick: review(f, { note: note.value }) }, "Save reason"),
+      (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", class: "link", onclick: review(f, { status: "new" }) }, "Undo"),
+    );
   };
   const names = scout.settings.criteria.map((c) => c.name);
   return h("div", { class: "card" },
@@ -3243,11 +3355,8 @@ function scoutFindings(scout, found, refresh, error) {
       ),
       h("div", { class: "scores" }, names.map((n) => h("span", { class: `pill mono${metOf(scout, f).includes(n) ? " good" : ""}` }, `${n} ${f.scores[n] ?? "-"}`))),
       f.why && h("details", null, h("summary", { class: "small" }, "Why"), h("p", { class: "small muted" }, f.why)),
-      scout.can_edit && h("div", { class: "row" },
-        f.status !== "kept" && h("button", { type: "button", onclick: review(f, "kept") }, mi("check_circle"), "Keep"),
-        f.status !== "rejected" && h("button", { type: "button", class: "danger", onclick: review(f, "rejected") }, mi("block"), "Reject"),
-        (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", class: "link", onclick: review(f, "new") }, "Undo"),
-      ),
+      !scout.can_edit && f.review_note && h("p", { class: "small" }, `Reason: ${f.review_note}`),
+      scout.can_edit && reviewRow(f),
     ))) : h("div", { class: "empty" }, scoutPage.tab === "found"
       ? "Nothing has passed yet. The first round starts within a minute of creating the scout; Run now starts one at once."
       : "Nothing here."),
@@ -3292,14 +3401,18 @@ function scoutSettings(scout, refresh, error) {
   const sources = Object.entries(SOURCE_NAMES).map(([id, label]) => [id, h("input", { type: "checkbox", checked: st.sources.includes(id) }), label]);
   const avoid = h("input", { value: st.avoid, maxLength: 400 });
   const ideas = h("textarea", { rows: 6 }, st.ideas.join("\n"));
+  const brief = h("textarea", { rows: 3, maxLength: 800, placeholder: "Channel, audience and format the finds are for" }, st.brief || "");
+  const market = h("input", { value: st.market || "", maxLength: 40, placeholder: "e.g. India (empty = anywhere)" });
   const rows = h("div", { class: "criteria" });
-  const addRow = (c = { name: "", description: "", weight: 1, min: 0 }) => {
+  const addRow = (c = { name: "", description: "", weight: 1, min: 0, required: false }) => {
     const row = h("div", { class: "criterion" },
       h("input", { class: "c-name", value: c.name, placeholder: "Name", maxLength: 60, required: true }),
       h("textarea", { class: "c-desc", rows: 2, placeholder: "What it means", maxLength: 400 }, c.description),
-      h("label", { class: "small" }, "Weight", h("select", { class: "c-weight" },
-        [1, 2, 3].map((w) => h("option", { value: w, selected: w === c.weight }, ["", "normal", "high", "highest"][w])))),
+      h("label", { class: "small" }, "Weight", h("input", { class: "c-weight", type: "number", min: 0, max: 100, step: 1, value: c.weight,
+        title: "Relative weight in the weighted score (e.g. 30 for 30%); 0 = doesn't count towards the score" })),
       h("label", { class: "small" }, "Met at", h("input", { class: "c-min", type: "number", min: 0, max: 10, step: 0.5, value: c.min })),
+      h("label", { class: "small check", title: "A find that doesn't meet this is never kept, whatever its other scores" },
+        h("input", { class: "c-req", type: "checkbox", checked: !!c.required }), "Required"),
       h("button", { type: "button", class: "link danger", onclick: () => row.remove(), title: "Remove" }, mi("delete")),
     );
     rows.append(row);
@@ -3311,6 +3424,7 @@ function scoutSettings(scout, refresh, error) {
     const criteria = [...rows.querySelectorAll(".criterion")].map((r) => ({
       name: r.querySelector(".c-name").value, description: r.querySelector(".c-desc").value,
       weight: Number(r.querySelector(".c-weight").value), min: Number(r.querySelector(".c-min").value),
+      required: r.querySelector(".c-req").checked,
     }));
     try {
       await api(`/v1/scouts/${scout.id}`, { method: "PUT", body: { name: name.value, settings: {
@@ -3318,7 +3432,7 @@ function scoutSettings(scout, refresh, error) {
         per_round: Number(perRound.value), daily_lookups: Number(daily.value), ideas_per_round: Number(ideasPer.value),
         fresh_ideas: Number(fresh.value), require_video: video.checked, notify: notify.checked,
         sources: sources.filter(([, box]) => box.checked).map(([id]) => id), avoid: avoid.value,
-        ideas: ideas.value.split("\n"),
+        ideas: ideas.value.split("\n"), brief: brief.value, market: market.value,
       } } });
       refresh();
     } catch (err) { error.fail(err); }
@@ -3326,9 +3440,12 @@ function scoutSettings(scout, refresh, error) {
     h("h2", null, "Settings"),
     h("p", { class: "small muted" }, "Each criterion is scored 0-10 and counts as met at its \"Met at\" score. "
       + "With \"At least N criteria met\" a product is kept when it meets N of them (any N). With \"Weighted score\" "
-      + "its weighted average must reach the pass mark and every criterion its \"Met at\" score. Changing these "
-      + "re-sorts what was already judged. Rejected finds steer later searches away from similar things."),
+      + "its weighted average (by the weights, e.g. 30/25/22) must reach the pass mark and every criterion its \"Met at\" "
+      + "score. A \"Required\" criterion must always be met. Changing these re-sorts what was already judged. "
+      + "Reasons given when keeping or rejecting finds teach this scout (only this one) what you want."),
     h("label", null, "Name", name),
+    h("label", null, "Who it's for (brief)", brief),
+    h("label", null, "Must be sold in", market),
     h("h3", null, "Criteria"),
     rows,
     h("button", { type: "button", onclick: () => addRow() }, mi("add"), "Add a criterion"),
@@ -3343,8 +3460,8 @@ function scoutSettings(scout, refresh, error) {
       h("label", null, "Products judged per round", perRound),
       h("label", null, "Video lookups per day", daily),
     ),
-    h("p", { class: "small muted" }, "Each judged product uses one YouTube search (100 of the 10,000 daily API units "
-      + "shared with chat), so keep lookups per day around 40-60."),
+    h("p", { class: "small muted" }, "Each judged product uses one YouTube search (100 of the 10,000 daily API units, "
+      + "shared by all scouts and chat), so keep the scouts' lookups per day together under about 70."),
     h("h3", null, "Where and what to search"),
     h("div", { class: "row wrap" }, sources.map(([, box, label]) => h("label", { class: "check" }, box, label))),
     h("div", { class: "row wrap" },
@@ -3355,7 +3472,7 @@ function scoutSettings(scout, refresh, error) {
     h("label", null, "Leave out", avoid),
     h("div", { class: "row wrap" },
       h("label", { class: "check" }, video, "Only keep finds with a reference video"),
-      h("label", { class: "check" }, notify, "Notify the department about new finds"),
+      h("label", { class: "check" }, notify, "Notify the department about new finds (each person can mute it above)"),
     ),
     h("div", { class: "row spread" },
       h("button", { class: "primary", type: "submit" }, "Save settings"),

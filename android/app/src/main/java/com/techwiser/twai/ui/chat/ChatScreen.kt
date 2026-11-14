@@ -11,7 +11,11 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.ui.graphics.Color
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.compose.material.icons.filled.Stop
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.speech.RecognizerIntent
@@ -156,11 +160,24 @@ fun ChatScreen(thread: String, onBack: () -> Unit, draft: String? = null, shared
     LaunchedEffect(sharedFile) { if (sharedFile != null) vm.upload(sharedFile) }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.upload(uri) }
+    // Voice input: recorded here, turned into text by the server's Whisper (same as the website), then put in
+    // the box to check and send. The phone's own recognizer is the fallback if the mic can't be used here.
+    val addHeard: (String) -> Unit = { heard -> input = (input.trimEnd() + " " + heard).trim() }
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-            if (!heard.isNullOrBlank()) input = (input.trimEnd() + " " + heard).trim()
+            if (!heard.isNullOrBlank()) addHeard(heard)
         }
+    }
+    val systemSpeech: () -> Unit = {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Ask TW-ai")
+        runCatching { speech.launch(intent) }.onFailure { toast(context, "Voice input isn't available on this phone.") }
+    }
+    val startVoice: () -> Unit = { if (!vm.startVoice(addHeard)) systemSpeech() }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startVoice() else toast(context, "Allow the microphone in Settings to speak your message.")
     }
 
     // Keep the newest content in view.
@@ -208,11 +225,17 @@ fun ChatScreen(thread: String, onBack: () -> Unit, draft: String? = null, shared
                 uploading = ui.uploading,
                 onSend = { vm.send(input); input = "" },
                 onAttach = { pick.launch(arrayOf("*/*")) },
+                recording = ui.recording,
+                transcribing = ui.transcribing,
                 onMic = {
-                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                        .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                        .putExtra(RecognizerIntent.EXTRA_PROMPT, "Ask TW-ai")
-                    runCatching { speech.launch(intent) }.onFailure { toast(context, "Voice input isn't available on this phone.") }
+                    when {
+                        ui.recording -> vm.stopVoice(addHeard)
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED -> startVoice()
+                        // A permission prompt must never take the app down (see MainActivity).
+                        else -> runCatching { micPermission.launch(Manifest.permission.RECORD_AUDIO) }
+                            .onFailure { systemSpeech() }
+                    }
                 },
             )
         },
@@ -564,6 +587,8 @@ private fun Composer(
     onSend: () -> Unit,
     onAttach: () -> Unit,
     onMic: () -> Unit,
+    recording: Boolean = false,
+    transcribing: Boolean = false,
 ) {
     // Web: .composer, a raised card with a line and a soft shadow, the send button a dark 8 dp square.
     val extra = LocalExtra.current
@@ -593,7 +618,17 @@ private fun Composer(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onAttach) { Icon(Icons.Outlined.AttachFile, contentDescription = "Attach a file", tint = extra.ink2) }
-                    IconButton(onClick = onMic) { Icon(Icons.Outlined.Mic, contentDescription = "Speak", tint = extra.ink2) }
+                    IconButton(onClick = onMic, enabled = !transcribing) {
+                        when {
+                            transcribing -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            recording -> Icon(Icons.Filled.Stop, contentDescription = "Stop and turn into text",
+                                tint = MaterialTheme.colorScheme.error)
+                            else -> Icon(Icons.Outlined.Mic, contentDescription = "Speak", tint = extra.ink2)
+                        }
+                    }
+                    if (recording) Text("Listening… tap to stop", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error)
+                    if (transcribing) Text("Turning into text…", style = MaterialTheme.typography.labelMedium, color = extra.ink2)
                     Spacer(Modifier.weight(1f))
                     FilledIconButton(
                         onClick = onSend,

@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # Brand stores for gadget research (app/browsing/stores.py), "name=https://store,..."; a "web:" prefix
     # searches that store through a site-limited web search. Empty = the built-in list.
     gadget_stores: str = ""
+    # Speech to text for the chat box (scripts/stt_server.py, Whisper on this machine). Empty = voice off.
+    stt_url: str = "http://127.0.0.1:8011"
     # Headless Chromium sessions: one per person, closed after this many idle seconds.
     browser_max_sessions: int = 6
     browser_idle_seconds: int = 600

@@ -48,6 +48,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "ruff>=0.7", "pyyaml>=6.0"]
+# Voice input (scripts/stt_server.py). ctranslate2 4.4 matches CUDA 12 + cuDNN 8; newer needs cuDNN 9.
+voice = ["faster-whisper>=1.2", "ctranslate2>=4.4"]
 
 [tool.ruff]
 line-length = 100

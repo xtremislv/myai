@@ -407,3 +407,18 @@ For YouTube (channel stats, video search, comments), add a YouTube Data API v3 k
 `youtube/api` (Google Cloud console: enable "YouTube Data API v3", create an API key, restrict it to that API).
 The company's own channels are `YOUTUBE_OWN_CHANNELS` in `.env` (`<channel id>=<name>,...`). Without a key the
 agents read YouTube's search page instead (titles and views, links via `scrape_page`).
+
+### Voice input
+
+The chat box's mic (website and Android) is transcribed on this machine by `scripts/stt_server.py` (Whisper
+large-v3-turbo, faster-whisper), which `start_native.sh` starts when the model folder exists:
+
+```bash
+uv pip install --python .venv/bin/python -e ".[voice]"     # faster-whisper + ctranslate2 4.4 (CUDA 12, cuDNN 8)
+.venv/bin/python -c "from huggingface_hub import snapshot_download as d; \
+  d('mobiuslabsgmbh/faster-whisper-large-v3-turbo', local_dir='/root/models/whisper-large-v3-turbo')"   # ~1.6 GB
+```
+
+It needs CUDA 12 cuBLAS and cuDNN 8 (`STT_LIBS`, default: the conda torch libraries on this host) and takes
+~2.3 GB of GPU memory next to vLLM; without a usable GPU it runs on the CPU (slower). Audio is decoded with
+`ffmpeg`. `STT_URL` (default `http://127.0.0.1:8011`, empty = voice off) is where the gateway finds it.

@@ -10,7 +10,7 @@ this file, this file is right.
 - Android app: see `docs/ANDROID_APP.md`. **1.0.71** is published (2026-11-13). 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **716 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **724 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -104,7 +104,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
 | Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**, **watchdog**: all started by `scripts/start_native.sh`. |
-| Database | Postgres 16, migration **0011** (head, scouts). |
+| Database | Postgres 16, migration **0012** (head, scout review notes + mutes). |
 | Network | Agents' web traffic goes through the owner's VPS (see §5.6). Without it this network poisons DNS and cuts many sites. |
 | Backups | `scripts/backup.sh` works natively and was verified with `restore.sh --verify`; **no off-server destination set** (`BACKUP_DEST` empty), no schedule on this host. |
 
@@ -170,7 +170,15 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - Questions about "our channel" triage as **work** (admin/researcher); other channels and topics stay private.
 
 **Scouts: research that keeps running** (2026-11-14, `app/scout.py`, page **Scouts**, `routes_scouts.py`)
-- A department's standing research task; the owner's first is **"Rare gadget finds"** (Research). Every
+- A department's standing research task. The owner's two (Research), separate in everything (findings, runs,
+  file, notifications, review lessons; all keyed by scout id, never mixed in a prompt):
+  - **"TechWiser Instagram"** (was "Rare gadget finds"; old file `Scout/Rare gadget finds.xlsx` left in place):
+    Reels brief, `count` rule, any 2 of the 7 criteria below.
+  - **"GadgetWiser"**: `score` rule, weights affordable 30 / everyday problem 25 / aesthetic 22 / looks one way,
+    acts another 18 / fresh 15, pass mark 6.5, plus **"Available in India" required** (weight 0, met at 7); market
+    "India" adds a "<product> price India" web search to the evidence. Presets: `scout.PRESETS`.
+- Per scout: `brief` (who it's for, in every prompt), `market`, criteria with weight 0-100, "Met at" and a
+  `required` flag (must be met under either rule). Every
   `interval_minutes` (default 120) the scheduler (`scripts/scheduler.py`, own thread per scout) runs a round:
   search ideas (round-robin + model's fresh ones) → YouTube results page, Reddit, gadget stores, web → specific
   products named by the model → **shortlist** of the most promising → per product a reference video (YouTube API,
@@ -178,12 +186,22 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - **Pass rule** (owner): `count` = at least `min_met` (2) criteria met, each met at its "Met at" score (7); or
   `score` = weighted average ≥ threshold and every criterion met. Criteria: daily use, multi-feature, transformation,
   rare find, unexpected function, camera wow, cool factor. All editable on the Scouts page; editing re-sorts the
-  judged findings at once (`scout.rescore`); people keep/reject finds (rejections steer later searches).
+  judged findings at once (`scout.rescore`); people keep/reject finds (rejections steer later searches), with an
+  optional **reason** (`review_note`): `scout.lessons` feeds this scout's own kept/rejected finds and reasons into its
+  idea, pick, shortlist and judge prompts, so it learns the team's taste. Each person can **mute** each scout
+  (`scout_mutes`, `PUT /v1/scouts/{id}/mute`); the bell skips them for that scout only.
 - Everything judged is stored (`scout_findings`, statuses new/kept/rejected/below), so nothing is judged twice;
   rounds in `scout_runs` (migration **0011**). Report file `shared/<dept>/Scout/<name>.xlsx` (Findings, Below
   threshold, Runs, Settings) rewritten every round; department members get a bell notification for new finds.
-- Access = the department's files ACL on `Scout/` (members only). YouTube budget: `daily_lookups` (40) video searches
-  per scout per day (100 units each of the shared 10k). Run now on a paused scout runs one round, then pauses.
+- Access = the department's files ACL on `Scout/` (members only). YouTube budget: `daily_lookups` (30 each) video
+  searches per scout per day (100 units each of the shared 10k: two scouts = 6k, the rest for chat). Run now on a paused scout runs one round, then pauses.
+
+**Voice input** (2026-11-14): a mic button in the chat box on the website and in the Android app. The recording goes
+to `POST /v1/voice/transcribe` (`routes_voice.py`: signed in, 12 MB, 20 a minute per person) → the local Whisper
+service `scripts/stt_server.py` (127.0.0.1:8011, **Whisper large-v3-turbo** via faster-whisper on the GPU, ~2.3 GB,
+~0.5 s for 11 s of speech; CPU int8 fallback). Text lands in the box to check and send (then the usual triage);
+audio and text are never stored or logged. Android records AAC in the app (RECORD_AUDIO) and falls back to the
+phone's recognizer if the mic can't be used. Setup: docs/SERVER_SETUP.md "Voice input".
 
 **Sharing with colleagues** (2026-11-05)
 - "Send this to sayan": `share_with` delivers a note and files to another user (notification + Files > Shared
@@ -272,7 +290,8 @@ the web, read and answer mail, manage files, make documents from templates, set 
      └──► agents' web traffic ──► SOCKS 127.0.0.1:1080 ══SSH══► owner's VPS (Mumbai) ──► websites
           (httpx + headless Chromium, through the network guard)
 
-   scheduler  (scripts/scheduler.py): due reminders every 30 s, digests every 5 min, cleanup hourly
+   scheduler  (scripts/scheduler.py): due reminders every 30 s, digests every 5 min, cleanup hourly, scouts
+   stt :8011  (scripts/stt_server.py): Whisper speech to text for the chat box's mic, GPU
    retention  (scripts/purge_history.py hourly): deletes attachments older than 3 days
 ```
 

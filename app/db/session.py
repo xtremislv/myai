@@ -402,6 +402,18 @@ class ScoutFinding(Base):
     source: Mapped[str] = mapped_column(String(600), default="")
     found_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     reviewed_by: Mapped[str] = mapped_column(String(128), default="")
+    # Why a person kept or rejected it (optional). The scout's own model prompts read these, so it learns
+    # the department's taste for this scout only (never another scout's notes).
+    review_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class ScoutMute(Base):
+    """A person who muted a scout's notifications (each person, each scout, separately)."""
+
+    __tablename__ = "scout_mutes"
+    scout_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 def get_session() -> Iterator[Session]:

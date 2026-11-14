@@ -46,6 +46,8 @@ data class ChatUi(
     val requests: List<ChatRequestOut> = emptyList(),
     val attachments: List<AttachmentOut> = emptyList(),
     val uploading: Boolean = false,
+    val recording: Boolean = false,
+    val transcribing: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
     val mode: String = "auto",
@@ -250,6 +252,7 @@ class ChatViewModel(private val app: TwApp, val thread: String) : ViewModel() {
 
     /** The app went to the background mid-reply: a worker follows it and notifies. */
     fun onBackground() {
+        if (_ui.value.recording) cancelVoice() // never keep the mic on behind the person's back
         val run = runId
         if (_ui.value.busy && run != null) FollowRunWorker.start(app, thread, run)
     }
@@ -278,6 +281,50 @@ class ChatViewModel(private val app: TwApp, val thread: String) : ViewModel() {
                 _ui.update { it.copy(uploading = false) }
             }
         }
+    }
+
+    // ---- voice input ----
+    private var recorder: VoiceRecorder? = null
+
+    /** Starts recording; returns false if the microphone couldn't be used. [onText] gets the transcript. */
+    fun startVoice(onText: (String) -> Unit): Boolean {
+        val r = recorder ?: VoiceRecorder(app).also { recorder = it }
+        return try {
+            r.start { viewModelScope.launch { stopVoice(onText) } }
+            _ui.update { it.copy(recording = true, error = null) }
+            true
+        } catch (e: Exception) {
+            _ui.update { it.copy(recording = false) }
+            false
+        }
+    }
+
+    fun stopVoice(onText: (String) -> Unit) {
+        val audio = recorder?.stop()
+        _ui.update { it.copy(recording = false) }
+        if (audio == null) {
+            _ui.update { it.copy(notice = "Nothing was recorded. Hold the phone closer and try again.") }
+            return
+        }
+        viewModelScope.launch {
+            _ui.update { it.copy(transcribing = true) }
+            try {
+                val out = api.transcribe(audio)
+                if (out.text.isBlank()) _ui.update { it.copy(notice = "No speech was heard. Try again.") }
+                else onText(out.text)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update { it.copy(error = friendly(e)) }
+            } finally {
+                _ui.update { it.copy(transcribing = false) }
+            }
+        }
+    }
+
+    fun cancelVoice() {
+        recorder?.cancel()
+        _ui.update { it.copy(recording = false) }
     }
 
     fun removeAttachment(id: String) {
@@ -316,6 +363,7 @@ class ChatViewModel(private val app: TwApp, val thread: String) : ViewModel() {
     override fun onCleared() {
         // Leaving the chat mid-reply: keep following in the background.
         onBackground()
+        recorder?.cancel()
     }
 
     companion object {

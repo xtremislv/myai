@@ -47,6 +47,7 @@ status() {
   up gateway "curl -sf http://127.0.0.1:8000/healthz"
   up retention "alive retention"
   up scheduler "alive scheduler"
+  up stt "curl -sf http://127.0.0.1:8011/health | grep -q true"
   up loki "curl -sf http://127.0.0.1:3100/ready"
   up alloy "curl -sf http://127.0.0.1:12345/-/ready"
   up prometheus "curl -sf http://127.0.0.1:9090/-/ready"
@@ -127,6 +128,14 @@ fi
 if ! curl -sf http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
   "$PY" -m alembic upgrade head >> "$LOG_DIR/gateway.log" 2>&1 || { echo "migrations failed, see $LOG_DIR/gateway.log" >&2; exit 1; }
   start_bg gateway "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+fi
+
+# Voice input (scripts/stt_server.py): Whisper on the GPU, which needs CUDA 12 cuBLAS + cuDNN 8 (from the
+# conda torch here; STT_LIBS overrides). Skipped when the model isn't downloaded (docs/SERVER_SETUP.md).
+STT_MODEL="${STT_MODEL:-/root/models/whisper-large-v3-turbo}"
+if [[ -d "$STT_MODEL" ]] && "$PY" -c "import faster_whisper" 2>/dev/null; then
+  STT_LIBS="${STT_LIBS:-/opt/conda/lib:/opt/conda/lib/python3.10/site-packages/torch/lib}"
+  STT_MODEL="$STT_MODEL" LD_LIBRARY_PATH="$STT_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" start_bg stt "$PY" -m scripts.stt_server
 fi
 
 # Deletes chat attachments after 3 days, hourly, like the compose "retention" service.

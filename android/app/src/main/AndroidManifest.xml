@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Voice input in the chat box: recorded only while the mic button is on, sent to our server's Whisper. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Self-update from the server (update/Updater.kt). Android asks the person before the first one. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />

@@ -16,7 +16,7 @@ from app import scout as scouts
 from app.acl.engine import ACLEngine
 from app.acl.models import Action, Subject
 from app.api.deps import current_subject
-from app.db.session import Scout, ScoutFinding, ScoutRun, get_session
+from app.db.session import Scout, ScoutFinding, ScoutMute, ScoutRun, get_session
 from app.departments.packs import DEFAULT_DEPARTMENTS
 from app.storage import objects
 from app.storage.deptfiles import key_for
@@ -73,6 +73,7 @@ class ScoutOut(BaseModel):
     counts: dict[str, int]
     file: str
     can_edit: bool
+    muted: bool = False  # the caller muted this scout's notifications
     runs: list[RunOut] = []
 
 
@@ -91,6 +92,7 @@ class FindingOut(BaseModel):
     price: str
     found_at: dt.datetime | None
     reviewed_by: str
+    review_note: str = ""
 
 
 def _out(session: Session, subject: Subject, row: Scout, runs: int = 0) -> ScoutOut:
@@ -106,6 +108,7 @@ def _out(session: Session, subject: Subject, row: Scout, runs: int = 0) -> Scout
         next_run_at=row.next_run_at if row.enabled else None, counts=counts,
         file=key_for(scouts.report_path(row), row.department),
         can_edit=_allowed(session, subject, row.department, Action.WRITE),
+        muted=session.get(ScoutMute, (row.id, subject.id)) is not None,
         runs=[RunOut(id=r.id, started_at=r.started_at, finished_at=r.finished_at, status=r.status, trigger=r.trigger,
                      queries=list(r.queries or []), candidates=r.candidates, judged=r.judged, added=r.added,
                      notes=r.notes) for r in recent])
@@ -120,7 +123,8 @@ def list_scouts(subject: Subject = Depends(current_subject), session: Session = 
 @router.get("/defaults")
 def defaults(subject: Subject = Depends(current_subject), session: Session = Depends(get_session)):
     """What a new scout starts with, and the departments the caller can make one for."""
-    return {"settings": scouts.DEFAULTS, "sources": list(scouts.SOURCES), "limits": scouts.LIMITS,
+    return {"settings": scouts.DEFAULTS, "presets": {k: scouts.clean_settings(v) for k, v in scouts.PRESETS.items()},
+            "sources": list(scouts.SOURCES), "limits": scouts.LIMITS, "max_weight": scouts.MAX_WEIGHT,
             "departments": _departments(session, subject)}
 
 
@@ -203,6 +207,7 @@ def delete_scout(scout_id: str, subject: Subject = Depends(current_subject), ses
     if row.running_since is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "wait for the running round to finish, or pause it first")
     session.query(ScoutFinding).filter(ScoutFinding.scout_id == row.id).delete()
+    session.query(ScoutMute).filter(ScoutMute.scout_id == row.id).delete()
     session.query(ScoutRun).filter(ScoutRun.scout_id == row.id).delete()
     session.delete(row)
     session.commit()
@@ -222,27 +227,54 @@ def findings(scout_id: str, state: str = "found", limit: int = 200, subject: Sub
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "unknown state")
     q = q.order_by(ScoutFinding.found_at.desc()) if state != "found" else q.order_by(
         ScoutFinding.total.desc(), ScoutFinding.found_at.desc())
-    return [FindingOut(id=f.id, name=f.name, summary=f.summary, why=f.why, scores=dict(f.scores or {}), total=f.total,
-                       status=f.status, video_url=f.video_url, video_title=f.video_title, video_views=f.video_views,
-                       product_url=f.product_url, price=f.price, found_at=f.found_at, reviewed_by=f.reviewed_by)
-            for f in q.limit(max(1, min(limit, 1000)))]
+    return [_finding(f) for f in q.limit(max(1, min(limit, 1000)))]
+
+
+def _finding(f: ScoutFinding) -> FindingOut:
+    return FindingOut(id=f.id, name=f.name, summary=f.summary, why=f.why, scores=dict(f.scores or {}), total=f.total,
+                      status=f.status, video_url=f.video_url, video_title=f.video_title, video_views=f.video_views,
+                      product_url=f.product_url, price=f.price, found_at=f.found_at, reviewed_by=f.reviewed_by,
+                      review_note=f.review_note or "")
 
 
 class Review(BaseModel):
-    status: Literal["new", "kept", "rejected"]
+    status: Literal["new", "kept", "rejected"] | None = None
+    # Optional: why it was kept or rejected. This scout's model reads these to learn the team's taste.
+    note: str | None = Field(default=None, max_length=1000)
 
 
 @router.patch("/{scout_id}/findings/{finding_id}", response_model=FindingOut)
 def review(scout_id: str, finding_id: str, body: Review, subject: Subject = Depends(current_subject),
            session: Session = Depends(get_session)):
-    """Keep or reject a finding (a rejected one stays known, so it is never suggested again)."""
+    """Keep or reject a finding, optionally saying why (a rejected one stays known, so it is never suggested
+    again; the reason teaches this scout what the team wants)."""
     _scout(session, subject, scout_id, Action.WRITE)
     f = session.get(ScoutFinding, finding_id)
     if f is None or f.scout_id != scout_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such finding")
-    f.status = body.status
+    if body.status is None and body.note is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "nothing to change")
+    if body.status is not None:
+        f.status = body.status
+    if body.note is not None:
+        f.review_note = " ".join(body.note.split())
     f.reviewed_by = subject.id
     session.commit()
-    return FindingOut(id=f.id, name=f.name, summary=f.summary, why=f.why, scores=dict(f.scores or {}), total=f.total,
-                      status=f.status, video_url=f.video_url, video_title=f.video_title, video_views=f.video_views,
-                      product_url=f.product_url, price=f.price, found_at=f.found_at, reviewed_by=f.reviewed_by)
+    return _finding(f)
+
+
+class MuteIn(BaseModel):
+    muted: bool
+
+
+@router.put("/{scout_id}/mute", response_model=ScoutOut)
+def mute(scout_id: str, body: MuteIn, subject: Subject = Depends(current_subject), session: Session = Depends(get_session)):
+    """Mute or unmute this scout's notifications for yourself only (other members and other scouts unchanged)."""
+    row = _scout(session, subject, scout_id)
+    existing = session.get(ScoutMute, (row.id, subject.id))
+    if body.muted and existing is None:
+        session.add(ScoutMute(scout_id=row.id, user_id=subject.id))
+    elif not body.muted and existing is not None:
+        session.delete(existing)
+    session.commit()
+    return _out(session, subject, row, runs=30)

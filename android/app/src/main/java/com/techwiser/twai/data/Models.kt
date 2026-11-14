@@ -191,6 +191,9 @@ data class AttachmentOut(
 )
 
 @Serializable
+data class TranscriptOut(val text: String = "", val language: String = "", val seconds: Double = 0.0)
+
+@Serializable
 data class UploadOut(val outcome: String = "ok", val reason: String = "", val attachment: AttachmentOut? = null)
 
 // ---- notifications & reminders ----
