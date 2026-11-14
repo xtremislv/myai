@@ -757,6 +757,7 @@ function morePages() {
     has("admin") && ["users", "Users", usersView, null, "group", "work"],
     has("admin") && ["credentials", "Credentials", credentialsView, null, "key", "work"],
     ["templates", "Templates", templatesView, null, "description", "work"],
+    has("researcher", "account", "hr", "logistics", "superuser") && ["scouts", "Scouts", scoutsView, null, "science", "work"],
     ["files", "Files", filesView, null, "folder", "mine"],
     ["reminders", "Reminders", remindersView, null, "alarm", "mine"],
     ["notifications", "Notifications", notificationsView, "unread_notifications", "notifications", "mine"],
@@ -3104,6 +3105,265 @@ async function templatesView(refresh) {
         + "a table row using {{ item.description }} and {{ item.amount }} repeats once per line item. A file "
         + "without placeholders works too: new documents copy its structure and style with the new facts."),
       h("button", { class: "primary", type: "submit" }, "Upload"),
+    ),
+  );
+}
+
+// ---- scouts: research that keeps running in the background (app/scout.py) ----
+const scoutPage = { id: null, tab: "found", timer: null };
+const SCOUT_TABS = [["found", "Found"], ["new", "New"], ["kept", "Kept"], ["rejected", "Rejected"], ["below", "Below threshold"], ["all", "All judged"]];
+const SOURCE_NAMES = { youtube: "YouTube", reddit: "Reddit", stores: "Gadget brand stores", web: "Web search" };
+
+function untilText(iso) {
+  const mins = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+  if (mins <= 0) return "within a minute";
+  if (mins < 60) return `in ${mins} min`;
+  return `in ${Math.floor(mins / 60)} h ${mins % 60 ? `${mins % 60} min` : ""}`.trim();
+}
+
+function views(n) {
+  if (n >= 1e7) return `${(n / 1e7).toFixed(1)} crore views`;
+  if (n >= 1e5) return `${(n / 1e5).toFixed(1)} lakh views`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K views`;
+  return `${n} views`;
+}
+
+function extLink(url, text) {
+  return /^https?:\/\//.test(url || "") ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, text || url) : null;
+}
+
+async function scoutsView(refresh) {
+  clearTimeout(scoutPage.timer);
+  const list = await api("/v1/scouts");
+  const error = errorBox();
+  if (!list.length) return scoutStart(refresh, error);
+  if (!list.some((s) => s.id === scoutPage.id)) scoutPage.id = list[0].id;
+  const [scout, found] = await Promise.all([
+    api(`/v1/scouts/${scoutPage.id}`),
+    api(`/v1/scouts/${scoutPage.id}/findings?state=${scoutPage.tab}`),
+  ]);
+  const page = h("div", null,
+    heading("Scouts", "Research that keeps running in the background and reports what it finds. Edit the criteria, "
+      + "threshold and search ideas below; the next round uses them.",
+      { eyebrow: ["Workspace", "Scouts"], actions: [
+        list.length > 1 && h("select", { onchange: (e) => { scoutPage.id = e.target.value; refresh(); } },
+          list.map((s) => h("option", { value: s.id, selected: s.id === scout.id }, s.name))),
+        h("button", { type: "button", onclick: () => refresh() }, mi("restart_alt"), "Refresh"),
+      ] }),
+    error,
+    scoutStatus(scout, refresh, error),
+    scoutFindings(scout, found, refresh, error),
+    scoutRuns(scout),
+    scout.can_edit && scoutSettings(scout, refresh, error),
+  );
+  if (scout.running) {  // follow a running round until it ends
+    scoutPage.timer = setTimeout(() => { if (page.isConnected) refresh(); }, 15000);
+  }
+  return page;
+}
+
+async function scoutStart(refresh, error) {
+  const info = await api("/v1/scouts/defaults");
+  const name = h("input", { required: true, maxLength: 128, value: "Rare gadget finds" });
+  const dept = h("select", null, info.departments.map((d) => h("option", { value: d, selected: d === "researcher" }, departmentName(d))));
+  return h("div", null,
+    heading("Scouts", "Research that keeps running in the background and reports what it finds.", { eyebrow: ["Workspace", "Scouts"] }),
+    error,
+    info.departments.length ? h("form", { class: "card", onsubmit: async (event) => {
+      event.preventDefault();
+      error.clear();
+      try {
+        const made = await api("/v1/scouts", { method: "POST", body: { name: name.value, department: dept.value } });
+        scoutPage.id = made.id;
+        refresh();
+      } catch (err) { error.fail(err); }
+    } },
+      h("h2", null, "Start a scout"),
+      h("p", { class: "muted small" }, "It starts with the gadget brief: daily use, a cool transformation, several "
+        + "features, cool, very visual on camera, rare; each find with a short summary and a reference video. "
+        + "Everything can be changed afterwards."),
+      h("div", { class: "row wrap" }, h("label", { class: "grow" }, "Name", name), h("label", null, "Department", dept)),
+      h("button", { class: "primary", type: "submit" }, "Start the scout"),
+    ) : h("div", { class: "card empty" }, "Scouts belong to a department; you aren't in one that can run them."),
+  );
+}
+
+function scoutStatus(scout, refresh, error) {
+  const st = scout.settings;
+  const pill = scout.running ? h("span", { class: "pill dot info" }, "Searching now")
+    : scout.enabled ? h("span", { class: "pill dot good" }, "Active") : h("span", { class: "pill dot warn" }, "Paused");
+  const act = (path, opts) => async () => {
+    error.clear();
+    try { await api(`/v1/scouts/${scout.id}${path}`, opts); refresh(); } catch (err) { error.fail(err); }
+  };
+  const c = scout.counts;
+  return h("div", { class: "card scout-status" },
+    h("div", { class: "row spread wrap" },
+      h("div", null, h("h2", null, scout.name, " ", pill),
+        h("div", { class: "small muted" }, `${departmentName(scout.department)} · every ${st.interval_minutes} min · `
+          + (st.pass_rule === "count" ? `passes at ${st.min_met} of ${st.criteria.length} criteria` : `pass mark ${st.threshold}/10`)
+          + ` · up to ${st.per_round} products judged per round`)),
+      scout.can_edit && h("div", { class: "row" },
+        h("button", { type: "button", class: "primary", disabled: scout.running, onclick: act("/run", { method: "POST" }) }, "Run now"),
+        h("button", { type: "button", onclick: act("", { method: "PUT", body: { enabled: !scout.enabled } }) }, scout.enabled ? "Pause" : "Resume"),
+      ),
+    ),
+    h("div", { class: "scout-numbers" },
+      [["New", c.new], ["Kept", c.kept], ["Rejected", c.rejected], ["Below threshold", c.below]].map(([label, n]) =>
+        h("div", null, h("strong", null, String(n || 0)), h("span", { class: "small muted" }, label))),
+      h("div", null, h("strong", null, scout.last_run_at ? whenText(scout.last_run_at) : "never"), h("span", { class: "small muted" }, "Last round")),
+      h("div", null, h("strong", null, scout.running ? "running" : scout.next_run_at ? untilText(scout.next_run_at) : "paused"),
+        h("span", { class: "small muted" }, "Next round")),
+    ),
+    h("p", { class: "small muted" }, "Report file (department files): ", h("span", { class: "mono" }, scout.file)),
+  );
+}
+
+function scoutFindings(scout, found, refresh, error) {
+  const review = (f, status) => async () => {
+    error.clear();
+    try { await api(`/v1/scouts/${scout.id}/findings/${f.id}`, { method: "PATCH", body: { status } }); refresh(); } catch (err) { error.fail(err); }
+  };
+  const names = scout.settings.criteria.map((c) => c.name);
+  return h("div", { class: "card" },
+    h("div", { class: "row wrap scout-tabs" }, SCOUT_TABS.map(([id, label]) =>
+      h("button", { type: "button", class: id === scoutPage.tab ? "primary" : "", onclick: () => { scoutPage.tab = id; refresh(); } }, label))),
+    found.length ? h("div", { class: "findings" }, found.map((f) => h("article", { class: "finding" },
+      h("div", { class: "row spread wrap" },
+        h("h3", null, f.name),
+        h("span", { class: `pill ${f.status === "below" || f.status === "rejected" ? "warn" : "good"}` },
+          scout.settings.pass_rule === "count" ? `meets ${metOf(scout, f).length} · ${f.total.toFixed(1)} / 10` : `${f.total.toFixed(1)} / 10`),
+      ),
+      f.summary && h("p", null, f.summary),
+      h("div", { class: "small finding-links" },
+        f.video_url ? h("span", null, mi("north_east"), extLink(f.video_url, f.video_title || "Reference video"), ` · ${views(f.video_views)}`)
+          : h("span", { class: "muted" }, "No reference video"),
+        f.product_url && h("span", null, mi("north_east"), extLink(f.product_url, "Product"), f.price ? ` · ${f.price}` : ""),
+        f.found_at && h("span", { class: "muted" }, `found ${whenText(f.found_at)}`),
+      ),
+      h("div", { class: "scores" }, names.map((n) => h("span", { class: `pill mono${metOf(scout, f).includes(n) ? " good" : ""}` }, `${n} ${f.scores[n] ?? "-"}`))),
+      f.why && h("details", null, h("summary", { class: "small" }, "Why"), h("p", { class: "small muted" }, f.why)),
+      scout.can_edit && h("div", { class: "row" },
+        f.status !== "kept" && h("button", { type: "button", onclick: review(f, "kept") }, mi("check_circle"), "Keep"),
+        f.status !== "rejected" && h("button", { type: "button", class: "danger", onclick: review(f, "rejected") }, mi("block"), "Reject"),
+        (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", class: "link", onclick: review(f, "new") }, "Undo"),
+      ),
+    ))) : h("div", { class: "empty" }, scoutPage.tab === "found"
+      ? "Nothing has passed yet. The first round starts within a minute of creating the scout; Run now starts one at once."
+      : "Nothing here."),
+  );
+}
+
+function metOf(scout, f) {
+  return scout.settings.criteria.filter((c) => (f.scores[c.name] ?? 0) >= c.min).map((c) => c.name);
+}
+
+function scoutRuns(scout) {
+  return h("div", { class: "card" }, h("h2", null, "Rounds"), table(
+    ["Started", "Status", "Searched", "Candidates", "Judged", "Added", "Notes"],
+    scout.runs.map((r) => [
+      r.started_at ? whenText(r.started_at) : "",
+      h("span", { class: `pill ${r.status === "done" ? "good" : r.status === "failed" ? "bad" : "info"}` },
+        r.status === "running" ? "running" : r.status, r.trigger === "manual" ? " (manual)" : ""),
+      h("span", { class: "small" }, r.queries.join(", ")),
+      r.candidates, r.judged, r.added,
+      h("span", { class: "small muted" }, r.notes),
+    ]),
+    "No rounds yet.",
+  ));
+}
+
+function scoutSettings(scout, refresh, error) {
+  const st = scout.settings;
+  const num = (value, min, max, step = 1) => h("input", { type: "number", value, min, max, step, required: true });
+  const name = h("input", { value: scout.name, maxLength: 128, required: true });
+  const threshold = num(st.threshold, 0, 10, 0.5);
+  const rule = h("select", null,
+    h("option", { value: "count", selected: st.pass_rule === "count" }, "At least N criteria met"),
+    h("option", { value: "score", selected: st.pass_rule === "score" }, "Weighted score, every minimum met"));
+  const minMet = num(st.min_met, 1, 12);
+  const interval = num(st.interval_minutes, 15, 10080);
+  const perRound = num(st.per_round, 1, 15);
+  const daily = num(st.daily_lookups, 1, 90);
+  const ideasPer = num(st.ideas_per_round, 1, 8);
+  const fresh = num(st.fresh_ideas, 0, 5);
+  const video = h("input", { type: "checkbox", checked: st.require_video });
+  const notify = h("input", { type: "checkbox", checked: st.notify });
+  const sources = Object.entries(SOURCE_NAMES).map(([id, label]) => [id, h("input", { type: "checkbox", checked: st.sources.includes(id) }), label]);
+  const avoid = h("input", { value: st.avoid, maxLength: 400 });
+  const ideas = h("textarea", { rows: 6 }, st.ideas.join("\n"));
+  const rows = h("div", { class: "criteria" });
+  const addRow = (c = { name: "", description: "", weight: 1, min: 0 }) => {
+    const row = h("div", { class: "criterion" },
+      h("input", { class: "c-name", value: c.name, placeholder: "Name", maxLength: 60, required: true }),
+      h("textarea", { class: "c-desc", rows: 2, placeholder: "What it means", maxLength: 400 }, c.description),
+      h("label", { class: "small" }, "Weight", h("select", { class: "c-weight" },
+        [1, 2, 3].map((w) => h("option", { value: w, selected: w === c.weight }, ["", "normal", "high", "highest"][w])))),
+      h("label", { class: "small" }, "Met at", h("input", { class: "c-min", type: "number", min: 0, max: 10, step: 0.5, value: c.min })),
+      h("button", { type: "button", class: "link danger", onclick: () => row.remove(), title: "Remove" }, mi("delete")),
+    );
+    rows.append(row);
+  };
+  st.criteria.forEach((c) => addRow(c));
+  return h("form", { class: "card", onsubmit: async (event) => {
+    event.preventDefault();
+    error.clear();
+    const criteria = [...rows.querySelectorAll(".criterion")].map((r) => ({
+      name: r.querySelector(".c-name").value, description: r.querySelector(".c-desc").value,
+      weight: Number(r.querySelector(".c-weight").value), min: Number(r.querySelector(".c-min").value),
+    }));
+    try {
+      await api(`/v1/scouts/${scout.id}`, { method: "PUT", body: { name: name.value, settings: {
+        criteria, pass_rule: rule.value, min_met: Number(minMet.value), threshold: Number(threshold.value), interval_minutes: Number(interval.value),
+        per_round: Number(perRound.value), daily_lookups: Number(daily.value), ideas_per_round: Number(ideasPer.value),
+        fresh_ideas: Number(fresh.value), require_video: video.checked, notify: notify.checked,
+        sources: sources.filter(([, box]) => box.checked).map(([id]) => id), avoid: avoid.value,
+        ideas: ideas.value.split("\n"),
+      } } });
+      refresh();
+    } catch (err) { error.fail(err); }
+  } },
+    h("h2", null, "Settings"),
+    h("p", { class: "small muted" }, "Each criterion is scored 0-10 and counts as met at its \"Met at\" score. "
+      + "With \"At least N criteria met\" a product is kept when it meets N of them (any N). With \"Weighted score\" "
+      + "its weighted average must reach the pass mark and every criterion its \"Met at\" score. Changing these "
+      + "re-sorts what was already judged. Rejected finds steer later searches away from similar things."),
+    h("label", null, "Name", name),
+    h("h3", null, "Criteria"),
+    rows,
+    h("button", { type: "button", onclick: () => addRow() }, mi("add"), "Add a criterion"),
+    h("h3", null, "When a product passes, and pace"),
+    h("div", { class: "row wrap" },
+      h("label", null, "Pass rule", rule),
+      h("label", null, "Criteria needed (N)", minMet),
+      h("label", null, "Pass mark (weighted rule)", threshold),
+    ),
+    h("div", { class: "row wrap" },
+      h("label", null, "Every (minutes)", interval),
+      h("label", null, "Products judged per round", perRound),
+      h("label", null, "Video lookups per day", daily),
+    ),
+    h("p", { class: "small muted" }, "Each judged product uses one YouTube search (100 of the 10,000 daily API units "
+      + "shared with chat), so keep lookups per day around 40-60."),
+    h("h3", null, "Where and what to search"),
+    h("div", { class: "row wrap" }, sources.map(([, box, label]) => h("label", { class: "check" }, box, label))),
+    h("div", { class: "row wrap" },
+      h("label", null, "Search ideas per round", ideasPer),
+      h("label", null, "New ideas the model adds per round", fresh),
+    ),
+    h("label", null, "Search ideas (one per line, used in turn)", ideas),
+    h("label", null, "Leave out", avoid),
+    h("div", { class: "row wrap" },
+      h("label", { class: "check" }, video, "Only keep finds with a reference video"),
+      h("label", { class: "check" }, notify, "Notify the department about new finds"),
+    ),
+    h("div", { class: "row spread" },
+      h("button", { class: "primary", type: "submit" }, "Save settings"),
+      h("button", { type: "button", class: "danger", onclick: async () => {
+        if (!window.confirm(`Delete the scout "${scout.name}" and everything it found? The report file stays in the department's files.`)) return;
+        error.clear();
+        try { await api(`/v1/scouts/${scout.id}`, { method: "DELETE" }); scoutPage.id = null; refresh(); } catch (err) { error.fail(err); }
+      } }, "Delete scout"),
     ),
   );
 }

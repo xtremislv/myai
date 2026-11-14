@@ -11,6 +11,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     Integer,
     LargeBinary,
     String,
@@ -337,6 +338,70 @@ class AuditLog(Base):
     resource: Mapped[str] = mapped_column(String(256))
     decision: Mapped[str] = mapped_column(String(16))  # allow|deny|read|write
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Scout(Base):
+    """A standing research task that keeps looking for things matching its criteria (app/scout.py),
+    owned by a department (its members see and edit it). `settings` holds the editable part: criteria,
+    threshold, search ideas, sources, pace (see scout.DEFAULTS)."""
+
+    __tablename__ = "scouts"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    department: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_false())
+    created_by: Mapped[str] = mapped_column(String(128))
+    updated_by: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    next_run_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_run_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    running_since: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cursor: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # next search idea to use
+
+
+class ScoutRun(Base):
+    """One round of a scout: what it searched, how many candidates it judged and kept."""
+
+    __tablename__ = "scout_runs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scout_id: Mapped[str] = mapped_column(String(64), index=True)
+    started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running|done|failed
+    trigger: Mapped[str] = mapped_column(String(16), default="schedule")  # schedule|manual
+    queries: Mapped[list] = mapped_column(JSON, default=list)
+    candidates: Mapped[int] = mapped_column(Integer, default=0)
+    judged: Mapped[int] = mapped_column(Integer, default=0)
+    added: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class ScoutFinding(Base):
+    """Something a scout judged. status: new (passed, not reviewed yet), kept, rejected (by a person),
+    below (didn't pass the criteria; kept so it is never judged twice)."""
+
+    __tablename__ = "scout_findings"
+    __table_args__ = (UniqueConstraint("scout_id", "key", name="uq_scout_finding_key"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scout_id: Mapped[str] = mapped_column(String(64), index=True)
+    run_id: Mapped[str] = mapped_column(String(64), default="")
+    key: Mapped[str] = mapped_column(String(160))
+    name: Mapped[str] = mapped_column(String(300))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    why: Mapped[str] = mapped_column(Text, default="")
+    scores: Mapped[dict] = mapped_column(JSON, default=dict)
+    total: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(16), default="new", index=True)
+    video_url: Mapped[str] = mapped_column(String(300), default="")
+    video_title: Mapped[str] = mapped_column(String(300), default="")
+    video_views: Mapped[int] = mapped_column(Integer, default=0)
+    product_url: Mapped[str] = mapped_column(String(600), default="")
+    price: Mapped[str] = mapped_column(String(64), default="")
+    source: Mapped[str] = mapped_column(String(600), default="")
+    found_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_by: Mapped[str] = mapped_column(String(128), default="")
 
 
 def get_session() -> Iterator[Session]:

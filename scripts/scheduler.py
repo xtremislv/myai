@@ -7,6 +7,7 @@ Every TICK seconds: reminders that came due become notifications (and emails if 
 Every DIGEST_EVERY seconds: digests for people whose digest hour has come, and a welcome email to
 every address someone has newly added or linked.
 Every hour: emptied trash, old undo copies and old read notifications are removed.
+Every TICK: scouts that are due (app/scout.py) start a round in their own thread.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import argparse
 import logging
 import time
 
+from app import scout
 from app.db.session import SessionLocal
 from app.reminders import delivery, digest, service
 from app.storage import deptfiles, userfiles
@@ -55,6 +57,10 @@ def housekeeping(session) -> int:
     )
 
 
+def scouts(session) -> int:
+    return scout.start_due(SessionLocal, scout.live_tools)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
@@ -71,6 +77,7 @@ def main() -> None:
     while True:
         started = time.monotonic()
         _job("reminders", reminders)
+        _job("scouts", scouts)
         if started - last_digest >= DIGEST_EVERY:
             _job("digests", digests)
             _job("welcomes", welcomes)

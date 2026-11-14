@@ -1031,3 +1031,25 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .card-head .eyebrow, .list-foot .eyebrow { margin: 0; }
 .add-user > .caps { margin-bottom: 8px; }
 .add-user .user-section { margin-bottom: 18px; }
+
+/* ---- scouts ---- */
+.scout-numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin: 14px 0 6px; }
+.scout-numbers > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); }
+.scout-numbers strong { font-size: 18px; }
+.scout-tabs { gap: 6px; margin-bottom: 12px; }
+.findings { display: flex; flex-direction: column; gap: 12px; }
+.finding { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--raised); }
+.finding h3 { margin: 0; }
+.finding p { margin: 8px 0; }
+.finding-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 6px 0; }
+.finding-links .mi { width: 14px; height: 14px; vertical-align: -2px; margin-right: 3px; }
+.scores { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.criteria { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.criterion { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(200px, 3fr) auto auto auto; gap: 8px; align-items: start; }
+.criterion textarea { min-height: 38px; }
+.criterion .c-min { width: 72px; }
+label.check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }
+@media (max-width: 720px) {
+  .criterion { grid-template-columns: 1fr 1fr; }
+  .criterion .c-name, .criterion .c-desc { grid-column: 1 / -1; }
+}

@@ -10,7 +10,7 @@ this file, this file is right.
 - Android app: see `docs/ANDROID_APP.md`. **1.0.71** is published (2026-11-13). 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **706 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **716 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -104,7 +104,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
 | Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**, **watchdog**: all started by `scripts/start_native.sh`. |
-| Database | Postgres 16, migration **0010** (head, `users.session_version`). |
+| Database | Postgres 16, migration **0011** (head, scouts). |
 | Network | Agents' web traffic goes through the owner's VPS (see §5.6). Without it this network poisons DNS and cuts many sites. |
 | Backups | `scripts/backup.sh` works natively and was verified with `restore.sh --verify`; **no off-server destination set** (`BACKUP_DEST` empty), no schedule on this host. |
 
@@ -168,6 +168,22 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - `fetch_page` on a watch link also shows YouTube's shopping shelf (products with shop links), which the API lacks.
   Instagram and TikTok send everything to a login page from here.
 - Questions about "our channel" triage as **work** (admin/researcher); other channels and topics stay private.
+
+**Scouts: research that keeps running** (2026-11-14, `app/scout.py`, page **Scouts**, `routes_scouts.py`)
+- A department's standing research task; the owner's first is **"Rare gadget finds"** (Research). Every
+  `interval_minutes` (default 120) the scheduler (`scripts/scheduler.py`, own thread per scout) runs a round:
+  search ideas (round-robin + model's fresh ones) → YouTube results page, Reddit, gadget stores, web → specific
+  products named by the model → **shortlist** of the most promising → per product a reference video (YouTube API,
+  must really show it) + store/web evidence → each criterion scored 0-10.
+- **Pass rule** (owner): `count` = at least `min_met` (2) criteria met, each met at its "Met at" score (7); or
+  `score` = weighted average ≥ threshold and every criterion met. Criteria: daily use, multi-feature, transformation,
+  rare find, unexpected function, camera wow, cool factor. All editable on the Scouts page; editing re-sorts the
+  judged findings at once (`scout.rescore`); people keep/reject finds (rejections steer later searches).
+- Everything judged is stored (`scout_findings`, statuses new/kept/rejected/below), so nothing is judged twice;
+  rounds in `scout_runs` (migration **0011**). Report file `shared/<dept>/Scout/<name>.xlsx` (Findings, Below
+  threshold, Runs, Settings) rewritten every round; department members get a bell notification for new finds.
+- Access = the department's files ACL on `Scout/` (members only). YouTube budget: `daily_lookups` (40) video searches
+  per scout per day (100 units each of the shared 10k). Run now on a paused scout runs one round, then pauses.
 
 **Sharing with colleagues** (2026-11-05)
 - "Send this to sayan": `share_with` delivers a note and files to another user (notification + Files > Shared
