@@ -388,3 +388,136 @@ def test_a_score_labelled_with_extra_words_still_counts():
 
     out = scouts.judge({"name": "Desk Cube"}, VIDEO, "evidence", st, chat)
     assert out["scores"]["Available in India"] == 9 and out["passed"]
+
+
+# ---- TechWiser Instagram: orderable in India, budget cap, premium bar (owner, 2026-11-16) ----
+IG = {**HIGH, "Multiple talking points": 9, "Orderable in India": 9}
+
+
+def test_rupee_prices_are_read_and_written_the_indian_way():
+    assert scouts.price_inr("₹54,999") == 54999 and scouts.price_inr("Rs. 1.2 lakh") == 120000
+    assert scouts.price_inr("₹74 (MRP ₹162, 54% off)") == 74 and scouts.price_inr("8999 INR") == 8999
+    assert scouts.price_inr("$39.00") is None and scouts.price_inr("") is None
+    assert scouts.rupees(100000) == "₹1,00,000" and scouts.rupees(999) == "₹999" and scouts.rupees(12345678) == "₹1,23,45,678"
+
+
+def test_instagram_needs_india_and_keeps_to_the_budget():
+    st = scouts.clean_settings(scouts.TECHWISER_INSTAGRAM)
+    assert st["market"] == "India" and st["price_cap"] == 100000 and st["premium_from"] == 50000
+    assert st["premium_needs"] == ["Multiple talking points", "Camera wow"]
+    assert st["import_sites"] == ["ubuy.co.in", "desertcart.in"]
+    assert scouts.verdict(IG, st, True, price="₹4,999")[1] == []
+    assert scouts.verdict({**IG, "Orderable in India": 3}, st, True, price="₹4,999")[1] == [
+        "required but not met: Orderable in India"]
+    assert scouts.verdict(IG, st, True, price="₹1,20,000")[1] == ["₹1,20,000 is over the ₹1,00,000 budget"]
+    assert scouts.verdict(IG, st, True, price="")[1] == ["no price in ₹ found, so the budget can't be checked"]
+    # over ₹50,000: only with a high score, many talking points and camera wow
+    assert scouts.verdict(IG, st, True, price="₹74,999 (approx.)")[1] == []
+    reasons = scouts.verdict({**IG, "Camera wow": 4, "Multiple talking points": 5}, st, True, price="₹74,999")[1]
+    assert reasons == ["over ₹50,000: must meet Multiple talking points, Camera wow"]
+    middling = {**{k: 7 for k in IG}, "Orderable in India": 9}  # passes the count rule, not the premium bar
+    assert scouts.verdict(middling, st, True, price="₹9,999")[1] == []
+    assert scouts.verdict(middling, st, True, price="₹59,999")[1] == ["over ₹50,000: needs a score of 7.5, has 7.0"]
+
+
+def test_a_yes_no_check_does_not_count_towards_n_criteria():
+    st = scouts.clean_settings(scouts.TECHWISER_INSTAGRAM)
+    one = {**{k: 2 for k in IG}, "Daily use": 9, "Orderable in India": 9}
+    assert scouts.verdict(one, st, True, price="₹999")[1] == ["meets 1 of the 2 criteria needed (Daily use)"]
+
+
+def test_budget_settings_are_checked():
+    st = scouts.clean_settings({**scouts.TECHWISER_INSTAGRAM, "premium_needs": "camera WOW, Nope",
+                                "import_sites": "https://www.ubuy.co.in/in, desertcart.in junk", "price_cap": -5})
+    assert st["premium_needs"] == ["Camera wow"] and st["import_sites"] == ["www.ubuy.co.in", "desertcart.in"]
+    assert st["price_cap"] == 0
+    plain = scouts.clean_settings({})
+    assert scouts.verdict(HIGH, plain, True)[1] == []  # no budget set: price doesn't matter
+
+
+def test_evidence_searches_import_sites_and_the_judge_hears_the_budget(db, files):
+    st = scouts.clean_settings({**scouts.TECHWISER_INSTAGRAM, "sources": ["youtube", "web"]})
+    asked = []
+    tools = fake_tools({})
+    tools.web = lambda q: asked.append(q) or f"web for {q}"
+    text = scouts.evidence_for("Flip Lamp", st, tools)
+    assert asked == ["Flip Lamp", "Flip Lamp price India", "Flip Lamp site:ubuy.co.in OR site:desertcart.in"]
+    assert "== import sites shipping to India ==" in text
+    prompts = []
+
+    def chat(system, user, n):
+        prompts.append(system)
+        return json.dumps({"scores": IG, "summary": "s", "why": "w", "price": "₹64,999"})
+
+    out = scouts.judge({"name": "Flip Lamp"}, VIDEO, text, st, chat)
+    assert out["passed"] and out["price"] == "₹64,999"
+    assert "₹1,00,000" in prompts[0] and "ubuy.co.in" in prompts[0] and "₹<amount>" in prompts[0]
+
+
+def test_recheck_rejudges_only_unreviewed_finds_without_video_lookups(db, files):
+    sc = _scout(db)
+    with db() as s:
+        for i, status in enumerate(("new", "new", "kept")):
+            s.add(ScoutFinding(id=f"f{i}", scout_id=sc.id, run_id="r", key=f"k{i}", name=f"Gadget {i}", summary="x",
+                               scores=HIGH, total=9, why="", status=status, video_url=VIDEO[0], video_title=VIDEO[1],
+                               video_views=5, product_url="", price="", source="", reviewed_by=""))
+        s.commit()
+        row = s.get(Scout, sc.id)
+        row.settings = scouts.clean_settings({**row.settings, **{k: scouts.TECHWISER_INSTAGRAM[k] for k in (
+            "criteria", "market", "price_cap", "premium_from", "premium_needs", "import_sites")}})
+        s.commit()
+        verdicts = {"Gadget 0": ({**IG}, "₹2,999"), "Gadget 1": ({**IG, "Orderable in India": 2}, "")}
+
+        def chat(system, user, n):
+            name = next(k for k in verdicts if f"Product: {k} " in user)
+            return json.dumps({"scores": verdicts[name][0], "summary": "s", "why": "w", "price": verdicts[name][1]})
+
+        tools = fake_tools({})
+        tools.chat = chat
+        tools.video = lambda name: pytest.fail("no YouTube lookups on a recheck")
+        assert scouts.recheck(s, row, tools) == {"checked": 2, "still_found": 1, "moved_below": 1, "failed": 0}
+        got = {f.name: f for f in s.query(ScoutFinding)}
+        assert got["Gadget 0"].status == "new" and got["Gadget 0"].price == "₹2,999"
+        assert got["Gadget 1"].status == "below" and "Orderable in India" in got["Gadget 1"].why
+        assert got["Gadget 2"].status == "kept" and got["Gadget 2"].scores == HIGH
+
+
+def test_a_find_without_a_video_passes_only_when_it_scores_high():
+    st = scouts.clean_settings(scouts.TECHWISER_INSTAGRAM)
+    assert st["require_video"] is False and st["no_video_score"] == 8.0
+    assert scouts.verdict(IG, st, False, price="₹2,999")[1] == []  # all 9s
+    good = {**{k: 7 for k in IG}, "Orderable in India": 9}
+    assert scouts.verdict(good, st, True, price="₹2,999")[1] == []
+    assert scouts.verdict(good, st, False, price="₹2,999")[1] == ["no reference video: needs a score of 8.0, has 7.0"]
+    strict = scouts.clean_settings({**scouts.TECHWISER_INSTAGRAM, "require_video": True})
+    assert scouts.verdict(IG, strict, False, price="₹2,999")[1] == ["no reference video found"]
+
+
+def test_rules_are_learned_from_review_reasons_per_scout_and_relearned_on_new_reviews(db, files):
+    a, b = _scout(db), _scout(db)
+    asked = []
+
+    def chat(system, user, n):
+        asked.append(user)
+        return json.dumps(["Avoid lamps: the team has enough of them", "Prefer tools under ₹5,000"])
+
+    with db() as s:
+        for i, (status, note) in enumerate((("rejected", "too many lamps already"), ("rejected", ""), ("kept", ""))):
+            s.add(ScoutFinding(id=f"a{i}", scout_id=a.id, run_id="r", key=f"k{i}", name=f"Lamp {i}", summary="x",
+                               scores={}, total=5, why="", status=status, review_note=note, reviewed_by="r1"))
+        s.add(ScoutFinding(id="b0", scout_id=b.id, run_id="r", key="kb", name="Secret B find", summary="x", scores={},
+                           total=5, why="", status="rejected", review_note="b's own reason", reviewed_by="r1"))
+        s.commit()
+        rules = scouts.learned_rules(s, a.id, chat)
+        assert rules == "- Avoid lamps: the team has enough of them\n- Prefer tools under ₹5,000"
+        assert "REASON: too many lamps already" in asked[0] and "Secret B" not in asked[0]
+        assert scouts.learned_rules(s, a.id, chat) == rules and len(asked) == 1  # cached while reviews are the same
+        s.get(ScoutFinding, "a1").review_note = "boring"
+        s.commit()
+        scouts.learned_rules(s, a.id, chat)
+        assert len(asked) == 2 and "REASON: boring" in asked[1]
+        assert scouts.learned_rules(s, b.id, chat) == ""  # fewer than 3 reviews: nothing to learn yet
+    prompts = []
+    st = {**scouts.clean_settings(scouts.TECHWISER_INSTAGRAM), "_rules": rules}
+    scouts.judge({"name": "X"}, VIDEO, "e", st, lambda sy, u, n: prompts.append(sy) or json.dumps({"scores": IG}))
+    assert "Avoid lamps" in prompts[0] and "Avoid lamps" in scouts._brief(st)

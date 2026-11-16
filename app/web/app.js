@@ -3297,6 +3297,8 @@ function muteButton(scout, error) {
   return button;
 }
 
+const inr = (n) => "₹" + Number(n).toLocaleString("en-IN");
+
 function scoutStatus(scout, refresh, error) {
   const st = scout.settings;
   const pill = scout.running ? h("span", { class: "pill dot info" }, "Searching now")
@@ -3310,8 +3312,10 @@ function scoutStatus(scout, refresh, error) {
     h("div", { class: "row spread wrap" },
       h("div", null, h("h2", null, scout.name, " ", pill),
         h("div", { class: "small muted" }, `${departmentName(scout.department)} · every ${st.interval_minutes} min · `
-          + (st.pass_rule === "count" ? `passes at ${st.min_met} of ${st.criteria.length} criteria` : `pass mark ${st.threshold}/10`)
-          + ` · up to ${st.per_round} products judged per round` + (st.market ? ` · must be sold in ${st.market}` : "")),
+          + (st.pass_rule === "count" ? `passes at ${st.min_met} of ${st.criteria.filter((c) => c.weight > 0).length} criteria` : `pass mark ${st.threshold}/10`)
+          + ` · up to ${st.per_round} products judged per round` + (st.market ? ` · must be sold in ${st.market}` : "")
+          + (st.price_cap ? ` · up to ${inr(st.price_cap)}` : "")
+          + (st.premium_from ? ` · over ${inr(st.premium_from)} needs ${st.premium_score}+` : "")),
         st.brief && h("p", { class: "small" }, st.brief)),
       h("div", { class: "row" }, muteButton(scout, error)),
       scout.can_edit && h("div", { class: "row" },
@@ -3334,11 +3338,13 @@ function scoutStatus(scout, refresh, error) {
 
 function scoutFindings(scout, found, refresh, error) {
   // Reviewing redraws only that card (no page reload: the place, and reasons typed elsewhere, stay put).
+  // `body` is a function, called on click: the reason must be read from the box then, not when the card was
+  // drawn (it was, and every typed reason was lost: owner, 2026-11-16).
   const review = (f, body) => async (event) => {
     error.clear();
     const old = event.currentTarget.closest(".finding");
     try {
-      const updated = await api(`/v1/scouts/${scout.id}/findings/${f.id}`, { method: "PATCH", body });
+      const updated = await api(`/v1/scouts/${scout.id}/findings/${f.id}`, { method: "PATCH", body: body() });
       old.replaceWith(card(updated));
     } catch (err) { error.fail(err); }
   };
@@ -3346,13 +3352,13 @@ function scoutFindings(scout, found, refresh, error) {
   const reviewRow = (f) => {
     const note = h("input", { class: "grow", maxLength: 1000, value: f.review_note || "",
       placeholder: "Why keep or reject it? (optional; teaches this scout)", "aria-label": `Reason for ${f.name}` });
-    const withNote = (status) => review(f, { status, note: note.value });
+    const withNote = (status) => review(f, () => ({ status, note: note.value }));
     return h("div", { class: "row wrap review-row" },
       note,
       f.status !== "kept" && h("button", { type: "button", onclick: withNote("kept") }, mi("check_circle"), "Keep"),
       f.status !== "rejected" && h("button", { type: "button", class: "danger", onclick: withNote("rejected") }, mi("block"), "Reject"),
-      (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", onclick: review(f, { note: note.value }) }, "Save reason"),
-      (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", class: "link", onclick: review(f, { status: "new" }) }, "Undo"),
+      (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", onclick: review(f, () => ({ note: note.value })) }, "Save reason"),
+      (f.status === "kept" || f.status === "rejected") && h("button", { type: "button", class: "link", onclick: review(f, () => ({ status: "new" })) }, "Undo"),
     );
   };
   const names = scout.settings.criteria.map((c) => c.name);
@@ -3421,12 +3427,18 @@ function scoutSettings(scout, refresh, error) {
   const ideasPer = num(st.ideas_per_round, 1, 8);
   const fresh = num(st.fresh_ideas, 0, 5);
   const video = h("input", { type: "checkbox", checked: st.require_video });
+  const noVideoScore = num(st.no_video_score ?? 8, 0, 10, 0.5);
   const notify = h("input", { type: "checkbox", checked: st.notify });
   const sources = Object.entries(SOURCE_NAMES).map(([id, label]) => [id, h("input", { type: "checkbox", checked: st.sources.includes(id) }), label]);
   const avoid = h("input", { value: st.avoid, maxLength: 400 });
   const ideas = h("textarea", { rows: 6 }, st.ideas.join("\n"));
   const brief = h("textarea", { rows: 3, maxLength: 800, placeholder: "Channel, audience and format the finds are for" }, st.brief || "");
   const market = h("input", { value: st.market || "", maxLength: 40, placeholder: "e.g. India (empty = anywhere)" });
+  const importSites = h("input", { value: (st.import_sites || []).join(", "), maxLength: 300, placeholder: "e.g. ubuy.co.in, desertcart.in" });
+  const priceCap = num(st.price_cap || 0, 0, 10000000, 500);
+  const premiumFrom = num(st.premium_from || 0, 0, 10000000, 500);
+  const premiumScore = num(st.premium_score ?? 7.5, 0, 10, 0.5);
+  const premiumNeeds = h("input", { value: (st.premium_needs || []).join(", "), maxLength: 300, placeholder: "criterion names, comma separated" });
   const rows = h("div", { class: "criteria" });
   const addRow = (c = { name: "", description: "", weight: 1, min: 0, required: false }) => {
     const row = h("div", { class: "criterion" },
@@ -3454,22 +3466,34 @@ function scoutSettings(scout, refresh, error) {
       await api(`/v1/scouts/${scout.id}`, { method: "PUT", body: { name: name.value, settings: {
         criteria, pass_rule: rule.value, min_met: Number(minMet.value), threshold: Number(threshold.value), interval_minutes: Number(interval.value),
         per_round: Number(perRound.value), daily_lookups: Number(daily.value), ideas_per_round: Number(ideasPer.value),
-        fresh_ideas: Number(fresh.value), require_video: video.checked, notify: notify.checked,
+        fresh_ideas: Number(fresh.value), require_video: video.checked, no_video_score: Number(noVideoScore.value), notify: notify.checked,
         sources: sources.filter(([, box]) => box.checked).map(([id]) => id), avoid: avoid.value,
-        ideas: ideas.value.split("\n"), brief: brief.value, market: market.value,
+        ideas: ideas.value.split("\n"), brief: brief.value, market: market.value, import_sites: importSites.value,
+        price_cap: Number(priceCap.value), premium_from: Number(premiumFrom.value), premium_score: Number(premiumScore.value),
+        premium_needs: premiumNeeds.value.split(","),
       } } });
       refresh();
     } catch (err) { error.fail(err); }
   } },
     h("h2", null, "Settings"),
     h("p", { class: "small muted" }, "Each criterion is scored 0-10 and counts as met when it reaches its \"Minimum score\". "
-      + "With \"At least N criteria met\" a product is kept when it meets N of them (any N). With \"Weighted score\" "
+      + "With \"At least N criteria met\" a product is kept when it meets N of them (any N; weight 0 criteria are yes/no checks and don't count towards N). With \"Weighted score\" "
       + "its weighted average (by the weights, e.g. 30/25/22) must reach the pass mark and every criterion its \"Minimum score\". "
       + "A \"Required\" criterion must always be met. Changing these re-sorts what was already judged. "
       + "Reasons given when keeping or rejecting finds teach this scout (only this one) what you want."),
     h("label", null, "Name", name),
     h("label", null, "Who it's for (brief)", brief),
     h("label", null, "Must be sold in", market),
+    h("label", null, "Import sites that ship there (count as available)", importSites),
+    h("h3", null, "Budget (₹)"),
+    h("div", { class: "row wrap" },
+      h("label", null, "Price cap (0 = none)", priceCap),
+      h("label", null, "Premium above", premiumFrom),
+      h("label", null, "Premium needs a score of", premiumScore),
+    ),
+    h("label", null, "Premium finds must also meet", premiumNeeds),
+    h("p", { class: "small muted" }, "A find over the cap is never kept, nor one whose price in ₹ can't be found while a cap is set. "
+      + "Above the premium price it must also reach that weighted score and meet the criteria named here. 0 turns a limit off."),
     h("h3", null, "Criteria"),
     rows,
     h("button", { type: "button", onclick: () => addRow() }, mi("add"), "Add a criterion"),
@@ -3496,6 +3520,7 @@ function scoutSettings(scout, refresh, error) {
     h("label", null, "Leave out", avoid),
     h("div", { class: "row wrap" },
       h("label", { class: "check" }, video, "Only keep finds with a reference video"),
+      h("label", null, "Otherwise, a find without a video needs a score of", noVideoScore),
       h("label", { class: "check" }, notify, "Notify the department about new finds (each person can mute it above)"),
     ),
     h("div", { class: "row spread" },

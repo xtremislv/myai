@@ -1,4 +1,4 @@
-# Session wrap-up: state of the platform on 2026-11-14
+# Session wrap-up: state of the platform on 2026-11-16
 
 Read this first in the next session. It is the short, current picture. `docs/HANDOFF.md` has the detailed
 history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.md` the setup steps.
@@ -11,7 +11,7 @@ this file, this file is right.
   RECORD_AUDIO). 1.0.71 was published 2026-11-13. 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **724 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **733 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -174,7 +174,14 @@ the web, read and answer mail, manage files, make documents from templates, set 
 - A department's standing research task. The owner's two (Research), separate in everything (findings, runs,
   file, notifications, review lessons; all keyed by scout id, never mixed in a prompt):
   - **"TechWiser Instagram"** (was "Rare gadget finds"; old file `Scout/Rare gadget finds.xlsx` left in place):
-    Reels brief, `count` rule, any 2 of the 7 criteria below.
+    Reels brief, `count` rule, any 2 of the weighted criteria below, plus (owner, 2026-11-16) **"Orderable in India"
+    required** (sold in India, or imported via `import_sites` ubuy.co.in / desertcart.in, or the maker ships here;
+    each product gets an extra site-limited search), a **budget**: `price_cap` ₹1,00,000 (no ₹ price found = not
+    kept), over `premium_from` ₹50,000 only with weighted score ≥ `premium_score` 7.5 and `premium_needs` (Multiple
+    talking points, Camera wow) met; and **no video needed** (`require_video` off): a find without one needs
+    `no_video_score` 8. Weight-0 criteria are yes/no checks and don't count towards N. `scout.recheck` re-judges
+    unreviewed finds after rule changes (reuses stored videos, no YouTube quota); it was run on 2026-11-16.
+  - A third scout, **"TechWiser YouTube"**, was made by the team on the Scouts page (score rule, like GadgetWiser).
   - **"GadgetWiser"**: `score` rule, weights affordable 30 / everyday problem 25 / aesthetic 22 / looks one way,
     acts another 18 / fresh 15, pass mark 6.5, plus **"Available in India" required** (weight 0, met at 7); market
     "India" adds a "<product> price India" web search to the evidence. Presets: `scout.PRESETS`.
@@ -189,7 +196,11 @@ the web, read and answer mail, manage files, make documents from templates, set 
   rare find, unexpected function, camera wow, cool factor. All editable on the Scouts page; editing re-sorts the
   judged findings at once (`scout.rescore`); people keep/reject finds (rejections steer later searches), with an
   optional **reason** (`review_note`): `scout.lessons` feeds this scout's own kept/rejected finds and reasons into its
-  idea, pick, shortlist and judge prompts, so it learns the team's taste. Each person can **mute** each scout
+  idea, pick, shortlist and judge prompts, and `scout.learned_rules` has the model distil up to 60 reviews (reasons
+  outweigh guesses) into 3-8 rules sent with every prompt, rewritten only when reviews change (cached in memory per
+  scout), so it learns the team's taste. **Bug fixed 2026-11-16:** the Keep/Reject buttons read the reason box when the
+  card was drawn, so every reason typed before 2026-11-16 was sent empty and is lost (the owner had given reasons for
+  all 31 Instagram rejections). Each person can **mute** each scout
   (`scout_mutes`, `PUT /v1/scouts/{id}/mute`); the bell skips them for that scout only.
 - The Scouts page never reloads itself (owner): rounds run in the background and new finds arrive as a
   notification; the page changes only on Refresh. Keep/Reject/reason/Mute update just that card or button.
