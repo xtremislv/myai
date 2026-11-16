@@ -114,6 +114,9 @@ def scout_info(state: dict[str, Any], scout: str = "") -> str:
             f"Pass rule: {_rule(st)}",
             f"Budget: {_budget(st)}",
             f"Reference video: {video}",
+            "Coverage: " + (f"skips products already on {', '.join(st['own_channels'])}" if st["skip_covered"] else "off")
+            + "; competitors: " + (", ".join(st["competitor_channels"]) or "none set")
+            + f" (hits: {st['hit_views']:,}+ views, older than {st['hit_age_days']} days, {st['hits_per_round']} per round)",
             "Criteria (each scored 0-10):\n" + crit,
             f"Pace: every {st['interval_minutes']} min, {st['per_round']} products judged per round, "
             f"{st['daily_lookups']} video lookups a day, {st['ideas_per_round']} search ideas + "
@@ -173,6 +176,7 @@ def scout_findings(state: dict[str, Any], scout: str = "", status: str = "found"
             + (f"\n   Product: {f.product_url}" if f.product_url else "")
             + (f"\n   {' '.join((f.summary or '').split())[:400]}" if f.summary else "")
             + (f"\n   Not kept because: {f.why.split('Not kept:')[-1].strip()[:300]}" if "Not kept:" in (f.why or "") else "")
+            + (f"\n   Idea from competitor video: {hit['label']} {hit['url']}" if (hit := scouts.inspired_by(f.source or "")) else "")
             + (f"\n   Team's reason: {f.review_note}" if f.review_note else ""))
     from app.orchestrator.tools import untrusted
 

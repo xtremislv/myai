@@ -84,6 +84,7 @@ class FindingOut(BaseModel):
     found_at: dt.datetime | None
     reviewed_by: str
     review_note: str = ""
+    inspired_by: dict[str, str] | None = None  # the competitor video a find came from: label, url
 
 
 def _out(session: Session, subject: Subject, row: Scout, runs: int = 0) -> ScoutOut:
@@ -225,7 +226,7 @@ def _finding(f: ScoutFinding) -> FindingOut:
     return FindingOut(id=f.id, name=f.name, summary=f.summary, why=f.why, scores=dict(f.scores or {}), total=f.total,
                       status=f.status, video_url=f.video_url, video_title=f.video_title, video_views=f.video_views,
                       product_url=f.product_url, price=f.price, found_at=f.found_at, reviewed_by=f.reviewed_by,
-                      review_note=f.review_note or "")
+                      review_note=f.review_note or "", inspired_by=scouts.inspired_by(f.source or ""))
 
 
 class Review(BaseModel):

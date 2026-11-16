@@ -9,6 +9,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -414,6 +415,33 @@ class ScoutMute(Base):
     scout_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChannelVideo(Base):
+    """One upload of a YouTube channel the scouts watch: ours (what we already covered) or a competitor's
+    (what worked for them). Synced from the official API by app/coverage.py; public data only."""
+
+    __tablename__ = "channel_videos"
+    id: Mapped[str] = mapped_column(String(16), primary_key=True)  # YouTube video id
+    channel_id: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(300), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    published_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    views: Mapped[int] = mapped_column(BigInteger, default=0)
+    synced_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChannelSync(Base):
+    """When a watched channel's uploads were last fetched, and the references (@handle, link, name) that
+    resolved to it, so a name is looked up once."""
+
+    __tablename__ = "channel_syncs"
+    channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    refs: Mapped[list] = mapped_column(JSON, default=list)
+    videos: Mapped[int] = mapped_column(Integer, default=0)
+    synced_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stats_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 def get_session() -> Iterator[Session]:

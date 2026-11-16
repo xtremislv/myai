@@ -11,7 +11,7 @@ this file, this file is right.
   RECORD_AUDIO). 1.0.71 was published 2026-11-13. 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **741 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **748 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -105,7 +105,7 @@ the web, read and answer mail, manage files, make documents from templates, set 
 | Speed | 1 chat ~73 tok/s; 16 at once ~15 tok/s each (215 total); first word < 0.6 s for ~1.5k-token prompts, ~7.6 s for 8k-token prompts. |
 | Sandbox | `/opt/agent-sandbox` (system Python 3.10 + numpy, pandas) for `run_python`, run as `nobody`; install with `scripts/setup_sandbox.sh`. |
 | Services | postgres, redis, minio, vllm, gateway, retention, **scheduler**, loki, alloy, prometheus, grafana, app-tunnel, grafana-tunnel, **proxy-tunnel**, **watchdog**: all started by `scripts/start_native.sh`. |
-| Database | Postgres 16, migration **0012** (head, scout review notes + mutes). |
+| Database | Postgres 16, migration **0013** (head, channel_videos + channel_syncs for scout coverage). |
 | Network | Agents' web traffic goes through the owner's VPS (see §5.6). Without it this network poisons DNS and cuts many sites. |
 | Backups | `scripts/backup.sh` works natively and was verified with `restore.sh --verify`; **no off-server destination set** (`BACKUP_DEST` empty), no schedule on this host. |
 
@@ -197,6 +197,18 @@ the web, read and answer mail, manage files, make documents from templates, set 
   20 s wait, `search.DDG_WAIT/DDG_PAUSE`). ubuy.co.in and xech.com answered 429 to the VPS. **A Tavily/Serper key
   is the real fix** (next steps #3).
 - Scouts page: Rounds card is last and folded by default; settings card's last section tidied.
+- **Coverage and competitors** (2026-11-16, `app/coverage.py`, tables `channel_videos`/`channel_syncs`, migration
+  0013): uploads of our channels (`own_channels`, "ours" = TechWiser 2,025 + GadgetWiser 146 videos) and each scout's
+  `competitor_channels` are synced via the YouTube API at most daily (new pages until a known upload; views re-read
+  weekly; first sync of ours ~90 units/2 min, Beebom + Sillycorns ~130 units/3 min). Each round: candidates whose
+  distinctive words match our titles/descriptions go to the model (`already_covered`, same product, not same kind);
+  covered ones are stored as below with source `covered: <url>` (not counted against daily lookups) and earlier
+  `new` finds we covered since move below (`drop_covered_finds`). `hits_per_round` competitor hits (≥ `hit_views`
+  1M, older than `hit_age_days` 180, taken in turn, non-product videos skipped) become searches for better or
+  similar products (`from_hit`); such finds carry `competitor hit: ...` in `source`, an "Idea from" link in the UI and
+  a comparison in the summary. TechWiser Instagram's competitors (owner, 2026-11-16): **@beebomco** (Beebom) and
+  **@sillycornsmedia** (Sillycorns; `@sillycornmedia` is an empty look-alike). 568 hits at setup. Instagram itself
+  can't be read, so "covered" = our YouTube videos incl. Shorts.
   - **"GadgetWiser"**: `score` rule, weights affordable 30 / everyday problem 25 / aesthetic 22 / looks one way,
     acts another 18 / fresh 15, pass mark 6.5, plus **"Available in India" required** (weight 0, met at 7); market
     "India" adds a "<product> price India" web search to the evidence. Presets: `scout.PRESETS`.

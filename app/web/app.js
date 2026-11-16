@@ -3384,6 +3384,7 @@ function scoutFindings(scout, found, refresh, error) {
           : h("span", { class: "muted" }, "No reference video"),
         f.product_url && h("span", null, mi("north_east"), extLink(f.product_url, "Product"), f.price ? ` · ${f.price}` : ""),
         f.found_at && h("span", { class: "muted" }, `found ${whenText(f.found_at)}`),
+        f.inspired_by && h("span", null, mi("north_east"), extLink(f.inspired_by.url, `Idea from: ${f.inspired_by.label}`)),
       ),
       h("div", { class: "scores" }, names.map((n) => h("span", { class: `pill mono${metOf(scout, f).includes(n) ? " good" : ""}` }, `${n} ${f.scores[n] ?? "-"}`))),
       f.why && h("details", null, h("summary", { class: "small" }, "Why"), h("p", { class: "small muted" }, f.why)),
@@ -3434,6 +3435,12 @@ function scoutSettings(scout, refresh, error) {
   const fresh = num(st.fresh_ideas, 0, 5);
   const video = h("input", { type: "checkbox", checked: st.require_video });
   const noVideoScore = num(st.no_video_score ?? 8, 0, 10, 0.5);
+  const skipCovered = h("input", { type: "checkbox", checked: st.skip_covered ?? true });
+  const ownChannels = h("input", { value: (st.own_channels || ["ours"]).join(", "), maxLength: 600, placeholder: "ours (TechWiser and GadgetWiser), or @handles" });
+  const competitors = h("textarea", { rows: 3, maxLength: 2400, placeholder: "One per line: @handle, channel link or name" }, (st.competitor_channels || []).join("\n"));
+  const hitViews = num(st.hit_views ?? 1000000, 0, 10000000000, 100000);
+  const hitAge = num(st.hit_age_days ?? 180, 0, 3650);
+  const hitsPer = num(st.hits_per_round ?? 1, 0, 5);
   const notify = h("input", { type: "checkbox", checked: st.notify });
   const sources = Object.entries(SOURCE_NAMES).map(([id, label]) => [id, h("input", { type: "checkbox", checked: st.sources.includes(id) }), label]);
   const avoid = h("input", { value: st.avoid, maxLength: 400 });
@@ -3473,6 +3480,8 @@ function scoutSettings(scout, refresh, error) {
         criteria, pass_rule: rule.value, min_met: Number(minMet.value), threshold: Number(threshold.value), interval_minutes: Number(interval.value),
         per_round: Number(perRound.value), daily_lookups: Number(daily.value), ideas_per_round: Number(ideasPer.value),
         fresh_ideas: Number(fresh.value), require_video: video.checked, no_video_score: Number(noVideoScore.value), notify: notify.checked,
+        skip_covered: skipCovered.checked, own_channels: ownChannels.value.split(","), competitor_channels: competitors.value.split("\n"),
+        hit_views: Number(hitViews.value), hit_age_days: Number(hitAge.value), hits_per_round: Number(hitsPer.value),
         sources: sources.filter(([, box]) => box.checked).map(([id]) => id), avoid: avoid.value,
         ideas: ideas.value.split("\n"), brief: brief.value, market: market.value, import_sites: importSites.value,
         price_cap: Number(priceCap.value), premium_from: Number(premiumFrom.value), premium_score: Number(premiumScore.value),
@@ -3524,6 +3533,18 @@ function scoutSettings(scout, refresh, error) {
     ),
     h("label", null, "Search ideas (one per line, used in turn)", ideas),
     h("label", null, "Leave out", avoid),
+    h("h3", null, "Our coverage and competitors (YouTube)"),
+    h("label", { class: "check" }, skipCovered, "Skip products our channels already showed"),
+    h("label", null, "Our channels", ownChannels),
+    h("label", null, "Competitor channels", competitors),
+    h("div", { class: "row wrap" },
+      h("label", null, "A competitor hit has at least (views)", hitViews),
+      h("label", null, "and is older than (days)", hitAge),
+      h("label", null, "Hits turned into searches per round", hitsPer),
+    ),
+    h("p", { class: "small muted" }, "Each round takes the next competitor hit, names its product and searches for better or similar ones; "
+      + "finds that came from a hit say so. Channel uploads are read through the YouTube API once a day (a few units). "
+      + "Instagram can't be read from the server, so coverage means our YouTube videos, Shorts included."),
     h("h3", null, "Reference video and notifications"),
     h("label", { class: "check" }, video, "Only keep finds with a reference video"),
     h("label", { class: "narrow" }, "Without a video, a find needs a score of (when the box above is off)", noVideoScore),

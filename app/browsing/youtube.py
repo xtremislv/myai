@@ -245,6 +245,13 @@ def recent_uploads(channel: Channel, key: str, limit: int = 15) -> list[Video]:
     return _videos(ids, key)
 
 
+def upload_page(playlist: str, key: str, page: str = "") -> tuple[list[str], str]:
+    """One page (50) of a channel's uploads playlist, newest first: (video ids, next page token or "").
+    1 quota unit per page."""
+    data = _call("playlistItems", key, part="contentDetails", playlistId=playlist, maxResults=50, pageToken=page)
+    return [it["contentDetails"]["videoId"] for it in data.get("items", [])], data.get("nextPageToken", "")
+
+
 def search(query: str, key: str, order: str = "relevance", days: int = 0, channel: str = "",
            limit: int = 10, region: str = "IN") -> list[Video]:
     params = {"part": "snippet", "q": query, "type": "video", "maxResults": max(1, min(limit, 25)),
