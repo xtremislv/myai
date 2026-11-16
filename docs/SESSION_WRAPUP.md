@@ -7,8 +7,9 @@ this file, this file is right.
 
 - **Planned move (2026-11-16):** to an 8 vCPU / 16 GB / 100 GB Ubuntu 24.04 server without a GPU, with Claude
   (Anthropic API) instead of Gemma. Code, setup and migration scripts are on branch **`claude-api-migration`**
-  (not deployed yet); runbook `docs/MIGRATION_CLAUDE.md`. Same tunnel and domain. Until the cutover the live
-  server runs `android-app` with Gemma.
+  (not deployed yet); runbook `docs/MIGRATION_CLAUDE.md`. Same tunnel and domain. The live checkout is on
+  `claude-api-migration` (needed for `migrate_export.sh`), still with Gemma: `LLM_PROVIDER` is unset, so it behaves
+  as `android-app` did. Claude Code on the new server: `docs/CLAUDE_CODE_SERVER.md`, `scripts/setup_claude_code.sh`.
 - Repo: `/root/myai`, GitHub `xtremislv/myai`. The live checkout is on branch **`android-app`** since 2026-11-10
   (it contains all of `server-native-setup`; see `BRANCHES.md`). Never push to `main` (owner's rule).
 - Android app: see `docs/ANDROID_APP.md`. **1.0.81** is published (2026-11-14: voice input via the server's Whisper,
