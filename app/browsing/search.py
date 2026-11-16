@@ -220,10 +220,35 @@ def parse_ddg(page: str, limit: int) -> list[Result]:
     return out
 
 
+DDG_WAIT = 20  # seconds; on 2026-11-16 DuckDuckGo hung ~136 s per search through the proxy, then failed
+DDG_PAUSE = 15 * 60  # after a failure, skip it this long (every search would wait again otherwise)
+_ddg_down_until = 0.0
+_ddg_pool = None
+
+
 def _ddg(query: str, limit: int) -> list[Result]:
-    """Reachable only through OUTBOUND_PROXY on this server. HTTP 202 means it is rate-limiting."""
-    page = fetch(f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl={_market().split('-')[-1].lower()}-en")
-    return parse_ddg(page.body, limit) if page.status == 200 else []
+    """Reachable only through OUTBOUND_PROXY on this server. HTTP 202 means it is rate-limiting. Waits at
+    most DDG_WAIT seconds; a failure, timeout or refusal skips DuckDuckGo for DDG_PAUSE seconds."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as Late
+
+    global _ddg_down_until, _ddg_pool
+    if time.monotonic() < _ddg_down_until:
+        return []
+    if _ddg_pool is None:
+        _ddg_pool = ThreadPoolExecutor(4, thread_name_prefix="ddg")
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl={_market().split('-')[-1].lower()}-en"
+    try:
+        page = _ddg_pool.submit(fetch, url).result(timeout=DDG_WAIT)  # a late answer is left to finish alone
+    except (Late, Exception) as e:  # noqa: BLE001
+        _ddg_down_until = time.monotonic() + DDG_PAUSE
+        logger.info("duckduckgo skipped for %d min: %s", DDG_PAUSE // 60, type(e).__name__)
+        return []
+    if page.status != 200:
+        _ddg_down_until = time.monotonic() + DDG_PAUSE
+        return []
+    return parse_ddg(page.body, limit)
 
 
 def _bing(query: str, limit: int) -> list[Result]:

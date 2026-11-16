@@ -246,6 +246,23 @@ def create(session: Session, department: str, name: str, by: str, settings: dict
     return scout
 
 
+def allowed(session: Session, subject, department: str, action) -> bool:
+    """Whether `subject` may see (READ) or change (WRITE) a department's scouts: the same as its `Scout/`
+    files, so members only, never an admin shortcut (the Scouts page and the chat tools both use this)."""
+    from app.acl.engine import ACLEngine
+    from app.departments.packs import DEFAULT_DEPARTMENTS
+    from app.storage import objects
+    from app.storage.deptfiles import key_for
+
+    if department not in {d.name for d in DEFAULT_DEPARTMENTS} or department == "admin":
+        return False
+    try:
+        ACLEngine(session).enforce(subject, action, objects.resource_for(key_for(f"{REPORT_FOLDER}/x.xlsx", department)))
+        return True
+    except PermissionError:
+        return False
+
+
 # ---- judging ----
 @dataclass
 class Tools:
@@ -257,6 +274,9 @@ class Tools:
     web: Callable[[str], str]
     video: Callable[[str], tuple[str, str, int, str] | None]
     chat: Callable[[str, str, int], str]
+    # Marketplace listings (Amazon.in, Flipkart, Reliance Digital) with ₹ prices: availability evidence for an
+    # Indian market. Keyless web search returns little from this server (2026-11-16), shops do.
+    shops: Callable[[str], str] | None = None
 
 
 def _json_in(text: str, opener: str = "{"):
@@ -524,7 +544,9 @@ def judge(candidate: dict, video: tuple[str, str, int, str] | None, evidence: st
         "Rules learned from the team's reviews (score against them; a find that breaks one scores low on the "
         "criteria it touches):\n" + settings["_rules"] if settings.get("_rules") else "",
         f"Market: {settings['market']}. Judge availability and price there from the evidence only; if the evidence "
-        f"doesn't show it sold in {settings['market']}, say so and score availability low."
+        f"doesn't show it sold in {settings['market']}, say so and score availability low. A listing counts only "
+        "if it is this exact product (same brand and model), never a look-alike or a similar product; a brand's own "
+        f"store that sells in {settings['market']} (prices in its currency) counts."
         + (f" Import sites that ship to {settings['market']} ({', '.join(settings['import_sites'])}) and the maker's "
            f"own shipping to {settings['market']} count as available." if settings.get("import_sites") else "")
         if settings.get("market") else "",
@@ -586,6 +608,8 @@ def evidence_for(name: str, settings: dict, tools: Tools) -> str:
     finders = {"stores": tools.stores, "web": tools.web}
     searches = [(s, finders[s], name) for s in ("stores", "web") if s in settings["sources"]]
     if settings["market"]:  # is it sold there, and for how much?
+        if tools.shops is not None and settings["market"].strip().lower() == "india":
+            searches.append(("Indian marketplaces (Amazon.in, Flipkart, Reliance Digital)", tools.shops, name))
         searches.append((f"buying in {settings['market']}", tools.web, f"{name} price {settings['market']}"))
         if settings.get("import_sites"):
             searches.append((f"import sites shipping to {settings['market']}", tools.web,
@@ -949,4 +973,101 @@ def live_tools(scout: Scout) -> Tools:
         web=lambda q: T.TOOLS["web_search"](state, query=q),
         video=video,
         chat=chat,
+        shops=lambda q: T.TOOLS["product_search"](state, query=q),
     )
+
+
+# ---- changes asked for in chat (app/orchestrator/scout_tools.py: applied only after an approver's go-ahead) ----
+EDITABLE = ("brief", "market", "pass_rule", "min_met", "threshold", "price_cap", "premium_from", "premium_score",
+            "premium_needs", "import_sites", "require_video", "no_video_score", "ideas", "avoid", "sources",
+            "interval_minutes", "per_round", "daily_lookups", "ideas_per_round", "fresh_ideas", "notify")
+
+
+def apply_changes(settings: dict, changes: dict) -> tuple[dict, bool | None, list[str]]:
+    """(new settings, new enabled flag or None, readable lines saying what changes). Pure: raises ValueError
+    with a message the model can act on. `changes` holds settings keys, plus:
+      criteria: {"<name>": {"weight"?, "min"?, "required"?, "description"?} to change or add, or null to remove}
+      add_ideas: ["..."] appended to the search ideas;  enabled: true/false to resume or pause."""
+    if not isinstance(changes, dict) or not changes:
+        raise ValueError("changes must be a JSON object with at least one setting")
+    unknown = [k for k in changes if k not in (*EDITABLE, "criteria", "add_ideas", "enabled")]
+    if unknown:
+        raise ValueError(f"unknown setting(s): {', '.join(unknown)}. Editable: {', '.join(EDITABLE)}, criteria, "
+                         "add_ideas, enabled")
+    old = clean_settings(settings)
+    raw = {k: v for k, v in changes.items() if k in EDITABLE}
+    if "add_ideas" in changes:
+        extra = changes["add_ideas"] if isinstance(changes["add_ideas"], list) else [changes["add_ideas"]]
+        raw["ideas"] = [*(raw.get("ideas") or old["ideas"]), *extra]
+    if "criteria" in changes:
+        edits = changes["criteria"]
+        if not isinstance(edits, dict):
+            raise ValueError('criteria must be an object: {"<criterion name>": {"weight": 2, "min": 7} or null to remove}')
+        crit = [dict(c) for c in old["criteria"]]
+        by_name = {c["name"].lower(): c for c in crit}
+        for name, edit in edits.items():
+            have = by_name.get(str(name).strip().lower())
+            if edit is None:
+                if have is None:
+                    raise ValueError(f"there is no criterion called {name!r}")
+                crit.remove(have)
+                continue
+            if not isinstance(edit, dict):
+                raise ValueError(f"criterion {name!r}: give an object with weight, min, required or description")
+            bad = [k for k in edit if k not in ("weight", "min", "required", "description")]
+            if bad:
+                raise ValueError(f"criterion {name!r}: unknown field(s) {', '.join(bad)}")
+            if have is None:
+                if not str(edit.get("description", "")).strip():
+                    raise ValueError(f"new criterion {name!r} needs a description")
+                crit.append({"name": str(name), "weight": 1, "min": 7, "required": False, **edit})
+            else:
+                have.update(edit)
+        raw["criteria"] = crit
+    new = clean_settings({**old, **raw})
+    enabled = None
+    if "enabled" in changes:
+        if not isinstance(changes["enabled"], bool):
+            raise ValueError("enabled must be true or false")
+        enabled = changes["enabled"]
+    lines = _diff(old, new)
+    if enabled is not None:
+        lines.append("resume the scout" if enabled else "pause the scout")
+    if not lines:
+        raise ValueError("nothing would change: those are the current settings")
+    return new, enabled, lines
+
+
+def _show_value(key: str, value) -> str:
+    if key in ("price_cap", "premium_from"):
+        return rupees(value) if value else "none"
+    if isinstance(value, list):
+        return ", ".join(map(str, value)) or "none"
+    return str(value)
+
+
+def _diff(old: dict, new: dict) -> list[str]:
+    lines = []
+    for key in EDITABLE:
+        if key == "ideas":
+            added = [i for i in new["ideas"] if i not in old["ideas"]]
+            gone = [i for i in old["ideas"] if i not in new["ideas"]]
+            if added:
+                lines.append("search ideas added: " + "; ".join(added))
+            if gone:
+                lines.append("search ideas removed: " + "; ".join(gone))
+        elif old.get(key) != new.get(key):
+            lines.append(f"{key}: {_show_value(key, old.get(key))} -> {_show_value(key, new.get(key))}")
+    before = {c["name"]: c for c in old["criteria"]}
+    after = {c["name"]: c for c in new["criteria"]}
+    for name in before.keys() - after.keys():
+        lines.append(f"criterion removed: {name}")
+    for name, c in after.items():
+        if name not in before:
+            lines.append(f"criterion added: {name} (weight {c['weight']}, minimum {c['min']}"
+                         f"{', required' if c['required'] else ''}): {c['description']}")
+            continue
+        for field in ("weight", "min", "required", "description"):
+            if before[name][field] != c[field]:
+                lines.append(f"criterion {name}, {field}: {before[name][field]} -> {c[field]}")
+    return lines

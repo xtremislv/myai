@@ -3231,8 +3231,8 @@ async function scoutsView(refresh) {
     error,
     scoutStatus(scout, refresh, error),
     scoutFindings(scout, found, refresh, error),
-    scoutRuns(scout),
     scout.can_edit && scoutSettings(scout, refresh, error),
+    scoutRuns(scout),
   );
   // No automatic reloading while someone reads or reviews (owner, 2026-11-14): rounds run in the background,
   // new finds arrive as a notification, and the page changes only when Refresh is pressed.
@@ -3397,8 +3397,14 @@ function metOf(scout, f) {
   return scout.settings.criteria.filter((c) => (f.scores[c.name] ?? 0) >= c.min).map((c) => c.name);
 }
 
+// Rounds are for checking now and then (owner, 2026-11-16): last on the page and folded by default.
 function scoutRuns(scout) {
-  return h("div", { class: "card" }, h("h2", null, "Rounds"), table(
+  const last = scout.runs[0];
+  return h("details", { class: "card scout-rounds" },
+    h("summary", null, h("h2", null, "Rounds"),
+      h("span", { class: "small muted" }, scout.runs.length
+        ? `${scout.runs.length} recent · last ${last.started_at ? whenText(last.started_at) : ""}, ${last.status}` : "none yet")),
+    table(
     ["Started", "Status", "Searched", "Candidates", "Judged", "Added", "Notes"],
     scout.runs.map((r) => [
       r.started_at ? whenText(r.started_at) : "",
@@ -3518,12 +3524,11 @@ function scoutSettings(scout, refresh, error) {
     ),
     h("label", null, "Search ideas (one per line, used in turn)", ideas),
     h("label", null, "Leave out", avoid),
-    h("div", { class: "row wrap" },
-      h("label", { class: "check" }, video, "Only keep finds with a reference video"),
-      h("label", null, "Otherwise, a find without a video needs a score of", noVideoScore),
-      h("label", { class: "check" }, notify, "Notify the department about new finds (each person can mute it above)"),
-    ),
-    h("div", { class: "row spread" },
+    h("h3", null, "Reference video and notifications"),
+    h("label", { class: "check" }, video, "Only keep finds with a reference video"),
+    h("label", { class: "narrow" }, "Without a video, a find needs a score of (when the box above is off)", noVideoScore),
+    h("label", { class: "check" }, notify, "Notify the department about new finds (each person can mute it above)"),
+    h("div", { class: "row spread form-actions" },
       h("button", { class: "primary", type: "submit" }, "Save settings"),
       h("button", { type: "button", class: "danger", onclick: async () => {
         if (!window.confirm(`Delete the scout "${scout.name}" and everything it found? The report file stays in the department's files.`)) return;

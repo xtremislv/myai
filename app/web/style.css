@@ -1063,3 +1063,11 @@ label.check { display: inline-flex; flex-direction: row; align-items: center; ga
 .scout-switch .mi { width: 16px; height: 16px; }
 .review-row input.grow { flex: 1 1 220px; min-width: 0; }
 .criterion .c-weight { width: 72px; }
+label.narrow { max-width: 420px; }
+.form-actions { margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.scout-rounds > summary { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; cursor: pointer; list-style: none; }
+.scout-rounds > summary::-webkit-details-marker { display: none; }
+.scout-rounds > summary h2 { margin: 0; }
+.scout-rounds > summary h2::before { content: "▸"; display: inline-block; width: 1.1em; transition: transform .15s; }
+.scout-rounds[open] > summary h2::before { transform: rotate(90deg); }
+.scout-rounds[open] > summary { margin-bottom: 12px; }

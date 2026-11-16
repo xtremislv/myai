@@ -33,7 +33,14 @@ from app.departments.packs import (
     MAIL_TOOLS,
     PRIVATE_TOOLS,
     REMINDER_TOOLS,
+    SCOUT_TOOLS,
     TEMPLATE_TOOLS,
+)
+from app.orchestrator.scout_tools import (
+    scout_findings,
+    scout_info,
+    update_scout,
+    update_scout_precheck,
 )
 from app.storage.objects import ObjectStore
 from app.vault.aesgcm_vault import AESGCMVault
@@ -2516,7 +2523,7 @@ def review_report(state: dict[str, Any], report_id: str) -> str:
 
 # Full tool table.
 # Checks that run before a call pauses for a go-ahead (no side effects: they re-run on resume).
-PRECHECKS: dict[str, Callable[..., str | None]] = {"share_with": share_precheck}
+PRECHECKS: dict[str, Callable[..., str | None]] = {"share_with": share_precheck, "update_scout": update_scout_precheck}
 
 TOOLS: dict[str, Callable[..., Any]] = {
     "read_document": read_document,
@@ -2596,6 +2603,9 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "run_python": run_python,
     "summarize_large": summarize_large,
     "make_dashboard": make_dashboard,
+    "scout_info": scout_info,
+    "scout_findings": scout_findings,
+    "update_scout": update_scout,
 }
 
 # Per-department tool allow-lists. "*" = all tools. Must match `tools` in packs.py.
@@ -2612,7 +2622,7 @@ DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
     ),
     "researcher": (
         "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS,
-        *TEMPLATE_TOOLS, *DATA_TOOLS, "more_tools",
+        *TEMPLATE_TOOLS, *DATA_TOOLS, *SCOUT_TOOLS, "more_tools",
     ),
     "superuser": ("inventory_lookup", "inventory_adjust", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS, "more_tools"),
     "admin": ("*",),
@@ -2622,6 +2632,24 @@ DEPARTMENT_TOOLS: dict[str, tuple[str, ...]] = {
 # What each tool is for, shown to the model with its schema. Keep them short and concrete:
 # the model picks tools by these words.
 TOOL_DESCRIPTIONS: dict[str, str] = {
+    "scout_info": "The department's SCOUTS (standing research that keeps finding gadgets, e.g. 'TechWiser Instagram', "
+                  "'GadgetWiser'): with no scout, each one's status, pass rule, budget and counts; with scout=<name>, its "
+                  "full settings (brief, criteria with weights and minimum scores, budget, import sites, video rule, "
+                  "pace, search ideas), rules learned from the team's reviews and recent rounds.",
+    "scout_findings": "A scout's findings (products it found): name, status, score, price, criteria met, reference "
+                      "video, product link, summary, why it wasn't kept and the team's review reason. status: found "
+                      "(new + kept, default), new, kept, rejected, below (below threshold) or all. query: words to "
+                      "match; sort: score, newest, price_low or price_high; max_price in rupees; limit up to 50.",
+    "update_scout": "Change a scout's settings. ALWAYS needs an approver's go-ahead, so first tell the person exactly "
+                    "what will change. changes: a JSON object of settings, e.g. {\"price_cap\": 80000}, "
+                    "{\"premium_from\": 40000, \"premium_needs\": [\"Camera wow\"]}, {\"min_met\": 3}, "
+                    "{\"require_video\": true}, {\"add_ideas\": [\"magnetic desk gadget\"]}, {\"enabled\": false} "
+                    "(pause). Criteria by name: {\"criteria\": {\"Camera wow\": {\"min\": 8, \"weight\": 2}, "
+                    "\"Cool factor\": null (removes it), \"Eco friendly\": {\"description\": \"...\", \"weight\": 1, "
+                    "\"min\": 7, \"required\": false} (adds it)}}. Other settings: brief, market, pass_rule (count or "
+                    "score), threshold, premium_score, import_sites, no_video_score, ideas, avoid, sources, "
+                    "interval_minutes, per_round, daily_lookups, ideas_per_round, fresh_ideas, notify. why: one plain "
+                    "sentence for the approver saying what changes and why.",
     "read_document": "Read one company document by its full key, e.g. research/q3-notes.txt.",
     "list_documents": "List company document keys that start with a prefix, e.g. research/ or reports/.",
     "get_secret": "Read a stored credential from the vault by name.",

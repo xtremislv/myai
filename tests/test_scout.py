@@ -521,3 +521,12 @@ def test_rules_are_learned_from_review_reasons_per_scout_and_relearned_on_new_re
     st = {**scouts.clean_settings(scouts.TECHWISER_INSTAGRAM), "_rules": rules}
     scouts.judge({"name": "X"}, VIDEO, "e", st, lambda sy, u, n: prompts.append(sy) or json.dumps({"scores": IG}))
     assert "Avoid lamps" in prompts[0] and "Avoid lamps" in scouts._brief(st)
+
+
+def test_india_evidence_includes_marketplace_listings_when_the_scout_has_them():
+    st = scouts.clean_settings({**scouts.TECHWISER_INSTAGRAM, "sources": ["web"]})
+    tools = fake_tools({})
+    tools.shops = lambda q: f"amazon.in listings for {q}"
+    text = scouts.evidence_for("Flip Lamp", st, tools)
+    assert "== Indian marketplaces (Amazon.in, Flipkart, Reliance Digital) ==\namazon.in listings for Flip Lamp" in text
+    assert "marketplaces" not in scouts.evidence_for("Flip Lamp", {**st, "market": "USA"}, tools)

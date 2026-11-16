@@ -149,7 +149,13 @@ def test_every_tool_has_an_acl_gate():
 
     # Shared helpers that run the ACL check for the tools that call them.
     gates = ("_enforce(", "_subject(", "_mailbox(", "_browse(", "_my_files(", "_dept_files(", "_save(",
-             "_resolve_template(", "_wallet_owner(", "_youtube(")
+             "_resolve_template(", "_wallet_owner(", "_youtube(", "_reach(")
+    # Scouts (chat tools): _reach asks scout.allowed, the ACL engine on the department's Scout/ files.
+    from app import scout as scouts
+    from app.orchestrator import scout_tools
+
+    assert "scouts.allowed(" in inspect.getsource(scout_tools._reach)
+    assert "ACLEngine(" in inspect.getsource(scouts.allowed) and ".enforce(" in inspect.getsource(scouts.allowed)
     assert "_enforce(" in inspect.getsource(tools._wallet_owner)
     # Company templates: every lookup goes through the store, which asks the ACL engine per template.
     from app.documents import store

@@ -52,3 +52,26 @@ def test_duckduckgo_results_unwrap_links_and_skip_ads():
     <a class="result__snippet">Lazy imports and more.</a></div>"""
     assert search.parse_ddg(page, 5) == [
         search.Result("What's new in Python 3.15", "https://docs.python.org/3/whatsnew/3.15.html", "Lazy imports and more.")]
+
+
+def test_a_hanging_duckduckgo_is_skipped_for_a_while(monkeypatch):
+    """2026-11-16: DuckDuckGo hung ~136 s per search through the proxy; every web search waited for it."""
+    import time
+
+    from app.browsing import search
+
+    calls = []
+
+    def slow(url, headers=None):
+        calls.append(url)
+        time.sleep(2)
+        raise RuntimeError("Malformed reply")
+
+    monkeypatch.setattr(search, "fetch", slow)
+    monkeypatch.setattr(search, "DDG_WAIT", 0.2)
+    monkeypatch.setattr(search, "_ddg_down_until", 0.0)
+    started = time.monotonic()
+    assert search._ddg("magnetic lamp", 5) == []
+    assert time.monotonic() - started < 1.5  # gave up after DDG_WAIT, not after the hang
+    assert search._ddg("another", 5) == [] and len(calls) == 1  # skipped while it is down
+    monkeypatch.setattr(search, "_ddg_down_until", 0.0)

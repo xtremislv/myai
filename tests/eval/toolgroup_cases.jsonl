@@ -58,3 +58,7 @@
 {"id": "g58", "msg": "my card details are saved right? use them to pay", "need": ["web"], "context": "Assistant: The cart on croma.com is ready: ₹1,299."}
 {"id": "g59", "msg": "forward the HR policy mail to Neha", "need": ["mail"]}
 {"id": "g60", "msg": "list my files shared with me", "need": ["files"]}
+{"id": "g61", "msg": "what did the instagram scout find today?", "need": ["scouts"]}
+{"id": "g62", "msg": "make the GadgetWiser scout require a video again", "need": ["scouts"]}
+{"id": "g63", "msg": "show rejected scout finds with their reasons", "need": ["scouts"]}
+{"id": "g64", "msg": "pause the techwiser instagram scout", "need": ["scouts"]}

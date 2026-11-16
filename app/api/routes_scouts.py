@@ -13,12 +13,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import scout as scouts
-from app.acl.engine import ACLEngine
 from app.acl.models import Action, Subject
 from app.api.deps import current_subject
 from app.db.session import Scout, ScoutFinding, ScoutMute, ScoutRun, get_session
-from app.departments.packs import DEFAULT_DEPARTMENTS
-from app.storage import objects
 from app.storage.deptfiles import key_for
 
 router = APIRouter(prefix="/v1/scouts", tags=["scouts"])
@@ -26,13 +23,7 @@ STATUSES = ("new", "kept", "rejected", "below")
 
 
 def _allowed(session: Session, subject: Subject, department: str, action: Action) -> bool:
-    if department not in {d.name for d in DEFAULT_DEPARTMENTS} or department == "admin":
-        return False
-    try:
-        ACLEngine(session).enforce(subject, action, objects.resource_for(key_for(f"{scouts.REPORT_FOLDER}/x.xlsx", department)))
-        return True
-    except PermissionError:
-        return False
+    return scouts.allowed(session, subject, department, action)
 
 
 def _scout(session: Session, subject: Subject, scout_id: str, action: Action = Action.READ) -> Scout:

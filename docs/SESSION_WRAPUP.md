@@ -11,7 +11,7 @@ this file, this file is right.
   RECORD_AUDIO). 1.0.71 was published 2026-11-13. 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **733 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **741 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -182,6 +182,21 @@ the web, read and answer mail, manage files, make documents from templates, set 
     `no_video_score` 8. Weight-0 criteria are yes/no checks and don't count towards N. `scout.recheck` re-judges
     unreviewed finds after rule changes (reuses stored videos, no YouTube quota); it was run on 2026-11-16.
   - A third scout, **"TechWiser YouTube"**, was made by the team on the Scouts page (score rule, like GadgetWiser).
+- **Scouts in the chat** (2026-11-16, `app/orchestrator/scout_tools.py`, tool group `scouts`, Research tools and the
+  research specialist): `scout_info` (all scouts, or one in full incl. learned rules and recent rounds),
+  `scout_findings` (status/query/sort/max_price, review reasons), `update_scout` (JSON `changes`: settings keys,
+  `criteria` by name with null = remove, `add_ideas`, `enabled`) is a **critical tool**: it waits for the admin on
+  the Approvals page; `update_scout_precheck` refuses invalid changes before anyone is asked. Only the working
+  department's scouts are reachable (`scout.allowed`, members only). Triage: the Research description names the
+  scouts; adding a scouts sentence to `TRIAGE_PROMPT` itself broke "research files" cases (w11-w13), so don't.
+  Eval: triage 566/570, 0 personal as work (miss: vague "which scout finds cost under 5000" stays private);
+  toolgroups 62/64.
+- **Scout evidence**: for market India each product also gets `product_search` (Amazon.in/Flipkart/Reliance, ₹
+  listings); the judge counts only the exact product. Keyless web search is near-useless from the VPS right now
+  (Bing gives the data-centre IP junk; DuckDuckGo hung ~136 s per search, now skipped 15 min after a failure or
+  20 s wait, `search.DDG_WAIT/DDG_PAUSE`). ubuy.co.in and xech.com answered 429 to the VPS. **A Tavily/Serper key
+  is the real fix** (next steps #3).
+- Scouts page: Rounds card is last and folded by default; settings card's last section tidied.
   - **"GadgetWiser"**: `score` rule, weights affordable 30 / everyday problem 25 / aesthetic 22 / looks one way,
     acts another 18 / fresh 15, pass mark 6.5, plus **"Available in India" required** (weight 0, met at 7); market
     "India" adds a "<product> price India" web search to the evidence. Presets: `scout.PRESETS`.

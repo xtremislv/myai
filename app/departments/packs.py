@@ -58,6 +58,9 @@ FILE_TOOLS = (
     "delete_file", "restore_file", *SHARE_TOOLS,
 )
 REMINDER_TOOLS = ("set_reminder", "list_reminders", "cancel_reminder")
+# A department's scouts (app/scout.py) in the chat: look up and query; changing settings needs an approver
+# (owner, 2026-11-16). Work only: scouts are department data (members only, ACL on its Scout/ files).
+SCOUT_TOOLS = ("scout_info", "scout_findings", "update_scout")
 # Analysing data with code (app/sandbox.py: no network, copies of files only) and showing the
 # results as a dashboard under the reply (app/dashboards.py). Everyone, private chat included.
 # Long tasks run in the background (app/jobs.py, app/background.py) and end in a sheet or document.
@@ -176,7 +179,8 @@ LOGISTICS = DepartmentSpec(
 
 RESEARCHER = DepartmentSpec(
     name="researcher",
-    description="Research: information gathering, synthesis, reports.",
+    description="Research: information gathering, synthesis, reports; the company's scouts (standing gadget "
+                "research for TechWiser/GadgetWiser: their finds, criteria and settings).",
     grants=(
         Grant("research:*", ("read", "write", "list", "delete")),
         Grant("reports:*", ("read", "list")),
@@ -187,9 +191,11 @@ RESEARCHER = DepartmentSpec(
     ),
     tools=(
         "read_document", "list_documents", *LOOKUP_TOOLS, *BROWSE_TOOLS, "summarize", *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS, *DATA_TOOLS,
+        *SCOUT_TOOLS,
     ),
     quota_per_min=120,
     max_concurrency=6,
+    critical_resources=("tool:update_scout",),
 )
 
 SUPERUSER = DepartmentSpec(

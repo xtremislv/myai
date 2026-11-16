@@ -93,6 +93,7 @@ SPECIALISTS: dict[str, Specialist] = {
                 "youtube_search", "youtube_channel",
                 "youtube_video", "web_research", "start_background_task",
                 "save_table", "read_document", "list_documents", "read_file", "list_files",
+                "scout_info", "scout_findings", "update_scout",
             ),
             max_rounds=6,
             prompt=(

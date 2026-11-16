@@ -29,6 +29,7 @@ from app.departments.packs import (
     LOOKUP_TOOLS,
     MAIL_TOOLS,
     REMINDER_TOOLS,
+    SCOUT_TOOLS,
     TEMPLATE_TOOLS,
     WALLET_TOOLS,
 )
@@ -43,6 +44,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "reminders": REMINDER_TOOLS,
     "data": DATA_TOOLS,
     "templates": TEMPLATE_TOOLS,
+    "scouts": SCOUT_TOOLS,
 }
 GROUP_OF: dict[str, str] = {tool: group for group, tools in GROUPS.items() for tool in tools}
 
@@ -58,6 +60,8 @@ DESCRIPTIONS = {
     "data": "anything long or numeric: analyse data with Python, charts, dashboards, tables, summarize a very "
             "long document or attachment, background jobs and their status",
     "templates": "documents made from templates (letters, invoices, forms): list, read, fill, save templates",
+    "scouts": "the company's scouts (standing gadget research such as TechWiser Instagram or GadgetWiser): what they "
+              "found, their finds, scores, criteria, budget and settings, and changing those settings",
 }
 
 PROMPT = """Decide which tool groups the assistant may need to answer the latest message. Groups:

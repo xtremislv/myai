@@ -87,3 +87,9 @@
 {"id": "p91", "msg": "search other sites if reddit is not available, try every website or public data and list the apps", "route": "private"}
 {"id": "p92", "msg": "find the best free photo editing apps people recommend this year", "route": "private"}
 {"id": "w90", "msg": "Research competitor apps for our client project and save the findings in the research files", "route": "work", "dept": ["researcher"]}
+{"id": "w91", "msg": "what did the instagram scout find today?", "route": "work", "dept": ["researcher"]}
+{"id": "w92", "msg": "show the rejected finds of the GadgetWiser scout and the reasons", "route": "work", "dept": ["researcher"]}
+{"id": "w93", "msg": "lower the techwiser instagram scout budget cap to 80000", "route": "work", "dept": ["researcher"]}
+{"id": "w94", "msg": "which scout finds cost under 5000 and have a video?", "route": "work", "dept": ["researcher"]}
+{"id": "p93", "msg": "what is a talent scout and how do they find actors?", "route": "private"}
+{"id": "p94", "msg": "find me a cool magnetic desk lamp under 3000 for my room", "route": "private"}
