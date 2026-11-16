@@ -20,7 +20,7 @@ bundle="${1:?Usage: scripts/migrate_import.sh /path/to/tw-ai-migration-<time>.ta
 [[ -x .venv/bin/python ]] || { echo "Run scripts/install_server.sh first." >&2; exit 1; }
 LOG_DIR="${LOG_DIR:-/var/log/ai-platform}"
 MAIN_MODEL="${CLAUDE_MODEL:-claude-sonnet-5-5}"
-FAST_MODEL="${CLAUDE_FAST_MODEL:-claude-haiku-5-5}"
+BUDGET="${LLM_MONTHLY_BUDGET:-50000}"   # INR a month; the model manager alerts at projected-over, 80%, 100%
 umask 077
 
 work="$(mktemp -d)"
@@ -52,7 +52,7 @@ install -m 600 "$pack/env" .env
 tunnel_off=1
 [[ -f "$pack/final" ]] && tunnel_off=0
 python3 scripts/env_set.py LLM_PROVIDER=anthropic "ANTHROPIC_API_KEY=$key" "LLM_MODEL=$MAIN_MODEL" \
-  "LLM_FAST_MODEL=$FAST_MODEL" LLM_THINKING=off LLM_CONTEXT_TOKENS=200000 LLM_MAX_TOKENS=8192 \
+  LLM_SMART_ROUTING=true "LLM_MONTHLY_BUDGET=$BUDGET" LLM_BUDGET_CURRENCY=INR LLM_THINKING=off LLM_CONTEXT_TOKENS=200000 LLM_MAX_TOKENS=8192 \
   STT_DEVICE=cpu "TUNNEL_OFF=$tunnel_off" "SCHEDULER_OFF=$tunnel_off" \
   --comment-out VLLM_MODEL_PATH VLLM_EXTRA_ARGS VLLM_GPU_UTIL VLLM_MAX_MODEL_LEN LLM_BASE_URL HUGGING_FACE_HUB_TOKEN
 [[ -n "$key" ]] || echo "  WARNING: no ANTHROPIC_API_KEY yet: the assistant won't answer until you set it" \

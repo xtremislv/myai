@@ -27,6 +27,25 @@ _settings = get_settings()
 llm_requests_total = Counter("llm_requests_total", "LLM calls", ["model", "status"])
 llm_tokens_total = Counter("llm_tokens_total", "LLM tokens", ["model", "kind"])  # kind=prompt|completion
 # The same by task: the app function that asked (e.g. scout.judge, guards.triage_verdict), app/llm/client.py.
+llm_tier_calls_total = Counter("llm_tier_calls_total", "Claude calls by model-manager tier", ["tier", "model"])
+llm_cost_usd_total = Counter("llm_cost_usd_total", "Claude spend in USD (list prices)", ["tier", "model"])
+def _month(field: str):
+    def read() -> float:
+        from app.config import get_settings
+
+        if get_settings().llm_provider != "anthropic":
+            return 0.0
+        from app.llm import model_manager
+
+        return float(model_manager.month_summary()[field])
+    return read
+
+
+# This month's Claude spend from the shared ledger (every process), for Grafana and alert rules.
+for _name, _field, _doc in (("llm_month_spend_usd", "spent_usd", "Claude spend this month (USD)"),
+                            ("llm_month_projected_usd", "projected_usd", "Claude spend projected for the month (USD)"),
+                            ("llm_month_budget_usd", "budget_usd", "Monthly Claude budget (USD)")):
+    Gauge(_name, _doc).set_function(_month(_field))
 llm_task_tokens_total = Counter("llm_task_tokens_total", "LLM tokens by task", ["task", "kind"])
 llm_latency_seconds = Histogram("llm_latency_seconds", "LLM call latency", ["model"])
 acl_decisions_total = Counter("acl_decisions_total", "ACL decisions", ["decision", "action"])

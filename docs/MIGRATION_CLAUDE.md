@@ -8,7 +8,7 @@ Anthropic API. Branch: `claude-api-migration`.
 
 | | Before | After |
 |---|---|---|
-| Model | Gemma 4 26B on vLLM (local GPU) | Claude Sonnet 5.5 for chat, tools and judging; Claude Haiku 5.5 for short sorting calls |
+| Model | Gemma 4 26B on vLLM (local GPU) | Claude, picked per call by the model manager: Haiku / Sonnet / Opus / Fable, within a monthly budget |
 | GPU | 48 GB Quadro RTX 8000 | none |
 | Voice input | Whisper on the GPU | the same Whisper model on the CPU (`STT_DEVICE=cpu`): a few seconds per clip |
 | Start on boot | `/etc/rc.local` (container) | systemd `ai-platform.service` (runs the same `scripts/start_native.sh`) |
@@ -29,12 +29,17 @@ data-retention options for the organisation before the switch.
   which converts the app's (OpenAI-shaped) messages and tools to the Messages API and back. No caller changed.
   Prompt caching is on (5 minutes), temperature isn't sent, and Claude's thinking blocks are never replayed
   (the app edits its history: fitted context, compacted tool results, the clock stamp).
-- Model per task: `LLM_MODEL` (default `claude-sonnet-5-5`) for everything except the tasks in
-  `LLM_FAST_TASKS` (triage, safety checks, tool-group picking, sharing checks, scout search ideas /
-  candidates / shortlist / coverage / competitor ideas), which use `LLM_FAST_MODEL` (`claude-haiku-5-5`).
-  Scout judging stays on the main model.
+- Model per call: the **model manager** (`app/llm/model_manager.py`) picks a model per call:
+  Haiku 5.5 for background and short sorting work (triage, safety checks, tool picking, scout searches, mail and
+  file summaries), Sonnet 5.5 for normal answers and scout judging, Opus 5.5 for multi-step work (supervisor and
+  specialists, team mode, long tool chains, big contexts, analysis/planning requests), Fable 5.2 when a person
+  asks for deep thinking. Monthly mix targets 50/35/10/5% (`LLM_TIER_TARGETS`) act as ceilings: a tier over its
+  share steps down one tier. Budget `LLM_MONTHLY_BUDGET` (50,000 INR at `LLM_USD_RATE`): admin alerts (bell +
+  email) when the month is projected over budget, at 80% and at 100%; economy mode (Fable/Opus step down) while
+  projected over; only Haiku/Sonnet once it is used up (`LLM_BUDGET_HARD_STOP=true` refuses calls instead).
+  This month's figures: `GET /v1/admin/llm-usage`, Prometheus `llm_month_spend_usd` / `llm_month_projected_usd`.
 - `LLM_THINKING=off` by default (fast, cheap); `adaptive` lets the model think where it helps. Claude Opus 5.5
-  always thinks (`CLAUDE_MODEL=claude-opus-5-5` at import, or `LLM_MODEL` later).
+  and Fable 5.2 always think. `LLM_SMART_ROUTING=false` sends everything to `LLM_MODEL`.
 - No GPU governor: background work (scouts, summaries, mail sheets) takes at most
   `LLM_BACKGROUND_CONCURRENCY` (4) calls at a time per process, so live chats stay quick within the
   account's rate limits.
@@ -114,7 +119,8 @@ server in between stays there only.
   Prove one: `scripts/restore.sh --verify /var/backups/ai-platform/<latest>.tar`.
 - Spend: `.venv/bin/python -m scripts.llm_cost --hours 24` (last table: actual Claude spend by model).
 - Tuning: `python3 scripts/env_set.py KEY=value` then `systemctl restart ai-platform`:
-  `LLM_MODEL`, `LLM_FAST_MODEL`, `LLM_FAST_TASKS`, `LLM_THINKING`, `LLM_EFFORT`, `LLM_BACKGROUND_CONCURRENCY`.
+  `LLM_MONTHLY_BUDGET`, `LLM_USD_RATE`, `LLM_TIER_TARGETS`, `LLM_LIGHT_MODEL` / `LLM_STANDARD_MODEL` /
+  `LLM_COMPLEX_MODEL` / `LLM_DEEP_MODEL`, `LLM_SMART_ROUTING`, `LLM_THINKING`, `LLM_EFFORT`, `LLM_BACKGROUND_CONCURRENCY`.
 - Android publishing from the new server needs the Android SDK and the signing key
   (`--with-android-key`; never generate a new key: installed apps refuse updates signed with another).
 - Keep the old server a few days, then stop renting it. Its `/root/models` and `/root/vllm-env` aren't needed.

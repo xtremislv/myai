@@ -15,12 +15,16 @@ def anthropic(monkeypatch):
     for s in {id(x): x for x in (client._settings, claude.get_settings())}.values():
         monkeypatch.setattr(s, "llm_provider", "anthropic")
         monkeypatch.setattr(s, "llm_model", "claude-sonnet-5-5")
-        monkeypatch.setattr(s, "llm_fast_model", "claude-haiku-5-5")
+        monkeypatch.setattr(s, "llm_smart_routing", True)
+        monkeypatch.setattr(s, "llm_standard_model", "")
         monkeypatch.setattr(s, "llm_thinking", "off")
         monkeypatch.setattr(s, "llm_effort", "")
         monkeypatch.setattr(s, "llm_context_tokens", 200_000)
     fake = FakeAPI()
     monkeypatch.setattr(claude, "_client", fake)
+    from app.llm import model_manager
+
+    monkeypatch.setattr(model_manager, "ledger", model_manager.Ledger(redis_client=False))
     return fake
 
 
@@ -128,16 +132,22 @@ def test_streamed_words_reach_the_sink(anthropic):
     assert words == ["Hello", " there"] and reply == "Hello there"
 
 
-def test_short_tasks_use_the_fast_model_without_thinking(anthropic):
-    from app.request_manager import guards  # noqa: F401 - the task name is what matters
-
-    assert claude.model_for("request_manager.guards.triage") == "claude-haiku-5-5"
-    assert claude.model_for("scout.judge") == "claude-sonnet-5-5"
+def test_thinking_settings_per_model(anthropic):
     assert claude.thinking_params("claude-haiku-5-5") == {"thinking": {"type": "disabled"}}
     assert claude.thinking_params("claude-opus-5-5") == {}  # always thinks: nothing to send
+    assert claude.thinking_params("claude-fable-5-2") == {}
     req = claude.params([{"role": "user", "content": "x"}], model="claude-opus-5-5", max_tokens=120,
                         tools=None, tool_choice=None)
     assert req["max_tokens"] == claude.THINKING_MIN_TOKENS  # room to think before a short verdict
+
+
+def test_triage_goes_to_haiku_and_is_costed(anthropic):
+    from app.llm import model_manager
+
+    client.chat([{"role": "user", "content": "hi"}], task="request_manager.guards.triage")
+    assert anthropic.requests[-1]["model"] == "claude-haiku-5-5"
+    summary = model_manager.month_summary()
+    assert summary["calls"]["light"] == 1 and summary["cost_usd"]["light"] > 0
 
 
 def test_tool_choice_none_and_adaptive_thinking(anthropic, monkeypatch):

@@ -10,13 +10,15 @@ this file, this file is right.
   (not deployed yet); runbook `docs/MIGRATION_CLAUDE.md`. Same tunnel and domain. The live checkout is on
   `claude-api-migration` (needed for `migrate_export.sh`), still with Gemma: `LLM_PROVIDER` is unset, so it behaves
   as `android-app` did. Claude Code on the new server: `docs/CLAUDE_CODE_SERVER.md`, `scripts/setup_claude_code.sh`.
+  Model manager (`app/llm/model_manager.py`): Haiku/Sonnet/Opus/Fable per call, mix ceilings 50/35/10/5%, budget
+  50,000 INR/month (owner's figure, read as rupees) with admin alerts at projected-over, 80% and 100%.
 - Repo: `/root/myai`, GitHub `xtremislv/myai`. The live checkout is on branch **`android-app`** since 2026-11-10
   (it contains all of `server-native-setup`; see `BRANCHES.md`). Never push to `main` (owner's rule).
 - Android app: see `docs/ANDROID_APP.md`. **1.0.81** is published (2026-11-14: voice input via the server's Whisper,
   RECORD_AUDIO). 1.0.71 was published 2026-11-13. 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **768 passed, 13 skipped** (on `claude-api-migration`) (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **777 passed, 13 skipped** (on `claude-api-migration`) (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 

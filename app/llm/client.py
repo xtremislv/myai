@@ -20,9 +20,11 @@ from openai import OpenAI
 from app.config import get_settings
 from app.llm.governor import Paused
 from app.observability import (
+    llm_cost_usd_total,
     llm_latency_seconds,
     llm_requests_total,
     llm_task_tokens_total,
+    llm_tier_calls_total,
     llm_tokens_total,
     tracer,
 )
@@ -387,18 +389,22 @@ def _claude(
 ) -> Reply:
     """_chat for LLM_PROVIDER=anthropic: same arguments, same Reply (temperature is not sent)."""
     from app.llm import anthropic_backend as claude
+    from app.llm import model_manager
+    from app.llm.governor import background
 
     task = kwargs.get("task", "other")
-    model = claude.model_for(task, model)
+    choice = model_manager.choose(task, messages, tools, requested=model, background=background.get())
+    model = choice.model
     sink = token_sink.get() if stream else None
     convo, max_tokens = fit_to_context(
         [_for_model(m) for m in place_clock(messages)], tools, kwargs.get("max_tokens", _settings.llm_max_tokens))
     request = claude.params(convo, model=model, max_tokens=max_tokens, tools=tools, tool_choice=tool_choice)
     with tracer.start_as_current_span("llm.chat") as span:
         span.set_attribute("llm.model", model)
+        span.set_attribute("llm.tier", choice.tier)
         start = time.perf_counter()
         try:
-            text, calls, usage = claude.call(request, sink, timeout=kwargs.get("timeout"))
+            text, calls, usage, raw = claude.call(request, sink, timeout=kwargs.get("timeout"))
             llm_requests_total.labels(model=model, status="ok").inc()
         except Exception:
             llm_requests_total.labels(model=model, status="error").inc()
@@ -406,5 +412,8 @@ def _claude(
         finally:
             llm_latency_seconds.labels(model=model).observe(time.perf_counter() - start)
         _record_usage(model, usage, task)
+        usd = model_manager.record(choice.tier, model, raw)
+        llm_tier_calls_total.labels(tier=choice.tier, model=model).inc()
+        llm_cost_usd_total.labels(tier=choice.tier, model=model).inc(usd)
         span.set_attribute("llm.tool_calls", len(calls))
         return Reply(text, calls)

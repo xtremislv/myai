@@ -52,7 +52,7 @@ in `/root/myai/.env` (mode 600), the vault, and the files listed under "Secrets 
 | What | Where |
 |---|---|
 | Code (live checkout) | `/root/myai` on branch `claude-api-migration` (until merged) |
-| Settings and secrets | `/root/myai/.env` (600): `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `LLM_MODEL`, `LLM_FAST_MODEL`, `LLM_FAST_TASKS`, `LLM_THINKING`, `VAULT_MASTER_KEY`, `POSTGRES_*`, `REDIS_*`, `MINIO_*`, `CF_TUNNEL`, `PROXY_SSH*`, `OUTBOUND_PROXY`, `STT_DEVICE=cpu`, `TUNNEL_OFF`, `SCHEDULER_OFF`, `LLM_USAGE_LOG` |
+| Settings and secrets | `/root/myai/.env` (600): `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `LLM_MODEL`, `LLM_MONTHLY_BUDGET`, `LLM_USD_RATE`, `LLM_TIER_TARGETS`, `LLM_*_MODEL`, `LLM_THINKING`, `VAULT_MASTER_KEY`, `POSTGRES_*`, `REDIS_*`, `MINIO_*`, `CF_TUNNEL`, `PROXY_SSH*`, `OUTBOUND_PROXY`, `STT_DEVICE=cpu`, `TUNNEL_OFF`, `SCHEDULER_OFF`, `LLM_USAGE_LOG` |
 | Python env | `/root/myai/.venv` (uv); sandbox interpreter `/opt/agent-sandbox` (runs as `nobody`) |
 | Logs, PID files | `/var/log/ai-platform/` (`gateway.log`, `scheduler.log`, `watchdog.log`, `boot.log`, `<service>.pid`, `llm_usage.jsonl`) |
 | Data | Postgres 16 (`ai_platform`, role `ai`), MinIO `/var/lib/minio`, published Android app `/var/lib/ai-platform/android`, jobs `/var/lib/ai-platform/work` |
@@ -113,8 +113,17 @@ Postgres integration tests only on a throwaway DB:
 `su postgres -c "createdb -O ai ai_platform_itest"`, run with `POSTGRES_INTEGRATION=1 POSTGRES_DSN=<that db>`, then `dropdb`.
 
 **Model and cost**
-- Which model does what: `LLM_MODEL` (Sonnet 5.5) for chat, tools, scout judging; `LLM_FAST_MODEL` (Haiku 5.5) for
-  the task prefixes in `LLM_FAST_TASKS`. Change with `python3 scripts/env_set.py KEY=value` + restart.
+- Which model does what: the **model manager** (`app/llm/model_manager.py`) picks a model per call:
+  Haiku 5.5 for background and short sorting work (triage, safety checks, tool picking, scout searches, mail and
+  file summaries), Sonnet 5.5 for normal answers and scout judging, Opus 5.5 for multi-step work (supervisor and
+  specialists, team mode, long tool chains, big contexts, analysis/planning requests), Fable 5.2 when a person
+  asks for deep thinking. Monthly mix targets 50/35/10/5% (`LLM_TIER_TARGETS`) act as ceilings: a tier over its
+  share steps down one tier. Budget `LLM_MONTHLY_BUDGET` (50,000 INR at `LLM_USD_RATE`): admin alerts (bell +
+  email) when the month is projected over budget, at 80% and at 100%; economy mode (Fable/Opus step down) while
+  projected over; only Haiku/Sonnet once it is used up (`LLM_BUDGET_HARD_STOP=true` refuses calls instead).
+  This month's figures: `GET /v1/admin/llm-usage`, Prometheus `llm_month_spend_usd` / `llm_month_projected_usd`.
+  Change settings with `python3 scripts/env_set.py KEY=value` + restart. Budget alerts run in the scheduler.
+- The owner's budget is 50,000 INR a month: don't raise it, change the targets or turn off alerts without asking.
 - Spend: `.venv/bin/python -m scripts.llm_cost --hours 24` (last table = actual Claude spend by model).
 - Token counts per task are in `llm_usage.jsonl` (counts only, never content) and Prometheus `llm_task_tokens_total`.
 - API errors: `grep -i anthropic /var/log/ai-platform/gateway.log`; 429 = rate limit (lower

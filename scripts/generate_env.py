@@ -35,7 +35,9 @@ def write_env(path: Path, args: argparse.Namespace) -> None:
         model_block = f"""LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=
 LLM_MODEL={args.model or 'claude-sonnet-5-5'}
-LLM_FAST_MODEL=claude-haiku-5-5
+LLM_MONTHLY_BUDGET=50000
+LLM_BUDGET_CURRENCY=INR
+LLM_USD_RATE=88
 LLM_THINKING=off
 LLM_CONTEXT_TOKENS=200000
 LLM_MAX_TOKENS=8192

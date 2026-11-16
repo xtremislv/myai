@@ -28,12 +28,12 @@ Moving off the GPU host: Claude through the Anthropic API instead of Gemma on vL
 server. Runbook: `docs/MIGRATION_CLAUDE.md`. With `LLM_PROVIDER` unset (= `vllm`) everything behaves as before,
 so the branch can be merged before the move.
 
-- New: `app/llm/anthropic_backend.py` (OpenAI-shaped messages/tools ⇄ Messages API, fast model by task, thinking
+- New: `app/llm/anthropic_backend.py` (OpenAI-shaped messages/tools ⇄ Messages API, thinking
   settings, prompt caching), `scripts/install_server.sh`, `scripts/migrate_export.sh`, `scripts/migrate_import.sh`,
   `scripts/env_set.py`, `deploy/systemd/ai-platform-native.service`, `deploy/systemd/ai-platform-backup-native.service`,
   `docs/MIGRATION_CLAUDE.md`, `tests/test_llm_claude.py`, `tests/test_migration.py`.
 - Changed: `app/llm/client.py` (dispatch to Claude; usage log records the model), `app/config.py` (`LLM_PROVIDER`,
-  `ANTHROPIC_API_KEY`, `LLM_FAST_MODEL`, `LLM_FAST_TASKS`, `LLM_THINKING`, `LLM_EFFORT`, `LLM_BACKGROUND_CONCURRENCY`),
+  `ANTHROPIC_API_KEY`, model-manager settings (`LLM_*_MODEL`, `LLM_TIER_TARGETS`, `LLM_MONTHLY_BUDGET`, ...), `LLM_THINKING`, `LLM_EFFORT`, `LLM_BACKGROUND_CONCURRENCY`),
   `app/llm/governor.py` (no vLLM metrics with Claude), `app/health.py` (`/readyz` checks the API key),
   `scripts/start_native.sh` (no vLLM with Claude, `stop`, `TUNNEL_OFF`, `SCHEDULER_OFF`, `STT_DEVICE`/`STT_MODEL`
   from .env, Prometheus without the vLLM job), `scripts/watchdog.sh` + `scripts/public_urls.sh` (`TUNNEL_OFF`),
@@ -41,6 +41,8 @@ so the branch can be merged before the move.
   `pyproject.toml`/`Dockerfile` (`anthropic`), `.env.example`; `backup.sh`/`restore.sh` made executable.
 - Claude Code on the new server: `docs/CLAUDE_CODE_SERVER.md` (background, setup, processes, rules),
   `scripts/setup_claude_code.sh` + `deploy/claude-code/memory/` (memory seeds, no secrets), `.claude/settings.json`.
+- Model manager (`app/llm/model_manager.py`): Haiku/Sonnet/Opus/Fable per call, monthly mix ceilings 50/35/10/5%,
+  50,000 INR budget with admin alerts (scheduler) and economy mode, `GET /v1/admin/llm-usage`, Prometheus gauges.
 - No migration, no Android change.
 
 ## `android-app` (2026-11-10): what changed

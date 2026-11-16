@@ -90,3 +90,14 @@ def put_secret(body: SecretIn, session: Session = Depends(get_session)) -> None:
 def delete_secret(name: str, session: Session = Depends(get_session)) -> None:
     _not_protected(name)
     AESGCMVault(session).delete(name)
+
+
+@router.get("/llm-usage")
+def llm_usage() -> dict:
+    """This month's Claude spend, projection, budget and tier mix (app/llm/model_manager.py)."""
+    from app.config import get_settings
+    from app.llm import model_manager
+
+    summary = model_manager.month_summary()
+    summary["provider"] = get_settings().llm_provider
+    return summary

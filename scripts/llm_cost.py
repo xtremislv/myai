@@ -31,9 +31,10 @@ PRICES = {  # input, output, cache read, cache write (5 min)
     "Claude Opus 5.5": (4.00, 20.00, 0.20, 5.00),
     "Claude Sonnet 5.5": (2.00, 10.00, 0.10, 2.50),
     "Claude Haiku 5.5": (0.10, 0.50, 0.01, 0.125),  # cache read assumed 0.1x: not in the docs checked
+    "Claude Fable 5.2": (8.00, 40.00, 0.20, 10.00),
 }
 TOKENIZER_FACTOR = 1.15
-THINKING_FACTOR = {"Claude Opus 5.5": 1.0, "Claude Sonnet 5.5": 0.0, "Claude Haiku 5.5": 0.0}  # extra output share
+THINKING_FACTOR = {"Claude Opus 5.5": 1.0, "Claude Sonnet 5.5": 0.0, "Claude Haiku 5.5": 0.0, "Claude Fable 5.2": 1.0}  # extra output share
 
 # Calling function -> area of the platform. Unknown tasks are shown under their own name.
 AREAS = [
@@ -63,7 +64,7 @@ CACHED = {"chat: assistant (single agent)": 0.75, "chat: multi-step (supervisor 
           "chat: team mode": 0.6, "chat: sorting each message (triage)": 0.5, "chat: picking tool groups": 0.4}
 CACHED_DEFAULT = 0.2
 MODEL_NAMES = {"claude-opus-5-5": "Claude Opus 5.5", "claude-sonnet-5-5": "Claude Sonnet 5.5",
-               "claude-haiku-5-5": "Claude Haiku 5.5"}
+               "claude-haiku-5-5": "Claude Haiku 5.5", "claude-fable-5-2": "Claude Fable 5.2"}
 
 
 def area(task: str) -> str:

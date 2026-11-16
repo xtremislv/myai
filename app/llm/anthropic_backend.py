@@ -13,9 +13,9 @@ shape to the Messages API and back, so no caller changes:
     tool results, the clock stamp), and replaying a thinking block after an edit is refused; leaving them
     out is always allowed.
 
-Models: LLM_MODEL for the conversation and judgement, LLM_FAST_MODEL for short sorting and extraction calls
-(tasks listed in LLM_FAST_TASKS, matched by prefix on client.caller_task()). Thinking is off by default
-(LLM_THINKING=adaptive turns it on where the model allows a choice; Claude Opus 5.5 always thinks).
+Which model: app/llm/model_manager.py (Haiku / Sonnet / Opus / Fable by the work, the monthly mix and budget).
+Thinking is off by default where the model allows a choice (LLM_THINKING=adaptive turns it on); Claude Opus 5.5
+and Claude Fable 5.2 always think.
 Temperature is not sent: Claude Haiku 5.5 refuses non-default sampling settings.
 """
 from __future__ import annotations
@@ -55,18 +55,8 @@ def client():
 
 
 # ---- which model, which settings ----
-def model_for(task: str, requested: str | None = None) -> str:
-    s = get_settings()
-    if requested and requested.startswith("claude"):
-        return requested
-    fast = [t.strip() for t in s.llm_fast_tasks.split(",") if t.strip()]
-    if s.llm_fast_model and any(task.startswith(t) for t in fast):
-        return s.llm_fast_model
-    return s.llm_model
-
-
 def always_thinks(model: str) -> bool:
-    return model.startswith("claude-opus-5-5")
+    return model.startswith(("claude-opus-5-5", "claude-fable-5"))
 
 
 def thinking_params(model: str) -> dict[str, Any]:
@@ -75,7 +65,7 @@ def thinking_params(model: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     effort = (s.llm_effort or "").strip()
     if always_thinks(model):
-        pass  # Claude Opus 5.5: always adaptive; "disabled" is a 400
+        pass  # Claude Opus 5.5 and Fable: always adaptive; "disabled" is a 400
     elif s.llm_thinking == "adaptive":
         out["thinking"] = {"type": "adaptive"}
     elif model.startswith("claude-sonnet-5-5"):
@@ -237,7 +227,7 @@ def reply_parts(message: Any) -> tuple[str, list[dict[str, Any]]]:
 
 
 def call(request: dict[str, Any], sink: Callable[[str], None] | None, timeout: float | None = None):
-    """One request: streamed to `sink` as the words arrive when given. Returns (text, calls, usage)."""
+    """One request: streamed to `sink` as the words arrive when given. Returns (text, calls, usage, raw usage)."""
     api = client().with_options(timeout=timeout) if timeout else client()
     if sink is None:
         message = api.messages.create(**request)
@@ -248,7 +238,7 @@ def call(request: dict[str, Any], sink: Callable[[str], None] | None, timeout: f
                     sink(event.text)
             message = stream.get_final_message()
     text, calls = reply_parts(message)
-    return text, calls, usage_of(message.usage)
+    return text, calls, usage_of(message.usage), message.usage
 
 
 # Background work (big summaries, mail sheets, scouts) shares the account's rate limit with chats,

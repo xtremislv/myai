@@ -7,7 +7,9 @@ metadata:
 
 Since the move (planned 2026-11-16, branch `claude-api-migration`, docs/MIGRATION_CLAUDE.md) the platform runs on an
 8 vCPU / 16 GB / 100 GB Ubuntu 24.04 VM without a GPU. The model is Claude via the Anthropic API
-(`LLM_PROVIDER=anthropic`; Sonnet 5.5 main, Haiku 5.5 for short sorting tasks) instead of Gemma on vLLM.
+(`LLM_PROVIDER=anthropic`) instead of Gemma on vLLM. The model manager (app/llm/model_manager.py) picks Haiku /
+Sonnet / Opus / Fable per call, steers the monthly mix (50/35/10/5% ceilings) and keeps spend within the owner's
+50,000 INR/month budget (alerts at projected-over, 80%, 100%). Don't change the budget or targets without asking.
 systemd `ai-platform.service` runs `scripts/start_native.sh` at boot (gateway, scheduler, MinIO, Whisper on CPU,
 Loki/Alloy/Prometheus/Grafana, VPS proxy tunnel, cloudflared, watchdog); Postgres 16 and Redis are Ubuntu services.
 Public access only through the named Cloudflare tunnel `tw-ai`: https://tw-ai.in/ui/ and https://grafana.tw-ai.in.

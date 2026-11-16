@@ -31,11 +31,21 @@ class Settings(BaseSettings):
     # API (app/llm/anthropic_backend.py); then LLM_MODEL is a Claude model id and no GPU is needed.
     llm_provider: str = "vllm"
     anthropic_api_key: str = ""
-    # Claude only: a cheaper model for short sorting/extraction calls, chosen by task prefix
-    # (app.llm.client.caller_task names, e.g. "request_manager.guards.triage"). Empty = LLM_MODEL for all.
-    llm_fast_model: str = ""
-    llm_fast_tasks: str = ("request_manager.guards,orchestrator.toolsel,sharing,scout.fresh_ideas,"
-                           "scout.candidates,scout.shortlist,scout.already_covered,scout.from_hit")
+    # Claude only: the model manager (app/llm/model_manager.py) picks a tier per call: light (background,
+    # sorting), standard (answers), complex (multi-step, analysis), deep (asked for deep thinking).
+    # LLM_SMART_ROUTING=false: LLM_MODEL for everything.
+    llm_smart_routing: bool = True
+    llm_light_model: str = "claude-haiku-5-5"
+    llm_standard_model: str = ""  # empty: LLM_MODEL
+    llm_complex_model: str = "claude-opus-5-5"
+    llm_deep_model: str = "claude-fable-5-2"
+    # Share of calls per tier each month, as ceilings for standard/complex/deep ("light=50,standard=35,...").
+    llm_tier_targets: str = "light=50,standard=35,complex=10,deep=5"
+    # Monthly spend limit: alerts at "projected over", 80% and 100%; economy mode when projected over.
+    llm_monthly_budget: float = 50000
+    llm_budget_currency: str = "INR"
+    llm_usd_rate: float = 88.0  # INR per USD for the budget (update when the rate moves)
+    llm_budget_hard_stop: bool = False  # true: refuse model calls once the budget is used up
     # Claude only: "off" (default: faster, cheaper) or "adaptive" (the model thinks when it helps).
     # Claude Opus 5.5 always thinks. LLM_EFFORT: low|medium|high|xhigh|max, empty = the model's default.
     llm_thinking: str = "off"

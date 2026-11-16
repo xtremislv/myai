@@ -57,6 +57,16 @@ def housekeeping(session) -> int:
     )
 
 
+def budget(session) -> int:
+    """Model budget alerts (app/llm/model_manager.py): projected over, 80%, 100%, once a month each."""
+    from app.config import get_settings
+    from app.llm import model_manager
+
+    if get_settings().llm_provider != "anthropic":
+        return 0
+    return model_manager.check_budget(session)
+
+
 def scouts(session) -> int:
     return scout.start_due(SessionLocal, scout.live_tools)
 
@@ -79,6 +89,7 @@ def main() -> None:
         _job("reminders", reminders)
         _job("scouts", scouts)
         if started - last_digest >= DIGEST_EVERY:
+            _job("budget", budget)
             _job("digests", digests)
             _job("welcomes", welcomes)
             last_digest = started
