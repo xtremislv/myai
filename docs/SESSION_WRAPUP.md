@@ -5,13 +5,17 @@ history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.m
 `ARCHITECTURE.md` and `docs/PROGRESS_AND_ROADMAP.md` are older (they assume Docker); where they disagree with
 this file, this file is right.
 
+- **Planned move (2026-11-16):** to an 8 vCPU / 16 GB / 100 GB Ubuntu 24.04 server without a GPU, with Claude
+  (Anthropic API) instead of Gemma. Code, setup and migration scripts are on branch **`claude-api-migration`**
+  (not deployed yet); runbook `docs/MIGRATION_CLAUDE.md`. Same tunnel and domain. Until the cutover the live
+  server runs `android-app` with Gemma.
 - Repo: `/root/myai`, GitHub `xtremislv/myai`. The live checkout is on branch **`android-app`** since 2026-11-10
   (it contains all of `server-native-setup`; see `BRANCHES.md`). Never push to `main` (owner's rule).
 - Android app: see `docs/ANDROID_APP.md`. **1.0.81** is published (2026-11-14: voice input via the server's Whisper,
   RECORD_AUDIO). 1.0.71 was published 2026-11-13. 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **748 passed, 13 skipped** (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **768 passed, 13 skipped** (on `claude-api-migration`) (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 
@@ -478,6 +482,10 @@ authorised agents), or handing the link to the person (shops already do this).
 ---
 
 ## 7. Next steps (suggested order)
+
+00. **Move to the Claude server** (`docs/MIGRATION_CLAUDE.md`): install, rehearsal export/import with
+    `TUNNEL_OFF`/`SCHEDULER_OFF`, then `migrate_export.sh --final` + import. Needs the owner's Anthropic API key
+    and the new server; the owner should accept that model calls (private chats included) then go to Anthropic.
 
 0. **Register the mail sign-in apps** (Google Cloud: Desktop OAuth client, Gmail API, publish the consent screen;
    Entra: public client, IMAP.AccessAsUser.All + SMTP.Send) and add `oauth/google`, `oauth/microsoft` on the

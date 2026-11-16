@@ -1,4 +1,8 @@
-"""Thin client over the vLLM OpenAI-compatible endpoint, with metrics + tracing."""
+"""The one way the app calls the model, with metrics + tracing.
+
+LLM_PROVIDER=vllm (default): the local vLLM server's OpenAI-compatible endpoint.
+LLM_PROVIDER=anthropic: Claude through the Anthropic API (app/llm/anthropic_backend.py converts the same
+messages and tools, so callers don't change)."""
 from __future__ import annotations
 
 import json
@@ -26,6 +30,10 @@ from app.orchestrator.clock import place_clock
 
 _settings = get_settings()
 _client = OpenAI(base_url=_settings.llm_base_url, api_key=_settings.llm_api_key)
+
+
+def using_claude() -> bool:
+    return _settings.llm_provider == "anthropic"
 
 # Where the words of a streaming reply go as they arrive. Unset except during a streamed chat.
 token_sink: ContextVar[Callable[[str], None] | None] = ContextVar("token_sink", default=None)
@@ -60,7 +68,7 @@ def _record_usage(model: str, usage, task: str = "other") -> None:
     if not path:
         return
     details = getattr(usage, "prompt_tokens_details", None)
-    line = json.dumps({"t": round(time.time(), 1), "task": task, "in": usage.prompt_tokens,
+    line = json.dumps({"t": round(time.time(), 1), "task": task, "m": model, "in": usage.prompt_tokens,
                        "out": usage.completion_tokens, "cached": getattr(details, "cached_tokens", None),
                        "proc": os.path.basename(sys.argv[0] or "")[:40]})
     try:  # counts only, never content: private chats stay unlogged
@@ -259,6 +267,13 @@ def chat(
     from app.llm.governor import background, governor
 
     kwargs.setdefault("task", caller_task())
+    if using_claude():  # no shared GPU to give way on: background work only takes a few of the slots
+        from app.llm import anthropic_backend
+
+        if background.get():
+            with anthropic_backend.background_slot():
+                return _claude(messages, model=model, stream=stream, tools=tools, tool_choice=tool_choice, **kwargs)
+        return _claude(messages, model=model, stream=stream, tools=tools, tool_choice=tool_choice, **kwargs)
     if background.get():
         return governor.run(lambda should_yield: _chat(
             messages, model=model, stream=stream, tools=tools, tool_choice=tool_choice, stop_if=should_yield, **kwargs))
@@ -359,3 +374,37 @@ def _chat(
         message = resp.choices[0].message
         span.set_attribute("llm.tool_calls", len(getattr(message, "tool_calls", None) or []))
         return Reply(strip_thoughts(message.content or ""), _calls(message))
+
+
+def _claude(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    stream: bool = False,
+    tools: list[dict] | None = None,
+    tool_choice: str | None = None,
+    **kwargs,
+) -> Reply:
+    """_chat for LLM_PROVIDER=anthropic: same arguments, same Reply (temperature is not sent)."""
+    from app.llm import anthropic_backend as claude
+
+    task = kwargs.get("task", "other")
+    model = claude.model_for(task, model)
+    sink = token_sink.get() if stream else None
+    convo, max_tokens = fit_to_context(
+        [_for_model(m) for m in place_clock(messages)], tools, kwargs.get("max_tokens", _settings.llm_max_tokens))
+    request = claude.params(convo, model=model, max_tokens=max_tokens, tools=tools, tool_choice=tool_choice)
+    with tracer.start_as_current_span("llm.chat") as span:
+        span.set_attribute("llm.model", model)
+        start = time.perf_counter()
+        try:
+            text, calls, usage = claude.call(request, sink, timeout=kwargs.get("timeout"))
+            llm_requests_total.labels(model=model, status="ok").inc()
+        except Exception:
+            llm_requests_total.labels(model=model, status="error").inc()
+            raise
+        finally:
+            llm_latency_seconds.labels(model=model).observe(time.perf_counter() - start)
+        _record_usage(model, usage, task)
+        span.set_attribute("llm.tool_calls", len(calls))
+        return Reply(text, calls)

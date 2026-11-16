@@ -13,6 +13,9 @@ CF_CONFIG="${CF_CONFIG:-$HOME/.cloudflared/${CF_TUNNEL:-none}.yml}"
 CF_METRICS="${CF_METRICS:-127.0.0.1:20260}"  # off the 20241-20245 range quick tunnels pick by default
 
 named_tunnel() { [[ -n "$CF_TUNNEL" && -f "$CF_CONFIG" ]]; }
+# TUNNEL_OFF=1 in .env: no tunnel at all (a new server being set up while the old one still serves the
+# domain: two copies of the same named tunnel would split the visitors between the two servers).
+tunnel_off() { [[ "$(env_value TUNNEL_OFF)" == 1 ]]; }
 
 quick_url() { grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/$1.log" 2>/dev/null | tail -1; }
 

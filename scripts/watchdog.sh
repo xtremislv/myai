@@ -79,6 +79,7 @@ round() {
     scripts/start_native.sh >/dev/null 2>&1
   fi
 
+  tunnel_off && return 0  # no public links to check or email (TUNNEL_OFF=1)
   local links_ok=1
   if named_tunnel; then
     check_tunnel tunnel app_url || links_ok=0

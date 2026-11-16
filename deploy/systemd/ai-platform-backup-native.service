@@ -1,0 +1,11 @@
+# Nightly backup without Docker (scripts/install_server.sh installs this as ai-platform-backup.service;
+# the timer is deploy/systemd/ai-platform-backup.timer). Set BACKUP_DEST in .env to copy it off the server.
+[Unit]
+Description=AI Platform backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/myai
+Environment=BACKUP_MODE=native
+ExecStart=/root/myai/scripts/backup.sh

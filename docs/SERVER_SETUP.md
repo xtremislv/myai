@@ -1,5 +1,8 @@
 # Server setup, step by step
 
+> Moving to a server without a GPU, with Claude as the model: `docs/MIGRATION_CLAUDE.md` and
+> `scripts/install_server.sh` (Ubuntu 24.04, systemd).
+
 This takes you from an empty rented GPU server to the running platform. Run the commands on the server.
 Anything in `<angle brackets>` is yours to fill in.
 

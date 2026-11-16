@@ -19,6 +19,7 @@ dependencies = [
     "langgraph-checkpoint-postgres>=2.0",
     "langchain-core>=0.3",
     "openai>=1.54",            # OpenAI-compatible client for vLLM
+    "anthropic>=2.8",          # Claude through the API (LLM_PROVIDER=anthropic)
     # data
     "sqlalchemy>=2.0",
     "alembic>=1.13",

@@ -36,7 +36,7 @@ def test_usage_is_logged_as_counts_only(tmp_path, monkeypatch):
     client._record_usage("m", usage, "scout.judge")
     row = json.loads(log.read_text())
     assert row["task"] == "scout.judge" and row["in"] == 1200 and row["out"] == 80 and set(row) == {
-        "t", "task", "in", "out", "cached", "proc"}
+        "t", "task", "m", "in", "out", "cached", "proc"}
     monkeypatch.setattr(client._settings, "llm_usage_log", "")
     client._record_usage("m", usage, "x")  # off: nothing written, no error
     assert len(log.read_text().splitlines()) == 1

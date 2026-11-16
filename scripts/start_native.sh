@@ -4,6 +4,9 @@
 #
 #   scripts/start_native.sh            # start everything
 #   scripts/start_native.sh status     # show what is up, and the public addresses
+#   scripts/start_native.sh stop       # stop what this script started (not Postgres/Redis)
+#
+# With LLM_PROVIDER=anthropic in .env the model is Claude through the API: no vLLM, no GPU needed.
 #
 # Logs go to $LOG_DIR (default /var/log/ai-platform). Every service listens on localhost only;
 # the Cloudflare tunnel(s) are the only way in (scripts/public_urls.sh: own domain or quick tunnels). Setup: "Without Docker" in docs/SERVER_SETUP.md.
@@ -20,6 +23,7 @@ mkdir -p "$LOG_DIR"
 env_value() { grep -m1 "^$1=" .env | cut -d= -f2-; }
 # Redis has a password (requirepass): redis-cli reads it from here, never from the command line.
 export REDISCLI_AUTH="$(env_value REDIS_PASSWORD)"
+claude() { [[ "$(env_value LLM_PROVIDER)" == anthropic ]]; }
 
 # Background services are tracked by PID file: matching command lines with pgrep also
 # matches unrelated shells whose text happens to mention the service.
@@ -43,17 +47,24 @@ status() {
   up postgres "pg_isready -q -h 127.0.0.1 -p 5432"
   up redis "redis-cli -h 127.0.0.1 ping | grep -q PONG"
   up minio "curl -sf http://127.0.0.1:9000/minio/health/live"
-  up vllm "curl -sf http://127.0.0.1:8001/v1/models"
-  up gateway "curl -sf http://127.0.0.1:8000/healthz"
+  if claude; then
+    up gateway "curl -sf http://127.0.0.1:8000/healthz"
+    up claude-api "curl -sf -m 10 http://127.0.0.1:8000/readyz"   # also checks the key and the route to the API
+  else
+    up vllm "curl -sf http://127.0.0.1:8001/v1/models"
+    up gateway "curl -sf http://127.0.0.1:8000/healthz"
+  fi
   up retention "alive retention"
-  up scheduler "alive scheduler"
+  [[ "$(env_value SCHEDULER_OFF)" == 1 ]] || up scheduler "alive scheduler"
   up stt "curl -sf http://127.0.0.1:8011/health | grep -q true"
   up loki "curl -sf http://127.0.0.1:3100/ready"
   up alloy "curl -sf http://127.0.0.1:12345/-/ready"
   up prometheus "curl -sf http://127.0.0.1:9090/-/ready"
   up grafana "curl -sf http://127.0.0.1:3000/api/health"
   [[ -n "$(env_value PROXY_SSH)" ]] && up proxy-tunnel "timeout 8 curl -s -o /dev/null --socks5-hostname 127.0.0.1:1080 https://www.bing.com/"
-  if named_tunnel; then
+  if tunnel_off; then
+    :
+  elif named_tunnel; then
     up tunnel "alive tunnel && tunnel_ready"
   else
     up app-tunnel "alive app-tunnel"
@@ -61,12 +72,26 @@ status() {
   fi
   up watchdog "alive watchdog"
   echo
+  if tunnel_off; then
+    echo "  Tunnel off (TUNNEL_OFF=1 in .env): reachable only here, http://127.0.0.1:8000/ui/"
+    echo "  (from your computer: ssh -L 8000:127.0.0.1:8000 -L 3000:127.0.0.1:3000 <this server>)"
+    return 0
+  fi
   echo "  App:        $(app_url)/ui/"
   echo "  Dashboards: $(grafana_url)/   (user admin, password GRAFANA_PASSWORD in .env)"
   named_tunnel || echo "  The tunnel addresses change whenever the tunnels restart."
 }
 
 if [[ "${1:-}" == "status" ]]; then status; exit 0; fi
+if [[ "${1:-}" == "stop" ]]; then
+  # The watchdog first, so it doesn't restart the rest.
+  for name in watchdog tunnel app-tunnel grafana-tunnel scheduler retention stt gateway vllm proxy-tunnel \
+              grafana prometheus alloy loki minio; do
+    if alive "$name"; then kill "$(cat "$LOG_DIR/$name.pid")" 2>/dev/null && echo "  stopped $name"; fi
+    rm -f "$LOG_DIR/$name.pid"
+  done
+  exit 0
+fi
 
 echo "Starting services (logs in $LOG_DIR):"
 
@@ -95,7 +120,14 @@ mkdir -p /var/lib/loki /var/lib/prometheus/native /var/lib/alloy
 start_bg loki loki -config.file="$ROOT/deploy/native/loki.yaml"
 start_bg alloy alloy run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/alloy \
   --disable-reporting "$ROOT/deploy/native/alloy.alloy"
-start_bg prometheus prometheus --config.file="$ROOT/deploy/native/prometheus.yml" \
+# With Claude there is no model server to scrape (its "down" alert would fire forever): leave its job out.
+PROM_CONFIG="$ROOT/deploy/native/prometheus.yml"
+if claude; then
+  PROM_CONFIG="$ROOT/deploy/native/prometheus.active.yml"   # next to the original: rule_files is relative
+  awk '/^  - job_name: vllm$/{skip=1; next} skip && /^  - job_name:/{skip=0} !skip' \
+    "$ROOT/deploy/native/prometheus.yml" > "$PROM_CONFIG"
+fi
+start_bg prometheus prometheus --config.file="$PROM_CONFIG" \
   --storage.tsdb.path=/var/lib/prometheus/native --storage.tsdb.retention.time=15d \
   --storage.tsdb.retention.size=2GB --web.listen-address=127.0.0.1:9090
 AI_PLATFORM_ROOT="$ROOT" \
@@ -121,7 +153,7 @@ fi
 
 # The model can take minutes to load; the gateway doesn't wait for it (/readyz reports it).
 # SKIP_VLLM=1 starts everything else, e.g. while the weights are still downloading.
-if [[ -z "${SKIP_VLLM:-}" ]] && ! curl -sf http://127.0.0.1:8001/v1/models >/dev/null 2>&1; then
+if ! claude && [[ -z "${SKIP_VLLM:-}" ]] && ! curl -sf http://127.0.0.1:8001/v1/models >/dev/null 2>&1; then
   start_bg vllm scripts/run_vllm.sh
 fi
 
@@ -131,18 +163,27 @@ if ! curl -sf http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
 fi
 
 # Voice input (scripts/stt_server.py): Whisper on the GPU, which needs CUDA 12 cuBLAS + cuDNN 8 (from the
-# conda torch here; STT_LIBS overrides). Skipped when the model isn't downloaded (docs/SERVER_SETUP.md).
+# conda torch here; STT_LIBS overrides), or on the CPU (STT_DEVICE=cpu in .env, e.g. a server without a GPU).
+# Skipped when the model isn't downloaded (docs/SERVER_SETUP.md).
+STT_MODEL="${STT_MODEL:-$(env_value STT_MODEL)}"
 STT_MODEL="${STT_MODEL:-/root/models/whisper-large-v3-turbo}"
+STT_DEVICE="${STT_DEVICE:-$(env_value STT_DEVICE)}"
 if [[ -d "$STT_MODEL" ]] && "$PY" -c "import faster_whisper" 2>/dev/null; then
   STT_LIBS="${STT_LIBS:-/opt/conda/lib:/opt/conda/lib/python3.10/site-packages/torch/lib}"
-  STT_MODEL="$STT_MODEL" LD_LIBRARY_PATH="$STT_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" start_bg stt "$PY" -m scripts.stt_server
+  STT_MODEL="$STT_MODEL" STT_DEVICE="${STT_DEVICE:-auto}" LD_LIBRARY_PATH="$STT_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    start_bg stt "$PY" -m scripts.stt_server
 fi
 
 # Deletes chat attachments after 3 days, hourly, like the compose "retention" service.
 PY="$PY" start_bg retention bash -c 'while true; do "$PY" -m scripts.purge_history || echo purge failed; sleep 3600; done'
 
 # Reminders, morning mail digests, and cleanup of trash and undo copies (scripts/scheduler.py).
-start_bg scheduler "$PY" -m scripts.scheduler
+# SCHEDULER_OFF=1 in .env: not here (a new server being tested while the old one still sends them).
+if [[ "$(env_value SCHEDULER_OFF)" == 1 ]]; then
+  alive scheduler && kill "$(cat "$LOG_DIR/scheduler.pid")" 2>/dev/null; rm -f "$LOG_DIR/scheduler.pid"
+else
+  start_bg scheduler "$PY" -m scripts.scheduler
+fi
 
 # Public access through Cloudflare: outbound only, no open ports. With CF_TUNNEL set up, one named
 # tunnel serves the own domain (fixed addresses); otherwise two quick tunnels with random addresses
@@ -150,6 +191,8 @@ start_bg scheduler "$PY" -m scripts.scheduler
 stop_bg() { alive "$1" && kill "$(cat "$LOG_DIR/$1.pid")" 2>/dev/null; rm -f "$LOG_DIR/$1.pid"; }
 if ! command -v cloudflared >/dev/null; then
   :
+elif tunnel_off; then
+  stop_bg tunnel; stop_bg app-tunnel; stop_bg grafana-tunnel
 elif named_tunnel; then
   stop_bg app-tunnel; stop_bg grafana-tunnel
   start_bg tunnel cloudflared tunnel --no-autoupdate --metrics "$CF_METRICS" --config "$CF_CONFIG" run "$CF_TUNNEL"
@@ -165,7 +208,9 @@ fi
 start_bg watchdog scripts/watchdog.sh
 
 for _ in $(seq 30); do curl -sf http://127.0.0.1:8000/healthz >/dev/null 2>&1 && break; sleep 1; done
-if named_tunnel; then
+if tunnel_off; then
+  :
+elif named_tunnel; then
   for _ in $(seq 20); do tunnel_ready && break; sleep 1; done
 else
   for _ in $(seq 20); do [[ -n "$(app_url)" && -n "$(grafana_url)" ]] && break; sleep 1; done

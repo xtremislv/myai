@@ -9,6 +9,7 @@ Update this file whenever a new branch is cut.
 main                 6ee1b2e  first commit (the original Docker-based platform)
  └─ server-native-setup   +42 commits  (runs natively on the GPU host, tw-ai.in; everything since 2026-11-02)
      └─ android-app        +5 commits  (Android app, phone APIs, download + self-update; server-native-setup merged in)
+         └─ claude-api-migration  (Claude through the Anthropic API, no-GPU server setup and migration scripts)
 ```
 
 `android-app` contains all of `server-native-setup` (merged in on 2026-11-10), so folding it back is a
@@ -19,6 +20,26 @@ fast-forward as long as nothing new lands on `server-native-setup` first.
 | `main` | — | Original platform | Owner's rule: don't push to it directly |
 | `server-native-setup` | `main` @ 6ee1b2e | The platform as deployed on the server (tw-ai.in) | Live on the server |
 | `android-app` | `server-native-setup` @ 83e5e06 (merged) | Android app + device sign-in and push APIs | Live on the server since 2026-11-10 |
+| `claude-api-migration` | `android-app` @ cefbdbc | Claude as the model (`LLM_PROVIDER=anthropic`), install/migrate scripts for an 8 vCPU / 16 GB no-GPU Ubuntu server | Ready, not deployed (2026-11-16) |
+
+## `claude-api-migration` (2026-11-16): what changed
+
+Moving off the GPU host: Claude through the Anthropic API instead of Gemma on vLLM, on an ordinary Ubuntu 24.04
+server. Runbook: `docs/MIGRATION_CLAUDE.md`. With `LLM_PROVIDER` unset (= `vllm`) everything behaves as before,
+so the branch can be merged before the move.
+
+- New: `app/llm/anthropic_backend.py` (OpenAI-shaped messages/tools ⇄ Messages API, fast model by task, thinking
+  settings, prompt caching), `scripts/install_server.sh`, `scripts/migrate_export.sh`, `scripts/migrate_import.sh`,
+  `scripts/env_set.py`, `deploy/systemd/ai-platform-native.service`, `deploy/systemd/ai-platform-backup-native.service`,
+  `docs/MIGRATION_CLAUDE.md`, `tests/test_llm_claude.py`, `tests/test_migration.py`.
+- Changed: `app/llm/client.py` (dispatch to Claude; usage log records the model), `app/config.py` (`LLM_PROVIDER`,
+  `ANTHROPIC_API_KEY`, `LLM_FAST_MODEL`, `LLM_FAST_TASKS`, `LLM_THINKING`, `LLM_EFFORT`, `LLM_BACKGROUND_CONCURRENCY`),
+  `app/llm/governor.py` (no vLLM metrics with Claude), `app/health.py` (`/readyz` checks the API key),
+  `scripts/start_native.sh` (no vLLM with Claude, `stop`, `TUNNEL_OFF`, `SCHEDULER_OFF`, `STT_DEVICE`/`STT_MODEL`
+  from .env, Prometheus without the vLLM job), `scripts/watchdog.sh` + `scripts/public_urls.sh` (`TUNNEL_OFF`),
+  `scripts/generate_env.py` (`--provider anthropic`), `scripts/llm_cost.py` (actual Claude spend),
+  `pyproject.toml`/`Dockerfile` (`anthropic`), `.env.example`; `backup.sh`/`restore.sh` made executable.
+- No migration, no Android change.
 
 ## `android-app` (2026-11-10): what changed
 

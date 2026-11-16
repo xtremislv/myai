@@ -166,7 +166,10 @@ class Governor:
 def _default() -> Governor:
     from app.config import get_settings
 
-    base = get_settings().llm_base_url.rstrip("/")
+    settings = get_settings()
+    if settings.llm_provider == "anthropic":  # no local model server to read the load from
+        return Governor(None)
+    base = settings.llm_base_url.rstrip("/")
     return Governor(re.sub(r"/v1$", "", base) + "/metrics")
 
 

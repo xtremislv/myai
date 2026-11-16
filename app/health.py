@@ -39,6 +39,14 @@ def _object_storage() -> None:
 
 
 def _model_server() -> None:
+    settings = get_settings()
+    if settings.llm_provider == "anthropic":
+        # Listing models costs nothing and proves the key and the route to the API work.
+        from app.llm import anthropic_backend
+
+        anthropic_backend.client().with_options(timeout=max(TIMEOUT_SECONDS, 5), max_retries=0).models.retrieve(
+            settings.llm_model)
+        return
     response = httpx.get(f"{get_settings().llm_base_url}/models", timeout=TIMEOUT_SECONDS)
     response.raise_for_status()
 

@@ -26,7 +26,23 @@ class Settings(BaseSettings):
     # the password was entered: then the person signs in again.
     session_max_age_seconds: int = 30 * 24 * 3600
 
-    # --- LLM (vLLM, OpenAI-compatible) ---
+    # --- LLM ---
+    # "vllm": the local model server below (OpenAI-compatible). "anthropic": Claude through the Anthropic
+    # API (app/llm/anthropic_backend.py); then LLM_MODEL is a Claude model id and no GPU is needed.
+    llm_provider: str = "vllm"
+    anthropic_api_key: str = ""
+    # Claude only: a cheaper model for short sorting/extraction calls, chosen by task prefix
+    # (app.llm.client.caller_task names, e.g. "request_manager.guards.triage"). Empty = LLM_MODEL for all.
+    llm_fast_model: str = ""
+    llm_fast_tasks: str = ("request_manager.guards,orchestrator.toolsel,sharing,scout.fresh_ideas,"
+                           "scout.candidates,scout.shortlist,scout.already_covered,scout.from_hit")
+    # Claude only: "off" (default: faster, cheaper) or "adaptive" (the model thinks when it helps).
+    # Claude Opus 5.5 always thinks. LLM_EFFORT: low|medium|high|xhigh|max, empty = the model's default.
+    llm_thinking: str = "off"
+    llm_effort: str = ""
+    # Claude only: background calls (summaries, mail sheets, scouts) running at once, per process.
+    llm_background_concurrency: int = 4
+    # vLLM (LLM_PROVIDER=vllm):
     llm_base_url: str = "http://vllm:8001/v1"
     llm_api_key: str = "not-needed-for-local"
     # Default: a 26B / A4B MoE model (~4B active params per token).

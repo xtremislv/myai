@@ -18,6 +18,9 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - `ARCHITECTURE.md` — design
 
 ## Conventions
+- All model calls go through `app/llm/client.chat()` in the OpenAI message/tool shape. `LLM_PROVIDER=anthropic`
+  sends them to Claude via `app/llm/anthropic_backend.py` (converts the shape; never replays thinking blocks;
+  never sends temperature); the move to a no-GPU server is `docs/MIGRATION_CLAUDE.md`.
 - Access control source of truth: `app/departments/packs.py` (grants → ACL via `registry.py`, which also
   removes built-in rows packs.py dropped). Don't hand-write ACL rows. A department's mail and documents are for
   its members only: never add `"admin" in roles` shortcuts, and never give the admin role a department's data.

@@ -4,6 +4,10 @@
     .venv/bin/python -m scripts.llm_cost --hours 24         # the last day
     .venv/bin/python -m scripts.llm_cost --by task          # each calling function instead of areas
 
+With LLM_PROVIDER=anthropic the log holds Claude's own counts (model "m", cache reads "cached"); the last
+table then shows what was actually spent per model (cache writes are priced as plain input: a slight
+underestimate).
+
 Reads LLM_USAGE_LOG (JSON lines written by app/llm/client.py: task, prompt and completion tokens, never
 content). Prices are USD per million tokens, Anthropic first-party API, as of 2026-11-16 (check
 https://platform.claude.com/docs/en/about-claude/pricing before relying on them). Estimates, because:
@@ -58,6 +62,8 @@ AREAS = [
 CACHED = {"chat: assistant (single agent)": 0.75, "chat: multi-step (supervisor + specialists)": 0.6,
           "chat: team mode": 0.6, "chat: sorting each message (triage)": 0.5, "chat: picking tool groups": 0.4}
 CACHED_DEFAULT = 0.2
+MODEL_NAMES = {"claude-opus-5-5": "Claude Opus 5.5", "claude-sonnet-5-5": "Claude Sonnet 5.5",
+               "claude-haiku-5-5": "Claude Haiku 5.5"}
 
 
 def area(task: str) -> str:
@@ -85,6 +91,7 @@ def main() -> None:
         raise SystemExit("no usage log: set LLM_USAGE_LOG in .env and restart the gateway and scheduler")
     since = time.time() - args.hours * 3600 if args.hours else 0
     rows: dict[str, list[float]] = defaultdict(lambda: [0, 0, 0])
+    spent: dict[str, list[float]] = defaultdict(lambda: [0, 0, 0, 0])  # Claude calls: calls, in, cached, out
     first = last = None
     for line in path.read_text().splitlines():
         try:
@@ -98,6 +105,12 @@ def main() -> None:
         rows[key][0] += 1
         rows[key][1] += r["in"]
         rows[key][2] += r["out"]
+        if str(r.get("m", "")).startswith("claude"):
+            row = spent[r["m"]]
+            row[0] += 1
+            row[1] += r["in"]
+            row[2] += r.get("cached") or 0
+            row[3] += r["out"]
     if not rows:
         raise SystemExit("nothing logged in that window")
     span_days = max((last - first) / 86400, 1 / 24)
@@ -113,6 +126,20 @@ def main() -> None:
         print(f"{key[:48]:48} {calls:6.0f} {tin / 1e6:8.2f}M {tout / 1e3:7.0f}K "
               + " ".join(f"${c:11,.2f}" for c in monthly))
     print(f"{'TOTAL per 30 days':48} {'':6} {'':9} {'':8} " + " ".join(f"${c:11,.2f}" for c in totals))
+    if spent:
+        print(f"\nActually spent on Claude in this window ({span_days * 24:.1f} h):")
+        total = 0.0
+        for m, (calls, tin, cached, tout) in sorted(spent.items()):
+            name = next((v for k, v in MODEL_NAMES.items() if m.startswith(k)), None)
+            if name is None:
+                print(f"  {m}: {calls:.0f} calls, no price known")
+                continue
+            p_in, p_out, p_read, _ = PRICES[name]
+            usd = ((tin - cached) * p_in + cached * p_read + tout * p_out) / 1e6
+            total += usd
+            print(f"  {m:24} {calls:6.0f} calls {tin / 1e6:8.2f}M in ({cached / max(tin, 1):4.0%} cached) "
+                  f"{tout / 1e3:7.0f}K out  ${usd:,.2f}")
+        print(f"  {'total':24} ${total:,.2f}  (about ${total * 30 / span_days:,.2f} per 30 days at this rate)")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,23 @@
+# The platform without Docker on a normal server (scripts/install_server.sh installs this as
+# /etc/systemd/system/ai-platform.service). start_native.sh starts each service in the background and
+# its watchdog restarts whatever goes down; Postgres and Redis are their own systemd services.
+[Unit]
+Description=AI Platform (native: gateway, scheduler, MinIO, monitoring, tunnel)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target postgresql.service redis-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/root/myai
+# PID files from before a reboot point at processes that no longer exist.
+ExecStartPre=/bin/sh -c 'rm -f /var/log/ai-platform/*.pid; mkdir -p /var/log/ai-platform; date -u "+%%Y-%%m-%%d %%H:%%M UTC" > /var/log/ai-platform/boot.pending'
+ExecStart=/root/myai/scripts/start_native.sh
+ExecStop=/root/myai/scripts/start_native.sh stop
+# The services start_native.sh starts keep running after it returns (one-shot + RemainAfterExit);
+# `systemctl stop` runs ExecStop, then ends anything left in the unit.
+Environment=HOME=/root
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
