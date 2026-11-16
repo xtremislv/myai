@@ -26,6 +26,8 @@ _settings = get_settings()
 # --- Prometheus metrics ---
 llm_requests_total = Counter("llm_requests_total", "LLM calls", ["model", "status"])
 llm_tokens_total = Counter("llm_tokens_total", "LLM tokens", ["model", "kind"])  # kind=prompt|completion
+# The same by task: the app function that asked (e.g. scout.judge, guards.triage_verdict), app/llm/client.py.
+llm_task_tokens_total = Counter("llm_task_tokens_total", "LLM tokens by task", ["task", "kind"])
 llm_latency_seconds = Histogram("llm_latency_seconds", "LLM call latency", ["model"])
 acl_decisions_total = Counter("acl_decisions_total", "ACL decisions", ["decision", "action"])
 graph_node_total = Counter("graph_node_total", "LangGraph node executions", ["node"])

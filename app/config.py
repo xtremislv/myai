@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     llm_model: str = "google/gemma-4-26B-A4B-it"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 4096
+    # Token counts per call (task, prompt, completion, cached; never content) appended as JSON lines, for
+    # cost estimates by task (scripts/llm_cost.py). Empty = off.
+    llm_usage_log: str = ""
     # The model server's context window (vLLM --max-model-len). Prompts are fitted into it,
     # oldest conversation turns first, so a long chat never fails for being too long.
     llm_context_tokens: int = 65536

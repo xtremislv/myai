@@ -197,6 +197,13 @@ the web, read and answer mail, manage files, make documents from templates, set 
   20 s wait, `search.DDG_WAIT/DDG_PAUSE`). ubuy.co.in and xech.com answered 429 to the VPS. **A Tavily/Serper key
   is the real fix** (next steps #3).
 - Scouts page: Rounds card is last and folded by default; settings card's last section tidied.
+- **Token use by task** (2026-11-16): `app/llm/client.py` tags every call with the app function that asked
+  (`caller_task`, e.g. `scout.judge`), counts it in `llm_task_tokens_total{task,kind}` and appends counts only
+  (never content) to `LLM_USAGE_LOG` (/var/log/ai-platform/llm_usage.jsonl, all processes).
+  `.venv/bin/python -m scripts.llm_cost [--hours 24] [--by task]` prices it for Claude Opus 5.5 / Sonnet 5.5 /
+  Haiku 5.5 (assumptions in its docstring). Measured: typical day ~2.4M input / 0.23M output tokens, ~90% scouts.
+  **Scout waste:** rounds keep searching after the day's video lookups are used (GadgetWiser every 20 min,
+  Instagram every 40): ~35K input tokens per round for nothing (owner not yet asked to fix).
 - **Coverage and competitors** (2026-11-16, `app/coverage.py`, tables `channel_videos`/`channel_syncs`, migration
   0013): uploads of our channels (`own_channels`, "ours" = TechWiser 2,025 + GadgetWiser 146 videos) and each scout's
   `competitor_channels` are synced via the YouTube API at most daily (new pages until a known upload; views re-read

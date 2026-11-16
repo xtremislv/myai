@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -16,6 +18,7 @@ from app.llm.governor import Paused
 from app.observability import (
     llm_latency_seconds,
     llm_requests_total,
+    llm_task_tokens_total,
     llm_tokens_total,
     tracer,
 )
@@ -28,10 +31,43 @@ _client = OpenAI(base_url=_settings.llm_base_url, api_key=_settings.llm_api_key)
 token_sink: ContextVar[Callable[[str], None] | None] = ContextVar("token_sink", default=None)
 
 
-def _record_usage(model: str, usage) -> None:
-    if usage:
-        llm_tokens_total.labels(model=model, kind="prompt").inc(usage.prompt_tokens)
-        llm_tokens_total.labels(model=model, kind="completion").inc(usage.completion_tokens)
+# Functions that only pass a call through: the task is whoever called them.
+_PASS_THROUGH = {"chat", "_chat", "<lambda>", "ask", "_ask", "run", "call"}
+_usage_lock = threading.Lock()
+
+
+def caller_task(depth: int = 2) -> str:
+    """The app function that asked for this model call ("scout.judge", "orchestrator.nodes.agent"), found on
+    the stack, so every call is counted by task without tagging call sites. "other" outside the app."""
+    frame = sys._getframe(depth)
+    while frame is not None:
+        module = frame.f_globals.get("__name__", "")
+        name = frame.f_code.co_name
+        if module.startswith("app.") and not module.startswith("app.llm") and name not in _PASS_THROUGH:
+            return f"{module.removeprefix('app.')}.{name}"
+        frame = frame.f_back
+    return "other"
+
+
+def _record_usage(model: str, usage, task: str = "other") -> None:
+    if not usage:
+        return
+    llm_tokens_total.labels(model=model, kind="prompt").inc(usage.prompt_tokens)
+    llm_tokens_total.labels(model=model, kind="completion").inc(usage.completion_tokens)
+    llm_task_tokens_total.labels(task=task, kind="prompt").inc(usage.prompt_tokens)
+    llm_task_tokens_total.labels(task=task, kind="completion").inc(usage.completion_tokens)
+    path = _settings.llm_usage_log
+    if not path:
+        return
+    details = getattr(usage, "prompt_tokens_details", None)
+    line = json.dumps({"t": round(time.time(), 1), "task": task, "in": usage.prompt_tokens,
+                       "out": usage.completion_tokens, "cached": getattr(details, "cached_tokens", None),
+                       "proc": os.path.basename(sys.argv[0] or "")[:40]})
+    try:  # counts only, never content: private chats stay unlogged
+        with _usage_lock, open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 
 # Gemma 4 sometimes emits its (empty) thinking channel as text: "<|channel>thought\n<channel|>".
@@ -222,6 +258,7 @@ def chat(
     (app/llm/governor.py); everything else counts as live load."""
     from app.llm.governor import background, governor
 
+    kwargs.setdefault("task", caller_task())
     if background.get():
         return governor.run(lambda should_yield: _chat(
             messages, model=model, stream=stream, tools=tools, tool_choice=tool_choice, stop_if=should_yield, **kwargs))
@@ -316,9 +353,9 @@ def _chat(
             llm_latency_seconds.labels(model=model).observe(time.perf_counter() - start)
 
         if sink is not None:
-            _record_usage(model, usage)
+            _record_usage(model, usage, kwargs.get("task", "other"))
             return Reply(strip_thoughts("".join(parts)), _assembled(streamed_calls))
-        _record_usage(model, resp.usage)
+        _record_usage(model, resp.usage, kwargs.get("task", "other"))
         message = resp.choices[0].message
         span.set_attribute("llm.tool_calls", len(getattr(message, "tool_calls", None) or []))
         return Reply(strip_thoughts(message.content or ""), _calls(message))
