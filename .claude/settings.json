@@ -1,5 +1,24 @@
 {
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(.venv/bin/ruff check:*)",
+      "Bash(scripts/start_native.sh status)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(.venv/bin/python -m scripts.llm_cost:*)",
+      "Bash(curl -s http://127.0.0.1:8000/readyz)",
+      "Bash(systemctl status ai-platform:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Bash(git push origin main:*)",
+      "Bash(git push -f origin main:*)"
+    ]
   }
 }

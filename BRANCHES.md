@@ -39,6 +39,8 @@ so the branch can be merged before the move.
   from .env, Prometheus without the vLLM job), `scripts/watchdog.sh` + `scripts/public_urls.sh` (`TUNNEL_OFF`),
   `scripts/generate_env.py` (`--provider anthropic`), `scripts/llm_cost.py` (actual Claude spend),
   `pyproject.toml`/`Dockerfile` (`anthropic`), `.env.example`; `backup.sh`/`restore.sh` made executable.
+- Claude Code on the new server: `docs/CLAUDE_CODE_SERVER.md` (background, setup, processes, rules),
+  `scripts/setup_claude_code.sh` + `deploy/claude-code/memory/` (memory seeds, no secrets), `.claude/settings.json`.
 - No migration, no Android change.
 
 ## `android-app` (2026-11-10): what changed

@@ -1,6 +1,7 @@
 # CLAUDE.md — orientation for Claude Code sessions
 
-**Read `docs/SESSION_WRAPUP.md` first**: the current state, the owner's requirements, capabilities, architecture,
+**On the Claude-API server read `docs/CLAUDE_CODE_SERVER.md` first** (background, setup, processes, owner's rules), then
+**`docs/SESSION_WRAPUP.md`**: the current state, the owner's requirements, capabilities, architecture,
 limitations and next steps in one place. `docs/HANDOFF.md` has the detailed history of each change.
 
 ## What this is

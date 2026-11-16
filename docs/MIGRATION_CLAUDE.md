@@ -107,6 +107,8 @@ server in between stays there only.
 
 ## 4. After the move
 
+- Claude Code sessions here: `scripts/setup_claude_code.sh` (installs the CLI, seeds its memory with the
+  background and the owner's rules), then read `docs/CLAUDE_CODE_SERVER.md`.
 - `scripts/start_native.sh status`, Grafana's dashboards, and the admin's bell for alerts.
 - Backups: set `BACKUP_DEST` (an rclone remote, ideally `crypt`) in `.env`; until then they stay on the server.
   Prove one: `scripts/restore.sh --verify /var/backups/ai-platform/<latest>.tar`.

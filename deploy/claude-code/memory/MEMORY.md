@@ -1,0 +1,6 @@
+- [myai session start](myai-session-start.md) — read docs/CLAUDE_CODE_SERVER.md + docs/SESSION_WRAPUP.md first; keep wrap-up current, no secrets
+- [myai server setup](myai-server-setup.md) — no-GPU Ubuntu server, Claude API, systemd + start_native.sh, tunnel tw-ai, VPS proxy, costs, test DB rule
+- [myai git push policy](myai-git-push-policy.md) — push freely, never to main; repo-local credential helper; commit as xtremislv
+- [myai official mailboxes](myai-official-mailboxes.md) — never touch contact@/career@/finance@ without asking; service mail = mail/notify only
+- [myai Android release](myai-android-release.md) — signing key in ~/.config/twai-android (never replace); publish needs owner's go-ahead
+- [myai research focus](myai-research-focus.md) — gadgets for TechWiser/GadgetWiser; scouts: India-orderable, budget, competitors

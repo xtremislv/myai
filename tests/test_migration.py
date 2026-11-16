@@ -42,7 +42,8 @@ def test_generate_env_for_claude_has_no_model_server(tmp_path):
 
 
 @pytest.mark.parametrize("script", ["install_server.sh", "migrate_export.sh", "migrate_import.sh",
-                                    "start_native.sh", "watchdog.sh", "backup.sh", "restore.sh"])
+                                    "start_native.sh", "watchdog.sh", "backup.sh", "restore.sh",
+                                    "setup_claude_code.sh"])
 def test_setup_scripts_parse_and_run(script):
     path = ROOT / "scripts" / script
     assert subprocess.run(["bash", "-n", str(path)]).returncode == 0

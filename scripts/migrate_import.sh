@@ -142,6 +142,7 @@ if [[ "$tunnel_off" == 1 ]]; then
   echo "  ssh -L 8000:127.0.0.1:8000 -L 3000:127.0.0.1:3000 root@<this server>   then open http://127.0.0.1:8000/ui/"
   echo "For the real move: on the old server  scripts/migrate_export.sh --final, copy, and rerun this script."
 else
-  echo "This server now serves $(env_of .env PUBLIC_APP_URL). Delete the bundle on both servers:"
+  echo "This server now serves $(env_of .env PUBLIC_APP_URL). For Claude Code sessions here: scripts/setup_claude_code.sh"
+  echo "Delete the bundle on both servers:"
   echo "  shred -u $bundle"
 fi
