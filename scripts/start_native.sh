@@ -85,11 +85,23 @@ status() {
 if [[ "${1:-}" == "status" ]]; then status; exit 0; fi
 if [[ "${1:-}" == "stop" ]]; then
   # The watchdog first, so it doesn't restart the rest.
+  stopping=()
   for name in watchdog tunnel app-tunnel grafana-tunnel scheduler retention stt gateway vllm proxy-tunnel \
               grafana prometheus alloy loki minio; do
-    if alive "$name"; then kill "$(cat "$LOG_DIR/$name.pid")" 2>/dev/null && echo "  stopped $name"; fi
+    if alive "$name"; then
+      pid="$(cat "$LOG_DIR/$name.pid")"
+      kill "$pid" 2>/dev/null && echo "  stopped $name" && stopping+=("$pid")
+    fi
     rm -f "$LOG_DIR/$name.pid"
   done
+  # Wait until they are gone: Loki takes ~30 s to flush, and a start right after a stop (systemctl restart,
+  # migrate_import.sh) found its port still taken and left Loki down (2026-11-17).
+  for _ in $(seq 60); do
+    left=(); for pid in "${stopping[@]}"; do kill -0 "$pid" 2>/dev/null && left+=("$pid"); done
+    [[ ${#left[@]} -eq 0 ]] && break
+    sleep 1
+  done
+  for pid in "${left[@]}"; do kill -9 "$pid" 2>/dev/null && echo "  killed $pid (did not stop in 60 s)"; done
   exit 0
 fi
 
