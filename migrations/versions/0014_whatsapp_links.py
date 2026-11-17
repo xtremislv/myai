@@ -1,4 +1,4 @@
-"""whatsapp_links: a person's linked WhatsApp number, link code, conversation version and result page
+"""whatsapp_links: a person's linked WhatsApp number, link code, conversation version, result page, document text
 
 Revision ID: 0014
 Revises: 0013
@@ -30,6 +30,8 @@ def upgrade() -> None:
         sa.Column('page_token_hash', sa.String(length=64), nullable=True),
         sa.Column('page', sa.Text(), nullable=True),
         sa.Column('page_updated_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('files', sa.Text(), nullable=True),
+        sa.Column('files_expire_at', sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint('user_id'),
         sa.UniqueConstraint('phone'),
         sa.UniqueConstraint('page_token_hash'),

@@ -465,6 +465,9 @@ class WhatsAppLink(Base):
     page_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     page: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted JSON {"title","markdown","dashboards"}
     page_updated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Text of documents sent in this conversation (encrypted JSON list), read with each message for 3 days.
+    files: Mapped[str | None] = mapped_column(Text, nullable=True)
+    files_expire_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 def get_session() -> Iterator[Session]:

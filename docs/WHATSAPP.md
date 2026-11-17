@@ -18,6 +18,11 @@ which breaks WhatsApp's terms and gets numbers banned). Code: `app/whatsapp/` an
   open it (owner's choice): Settings has "New page link" to replace a forwarded one.
 - **Notifications:** every bell notification (reminders, alerts, finished jobs, digests, shares, budget/credit
   alerts) also goes to a linked number, unless the person turns it off (Settings or `/mute`).
+- **Voice notes:** transcribed on this server by the same Whisper as the app's mic button (up to ~3 minutes,
+  20 a minute per person) and answered like typed text; the reply starts with what was heard.
+- **Documents:** PDF, Word, Excel and text files (up to 20 MB): their text is screened like an app upload and kept
+  with the WhatsApp conversation for 3 days (encrypted, as the conversation), read with each private message.
+  A caption is answered at once; without one the bot says it has the file. `/reset` drops them. Images: not yet.
 - **Approvals:** linked admins get approval requests with Approve / Reject buttons. Someone who asked for work on
   WhatsApp gets the result there once it's approved or rejected.
 
@@ -72,7 +77,13 @@ Until the business is verified, Meta limits how many people the number may messa
 - Settings: vault `whatsapp/cloud` (above); `PUBLIC_APP_URL` in `.env` (the result page links).
 - Table `whatsapp_links` (migration 0014): number, link code (hash), 24-hour window, conversation version,
   notifications on/off, result page (encrypted) and its token hash.
-- The webhook answers at once and checks Meta's signature on every call; messages run in a small pool in the gateway
-  (`bot.EXECUTOR`, 4 at a time), one at a time per conversation; Meta's retries are skipped by message id (Redis).
+- The webhook answers at once and checks Meta's signature on every call (Meta retries anything slow, which would
+  run the agent again); messages run in a small pool in the gateway (`bot.EXECUTOR`, 4 at a time), one at a time per
+  conversation; Meta's retries are skipped by message id (Redis, 2 days). Each message gets a read receipt and
+  "typing..." at once. A message is marked seen when queued, so a gateway restart mid-answer loses that answer.
+- The allowlist is the linked numbers: the first thing a queued message meets, before any model call. An unlinked
+  number can only send a `LINK` code or get the "not linked" reply (once per 6 hours); it never reaches the model.
+- Media: Meta sends a media id; `cloud.download_media` looks up its short-lived URL with the token and downloads
+  it (size checked before and during).
 - Erasing a person's data unlinks their number; their WhatsApp conversation goes with their checkpoints.
-- Not yet: voice notes (Whisper is on the server: download the audio from Meta, transcribe, answer), images, files.
+- Not yet: images (the agent pipeline is text only), files other than PDF/Word/Excel/text.

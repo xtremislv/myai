@@ -21,6 +21,7 @@ from app.whatsapp import bot, cloud, links
 from app.whatsapp import format as fmt
 
 PHONE = "919812345678"
+MEDIA: dict = {"data": b"", "mime": "text/plain"}
 BOT = "919900000000"
 CFG = {"token": "t", "phone_id": "PID", "app_secret": "shh", "verify_token": "vt", "display_number": BOT,
        "template": "twai_notification"}
@@ -64,7 +65,15 @@ def sent(monkeypatch):
     out: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        out.append(json.loads(request.content))
+        if request.method == "GET":  # media: the id's lookup, then the file itself
+            if request.url.host == "files.example":
+                return httpx.Response(200, content=MEDIA["data"])
+            return httpx.Response(200, json={"url": "https://files.example/m", "mime_type": MEDIA["mime"],
+                                              "file_size": len(MEDIA["data"])})
+        payload = json.loads(request.content)
+        if payload.get("typing_indicator") and MEDIA.get("no_typing"):
+            return httpx.Response(400, json={"error": {"message": "unknown field", "code": 100}})
+        out.append(payload)
         return httpx.Response(200, json={"messages": [{"id": "wamid.out"}]})
 
     monkeypatch.setattr(cloud, "transport", httpx.MockTransport(handler))
@@ -153,7 +162,7 @@ def test_a_short_answer_comes_back_as_whatsapp_text(db, sent):
     _link(db)
     seen = {}
 
-    def runner(subject, text, thread, mode, department, *, chat_key):
+    def runner(subject, text, thread, mode, department, *, chat_key, attachments=None):
         from app.orchestrator.context import channel, user_key
 
         seen.update(subject=subject.id, text=text, thread=thread, channel=channel.get(), key=chat_key,
@@ -165,7 +174,7 @@ def test_a_short_answer_comes_back_as_whatsapp_text(db, sent):
     with db() as s:
         assert seen["key"] == links.chat_key(s, "u1") and seen["tool_key"] is None
     reads = [m for m in sent if m.get("status") == "read"]
-    assert reads and reads[0]["message_id"] == "wamid.1"
+    assert reads and reads[0]["message_id"] == "wamid.1" and reads[0]["typing_indicator"] == {"type": "text"}
     assert _texts(sent)[-1] == "*Done*\nThe *best* pick is boAt: https://boat-lifestyle.com/x."
 
 
@@ -392,3 +401,67 @@ def test_erasing_a_person_unlinks_their_number(db):
     with db() as s:
         privacy.erase_user(s, "u1", remove_object=lambda ref: None)
         assert s.get(WhatsAppLink, "u1") is None
+
+
+# ---- voice notes and documents ----
+def _media_msg(kind: str, mid: str = "m1", **extra) -> dict:
+    return {"from": PHONE, "id": mid, "type": kind, kind: {"id": "MEDIAID", **extra}, "phone_id": "PID"}
+
+
+def test_a_voice_note_is_transcribed_and_answered(db, sent, monkeypatch):
+    from app.api import routes_voice
+
+    _link(db)
+    MEDIA.update(data=b"OggS...", mime="audio/ogg; codecs=opus", no_typing=False)
+    monkeypatch.setattr(routes_voice, "transcribe", lambda data, language="": {"text": " remind me at 5 "})
+    seen = {}
+    bot.handle_message(_media_msg("audio", voice=True), runner=lambda s, text, *a, **k: seen.update(text=text) or "Set for 5 pm.")
+    assert seen["text"] == "remind me at 5"
+    assert _texts(sent)[-1] == '_Heard: "remind me at 5"_\n\nSet for 5 pm.'
+
+
+def test_a_document_is_kept_with_the_conversation_for_three_days(db, sent):
+    _link(db)
+    MEDIA.update(data=b"Invoice 42: total 1,200 INR", mime="text/plain", no_typing=False)
+    bot.handle_message(_media_msg("document", filename="invoice.txt"))
+    assert _texts(sent)[-1].startswith("Got invoice.txt. Ask me about it")
+    seen = {}
+    bot.handle_message(_msg("what is the total?", mid="q"),
+                       runner=lambda *a, attachments=None, **k: seen.update(a=attachments) or "1,200 INR")
+    assert "--- invoice.txt ---" in seen["a"] and "total 1,200 INR" in seen["a"]
+    bot.handle_message(_msg("/reset", mid="r"))
+    with db() as s:
+        assert links.files_context(s, links.get(s, "u1")) is None
+
+
+def test_a_document_with_a_caption_is_answered_at_once(db, sent):
+    _link(db)
+    MEDIA.update(data=b"Q3 sales up 12%", mime="text/plain", no_typing=False)
+    seen = {}
+    bot.handle_message(_media_msg("document", filename="q3.txt", caption="summarize this"),
+                       runner=lambda s, text, *a, attachments=None, **k: seen.update(text=text, a=attachments) or "Up 12%.")
+    assert seen["text"] == "summarize this" and "Q3 sales up 12%" in seen["a"] and _texts(sent)[-1] == "Up 12%."
+
+
+def test_unreadable_or_too_large_files_are_refused(db, sent, monkeypatch):
+    _link(db)
+    MEDIA.update(data=b"\\x89PNG", mime="image/png", no_typing=False)
+    bot.handle_message(_media_msg("document", filename="photo.png"))
+    assert _texts(sent)[-1] == "I can't read photo.png: PDF, Word, Excel and text files work."
+    monkeypatch.setattr(bot, "DOC_MAX", 3)
+    MEDIA.update(data=b"1234", mime="text/plain")
+    bot.handle_message(_media_msg("document", mid="m2", filename="big.txt"))
+    assert _texts(sent)[-1].startswith("That file is too large")
+    bot.handle_message({"from": PHONE, "id": "m3", "type": "image", "image": {"id": "x"}, "phone_id": "PID"})
+    assert _texts(sent)[-1] == bot.ONLY_TEXT
+
+
+def test_an_api_without_typing_indicators_still_gets_the_read_receipt(db, sent):
+    _link(db)
+    MEDIA.update(no_typing=True)
+    try:
+        bot.handle_message(_msg("/help"))
+    finally:
+        MEDIA.update(no_typing=False)
+    reads = [m for m in sent if m.get("status") == "read"]
+    assert reads == [{"messaging_product": "whatsapp", "status": "read", "message_id": "wamid.1"}]

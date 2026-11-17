@@ -34,6 +34,8 @@ from app.vault import notes
 
 CODE_MINUTES = 15
 PAGE_DAYS = 7
+FILE_DAYS = 3  # documents sent on WhatsApp: read with each message, then gone (the attachment rule)
+FILE_CHARS = 80_000
 WINDOW = dt.timedelta(hours=23, minutes=50)  # WhatsApp's 24 hours, with a margin
 DEFAULT_COUNTRY = "91"  # a 10-digit number is taken as Indian
 
@@ -204,10 +206,47 @@ def reset_page(session: Session, row: WhatsAppLink) -> str:
 
 
 def purge_pages(session: Session, now: dt.datetime | None = None) -> int:
-    """Delete result pages older than PAGE_DAYS (housekeeping)."""
-    cutoff = (now or _now()) - dt.timedelta(days=PAGE_DAYS)
+    """Delete result pages older than PAGE_DAYS and document text past FILE_DAYS (housekeeping)."""
+    now = now or _now()
+    cutoff = now - dt.timedelta(days=PAGE_DAYS)
     rows = session.query(WhatsAppLink).filter(WhatsAppLink.page.is_not(None), WhatsAppLink.page_updated_at < cutoff).all()
     for row in rows:
         row.page, row.page_updated_at = None, None
+    old = session.query(WhatsAppLink).filter(WhatsAppLink.files.is_not(None), WhatsAppLink.files_expire_at < now).all()
+    for row in old:
+        row.files, row.files_expire_at = None, None
     session.commit()
-    return len(rows)
+    return len(rows) + len(old)
+
+
+# ---- documents sent in the conversation ----
+def _files(session: Session, row: WhatsAppLink) -> list[dict]:
+    expires = _aware(row.files_expire_at)
+    if row.files is None or expires is None or expires < _now():
+        return []
+    return json.loads(notes.decrypt(session, row.files, f"whatsapp-files:{row.user_id}"))
+
+
+def add_file(session: Session, row: WhatsAppLink, name: str, text: str) -> None:
+    """Keep a document's text with this conversation for FILE_DAYS (newest last; the oldest go past FILE_CHARS)."""
+    files = [*_files(session, row), {"name": name[:120], "text": text}]
+    while len(files) > 1 and sum(len(f["text"]) for f in files) > FILE_CHARS:
+        files.pop(0)
+    row.files = notes.encrypt(session, json.dumps(files), f"whatsapp-files:{row.user_id}")
+    row.files_expire_at = _now() + dt.timedelta(days=FILE_DAYS)
+    session.commit()
+
+
+def files_context(session: Session, row: WhatsAppLink) -> str | None:
+    """The documents' text for the model, for one turn (like attachments.context_for_thread)."""
+    parts = []
+    for f in _files(session, row):
+        text = f["text"][:FILE_CHARS]
+        cut = "" if len(text) == len(f["text"]) else "\n[truncated: only part of this document fits here]"
+        parts.append(f"--- {f['name']} ---\n{text}{cut}")
+    return "\n\n".join(parts) or None
+
+
+def clear_files(session: Session, row: WhatsAppLink) -> None:
+    row.files, row.files_expire_at = None, None
+    session.commit()

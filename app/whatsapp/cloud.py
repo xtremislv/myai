@@ -133,11 +133,45 @@ def send_template(cfg: Config, to: str, params: list[str]) -> dict[str, Any]:
         "components": [{"type": "body", "parameters": [{"type": "text", "text": template_param(p)} for p in params]}]}})
 
 
-def mark_read(cfg: Config, message_id: str) -> None:
+def mark_read(cfg: Config, message_id: str, typing: bool = True) -> None:
+    """Blue ticks, and "typing..." until the reply is sent (up to ~25 s, Meta's limit). An API version without
+    typing indicators gets the plain read receipt."""
     try:
-        _post(cfg, {"status": "read", "message_id": message_id})
+        _post(cfg, {"status": "read", "message_id": message_id,
+                    **({"typing_indicator": {"type": "text"}} if typing else {})})
     except (CloudError, httpx.HTTPError):
-        pass  # cosmetic
+        if typing:
+            mark_read(cfg, message_id, typing=False)
+
+
+class MediaTooLarge(CloudError):
+    pass
+
+
+def download_media(cfg: Config, media_id: str, max_bytes: int) -> tuple[bytes, str]:
+    """(content, mime type) of a voice note or document someone sent. Meta sends only an id: look up its short-lived
+    URL, then fetch it with the same token. Refuses files over max_bytes before and while downloading."""
+    auth = {"Authorization": f"Bearer {cfg.token}"}
+    with httpx.Client(timeout=60, transport=transport, follow_redirects=True) as client:
+        meta = client.get(f"{GRAPH}/{cfg.api_version}/{media_id}", headers=auth)
+        if meta.status_code >= 400:
+            raise CloudError(f"WhatsApp media lookup {meta.status_code}")
+        info = meta.json()
+        if int(info.get("file_size") or 0) > max_bytes:
+            raise MediaTooLarge("file too large")
+        url = str(info.get("url") or "")
+        if not url.startswith("https://"):
+            raise CloudError("WhatsApp media has no download address")
+        chunks, size = [], 0
+        with client.stream("GET", url, headers=auth) as resp:
+            if resp.status_code >= 400:
+                raise CloudError(f"WhatsApp media download {resp.status_code}")
+            for chunk in resp.iter_bytes():
+                size += len(chunk)
+                if size > max_bytes:
+                    raise MediaTooLarge("file too large")
+                chunks.append(chunk)
+    return b"".join(chunks), str(info.get("mime_type") or "application/octet-stream")
 
 
 def incoming(payload: dict[str, Any]) -> list[dict[str, Any]]:

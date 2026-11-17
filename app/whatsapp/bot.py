@@ -47,7 +47,11 @@ HELP = ("This is TW-ai, the company assistant. Ask anything: research, products 
         "Your own files, mailbox and saved details stay in the app.")
 NOT_LINKED = ("This number isn't linked to a TW-ai account. Sign in to TW-ai, open Settings > WhatsApp, "
               "enter this number and send the code it shows here.")
-ONLY_TEXT = "I can read text messages here. For files, images and voice notes, use the TW-ai app."
+ONLY_TEXT = ("I can read text, voice notes and documents (PDF, Word, Excel, text files) here. For images and other "
+             "files, use the TW-ai app.")
+VOICE_MAX = 12 * 1024 * 1024  # as the app's voice input (routes_voice.MAX_BYTES)
+DOC_MAX = 20 * 1024 * 1024
+NSFW_SAMPLE_CHARS = 4000
 FAILED = "That request failed on the server. Try again in a moment."
 
 
@@ -141,13 +145,73 @@ def handle_message(message: dict, *, runner=None) -> None:
         if button:
             _button(session, cfg, phone, user, button)
             return
-        if not text.strip():
+        heard = ""
+        if message.get("type") in ("audio", "document"):
+            got = _media(session, cfg, phone, link, message)
+            if got is None:
+                return
+            text, heard = got
+        elif message.get("type") not in ("text", "interactive", "button") or not text.strip():
             _send(cfg, phone, ONLY_TEXT)
             return
-        if _command(session, cfg, phone, link, user, text):
+        elif _command(session, cfg, phone, link, user, text):
             return
         user_id, thread = user.id, links.thread_id(link)
-    answer(cfg, user_id, thread, phone, text.strip(), runner=runner)
+    answer(cfg, user_id, thread, phone, text.strip(), runner=runner, heard=heard)
+
+
+def _media(session: Session, cfg: cloud.Config, phone: str, link, message: dict) -> tuple[str, str] | None:
+    """A voice note becomes its words (local Whisper, as the app's mic button); a document's text is kept with the
+    conversation for links.FILE_DAYS. Returns (text to answer, words heard) or None when there's nothing to answer."""
+    from fastapi import HTTPException
+
+    kind = message["type"]
+    obj = message.get(kind) or {}
+    try:
+        data, mime = cloud.download_media(cfg, str(obj.get("id", "")), VOICE_MAX if kind == "audio" else DOC_MAX)
+    except cloud.MediaTooLarge:
+        _send(cfg, phone, "That file is too large to read here (voice notes up to about 3 minutes, documents up to "
+                          "20 MB). Upload it in the TW-ai app instead.")
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("whatsapp media download failed: %s", type(e).__name__)
+        _send(cfg, phone, "I couldn't fetch that file from WhatsApp. Try sending it again.")
+        return None
+    if kind == "audio":
+        from app.api import routes_voice
+
+        try:
+            routes_voice._throttle(link.user_id)
+            heard = str(routes_voice.transcribe(data).get("text") or "").strip()
+        except HTTPException as e:
+            _send(cfg, phone, "Too many voice notes in a minute: wait a moment." if e.status_code == 429
+                  else "Voice notes can't be transcribed right now. Type it instead.")
+            return None
+        if not heard:
+            _send(cfg, phone, "I couldn't make out any words in that voice note.")
+            return None
+        return heard, heard
+    from app.api.routes_chat import safe_filename
+    from app.request_manager import guards
+    from app.storage.attachments import extract_text
+
+    name = safe_filename(obj.get("filename") or "document")
+    text = extract_text(name, mime, data)
+    if text is None:
+        _send(cfg, phone, f"I can't read {name}: PDF, Word, Excel and text files work.")
+        return None
+    flagged, _why = guards.is_nsfw(text[:NSFW_SAMPLE_CHARS])
+    if flagged:  # as an upload in the app: refused and reported
+        guards.report_nsfw(session, link.user_id, f"[WhatsApp document {name}] {text[:2000]}")
+        _send(cfg, phone, "I can't read that document. As the company's rules require, it was reported to HR and the admin.")
+        return None
+    links.add_file(session, link, name, text)
+    caption = str(obj.get("caption") or "").strip()
+    if not caption:
+        _send(cfg, phone, f"Got {name}. Ask me about it: I'll keep it with this conversation for "
+                          f"{links.FILE_DAYS} days (/reset clears it).")
+        return None
+    return caption, ""
 
 
 def _stranger(session: Session, cfg: cloud.Config, phone: str, text: str) -> None:
@@ -168,7 +232,7 @@ def _command(session: Session, cfg: cloud.Config, phone: str, link, user: User, 
     cmd = text.strip().lower()
     if cmd in ("/reset", "/new"):
         link.thread_version += 1
-        session.commit()
+        links.clear_files(session, link)
         _send(cfg, phone, "New conversation started.")
     elif cmd in ("/help", "help", "/start"):
         _send(cfg, phone, HELP)
@@ -190,7 +254,7 @@ def _command(session: Session, cfg: cloud.Config, phone: str, link, user: User, 
     return True
 
 
-def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, *, runner=None) -> None:
+def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, *, runner=None, heard: str = "") -> None:
     """Triage and run one message like the app's chat box does, then reply."""
     from app import inflight
     from app.api import routes_chat
@@ -201,6 +265,7 @@ def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, 
         user = session.get(User, user_id)
         subject = Subject(id=user.id, roles=tuple(user.roles or ()))
         key = links.chat_key(session, user_id)
+        files = links.files_context(session, links.get(session, user_id))
     channel.set("whatsapp")
     made: list = []
     dashboards.set(made)
@@ -221,7 +286,7 @@ def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, 
                     ok = True
                     return
                 run = runner or execution.run
-                result = run(subject, text, thread, mode, None, chat_key=key)
+                result = run(subject, text, thread, mode, None, chat_key=key, attachments=files)
             out = routes_chat._private_reply(thread, mode, result)
         else:
             out = finished
@@ -232,7 +297,8 @@ def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, 
         return
     finally:
         inflight.finish(running, ok)
-    deliver(cfg, user_id, phone, _reply_text(out), list(out.dashboards or made))
+    note = f'_Heard: "{heard[:300]}{"…" if len(heard) > 300 else ""}"_' if heard else ""
+    deliver(cfg, user_id, phone, _reply_text(out), list(out.dashboards or made), note=note)
 
 
 def _reply_text(out) -> str:
@@ -244,16 +310,18 @@ def _reply_text(out) -> str:
 
 
 def deliver(cfg: cloud.Config, user_id: str, phone: str, text: str, dashboards: list | None = None,
-            title: str = "Your answer") -> None:
-    """Send an answer: as text if it fits, else its opening plus the person's result page."""
+            title: str = "Your answer", note: str = "") -> None:
+    """Send an answer: as text if it fits, else its opening plus the person's result page. `note` goes first
+    (what was heard in a voice note)."""
+    head = f"{note}\n\n" if note else ""
     with SessionLocal() as session:
         link = links.get(session, user_id)
         if link is not None and fmt.needs_page(text, dashboards) and links.base_url():
             url = links.save_page(session, link, fmt.title_of(text, title), text, dashboards or [])
             what = "Full answer and charts" if dashboards else "Full answer"
-            _send(cfg, phone, f"{fmt.preview(text)}\n\n{what}: {url}")
+            _send(cfg, phone, f"{head}{fmt.preview(text)}\n\n{what}: {url}")
             return
-    for part in fmt.chunks(fmt.to_whatsapp(text)):
+    for part in fmt.chunks(head + fmt.to_whatsapp(text)):
         _send(cfg, phone, part)
 
 
