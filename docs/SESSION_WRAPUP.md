@@ -1,24 +1,29 @@
-# Session wrap-up: state of the platform on 2026-11-16
+# Session wrap-up: state of the platform on 2026-11-17
 
 Read this first in the next session. It is the short, current picture. `docs/HANDOFF.md` has the detailed
 history of each change, `CLAUDE.md` the coding conventions, `docs/SERVER_SETUP.md` the setup steps.
 `ARCHITECTURE.md` and `docs/PROGRESS_AND_ROADMAP.md` are older (they assume Docker); where they disagree with
 this file, this file is right.
 
-- **Planned move (2026-11-16):** to an 8 vCPU / 16 GB / 100 GB Ubuntu 24.04 server without a GPU, with Claude
-  (Anthropic API) instead of Gemma. Code, setup and migration scripts are on branch **`claude-api-migration`**
-  (not deployed yet); runbook `docs/MIGRATION_CLAUDE.md`. Same tunnel and domain. The live checkout is on
-  `claude-api-migration` (needed for `migrate_export.sh`), still with Gemma: `LLM_PROVIDER` is unset, so it behaves
-  as `android-app` did. Claude Code on the new server: `docs/CLAUDE_CODE_SERVER.md`, `scripts/setup_claude_code.sh`.
+- **Moved (2026-11-17):** tw-ai.in now runs on the no-GPU server (E2E Networks, India; 8 vCPU / 14 GB / 140 GB,
+  Ubuntu 24.04) with Claude through the Anthropic API (`LLM_PROVIDER=anthropic`). Live checkout `/root/myai` on branch
+  **`claude-api-migration`**, started by systemd `ai-platform.service`; nightly backup timer active (02:30 IST, still
+  on-server only: `BACKUP_DEST` empty). Runbook used: `docs/MIGRATION_CLAUDE.md` (rehearsal + `--final` cutover).
+  The old vast.ai server has `TUNNEL_OFF=1` and `SCHEDULER_OFF=1`; keep it a few days for rollback, then stop renting.
+  Bundles were shredded on the new server. Claude Code guide: `docs/CLAUDE_CODE_SERVER.md`.
   Model manager (`app/llm/model_manager.py`): Haiku/Sonnet/Opus/Fable per call, mix ceilings 50/35/10/5%, budget
   50,000 INR/month (owner's figure, read as rupees) with admin alerts at projected-over, 80% and 100%.
-- Repo: `/root/myai`, GitHub `xtremislv/myai`. The live checkout is on branch **`android-app`** since 2026-11-10
-  (it contains all of `server-native-setup`; see `BRANCHES.md`). Never push to `main` (owner's rule).
+- **Latency on Claude (2026-11-17):** a message waits for two API round trips before its first word (Haiku triage +
+  tool picking side by side, then Sonnet). The API is ~180 ms away and a new connection costs ~0.6 s, so calls share
+  one HTTP/2 connection kept 5 minutes (`anthropic_backend._http_client`, warmed by /readyz each minute). Opus (asked
+  for by words like "compare", "analyze", "plan") always thinks, so its start is slower. Prompt caching showed 0
+  cached tokens on the first chats (tool list changes with the picked groups, the clock moves): not yet looked at.
+- Repo: GitHub `xtremislv/myai`. Never push to `main` (owner's rule). Branch map: `BRANCHES.md`.
 - Android app: see `docs/ANDROID_APP.md`. **1.0.81** is published (2026-11-14: voice input via the server's Whisper,
   RECORD_AUDIO). 1.0.71 was published 2026-11-13. 1.0.70 crashed right after sign-in
   on Android 13+ (fixed in 1.0.71, see
   "Tests, crash reports and debugging" there); phones now send crash traces to the gateway log ("ANDROID CRASH").
-- Tests: **777 passed, 13 skipped** (on `claude-api-migration`) (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
+- Tests: **778 passed, 13 skipped** (on `claude-api-migration`; `tests/conftest.py` forces the mocked model, so tests never call Claude) (`.venv/bin/python -m pytest tests/ -q`). The 13 skipped are the Postgres
   integration tests: they pass on a throwaway database (see "Gotchas"). Lint clean (`.venv/bin/ruff check .`).
 - Triage eval on the real model: **450/450**, 0 personal messages sorted as work (`scripts/eval_triage.py`).
 

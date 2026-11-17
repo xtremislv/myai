@@ -147,7 +147,8 @@ install -m 0644 deploy/systemd/ai-platform-backup-native.service /etc/systemd/sy
 install -m 0644 deploy/systemd/ai-platform-backup.timer /etc/systemd/system/ai-platform-backup.timer
 sed -i "s#/root/myai#$ROOT#g" /etc/systemd/system/ai-platform.service /etc/systemd/system/ai-platform-backup.service
 systemctl daemon-reload
-systemctl enable ai-platform.service ai-platform-backup.timer >/dev/null
+systemctl enable ai-platform.service >/dev/null
+systemctl enable --now ai-platform-backup.timer >/dev/null  # enable alone would wait for a reboot
 echo "enabled: ai-platform.service (starts at boot), ai-platform-backup.timer (nightly)"
 
 if [[ -f .env ]]; then
