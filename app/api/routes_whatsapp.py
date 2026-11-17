@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
 from app.api.deps import current_subject
-from app.config import get_settings
 from app.db.session import SessionLocal, get_session
 from app.whatsapp import bot, cloud, links
 
@@ -27,11 +26,8 @@ def verify_webhook(request: Request, session: Session = Depends(get_session)) ->
     """Meta's one-time check when the callback URL is saved in the app's WhatsApp settings."""
     params = request.query_params
     cfg = cloud.config(session)
-    # TEMPORARY (owner, 2026-11-17): WHATSAPP_VERIFY_TOKEN lets Meta's check pass before the whatsapp/cloud secret
-    # exists. Verification only: messages still need the secret (signature). Remove with the env key once it's added.
-    expected = cfg.verify_token if cfg is not None else get_settings().whatsapp_verify_token
-    if (not expected or params.get("hub.mode") != "subscribe"
-            or not hmac.compare_digest(params.get("hub.verify_token", ""), expected)):
+    if (cfg is None or params.get("hub.mode") != "subscribe"
+            or not hmac.compare_digest(params.get("hub.verify_token", ""), cfg.verify_token)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "verification failed")
     return PlainTextResponse(params.get("hub.challenge", ""))
 
