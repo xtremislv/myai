@@ -10,6 +10,7 @@ main                 6ee1b2e  first commit (the original Docker-based platform)
  └─ server-native-setup   +42 commits  (runs natively on the GPU host, tw-ai.in; everything since 2026-11-02)
      └─ android-app        +5 commits  (Android app, phone APIs, download + self-update; server-native-setup merged in)
          └─ claude-api-migration  (Claude through the Anthropic API, no-GPU server setup and migration scripts)
+             └─ whatsapp-bot  (the assistant on WhatsApp: linking, replies, result page, notifications, approvals)
 ```
 
 `android-app` contains all of `server-native-setup` (merged in on 2026-11-10), so folding it back is a
@@ -20,7 +21,21 @@ fast-forward as long as nothing new lands on `server-native-setup` first.
 | `main` | — | Original platform | Owner's rule: don't push to it directly |
 | `server-native-setup` | `main` @ 6ee1b2e | The platform as deployed on the server (tw-ai.in) | Live on the server |
 | `android-app` | `server-native-setup` @ 83e5e06 (merged) | Android app + device sign-in and push APIs | Live on the server since 2026-11-10 |
-| `claude-api-migration` | `android-app` @ cefbdbc | Claude as the model (`LLM_PROVIDER=anthropic`), install/migrate scripts for an 8 vCPU / 16 GB no-GPU Ubuntu server | Ready, not deployed (2026-11-16) |
+| `claude-api-migration` | `android-app` @ cefbdbc | Claude as the model (`LLM_PROVIDER=anthropic`), install/migrate scripts for an 8 vCPU / 16 GB no-GPU Ubuntu server | Live on the Claude server since 2026-11-17 |
+| `whatsapp-bot` | `claude-api-migration` @ cdcd0e6 | The assistant on WhatsApp (Cloud API): `docs/WHATSAPP.md` | New 2026-11-17 |
+
+## `whatsapp-bot` (2026-11-17): what changed
+
+The assistant on WhatsApp through Meta's Cloud API; inert until the vault secret `whatsapp/cloud` exists.
+Setup and decisions: `docs/WHATSAPP.md`.
+
+- New: `app/whatsapp/` (`cloud.py` API + signatures, `links.py` linking/keys/result page, `format.py`, `bot.py`),
+  `app/api/routes_whatsapp.py` (webhook, `/v1/me/whatsapp`, `/v1/whatsapp/page/<token>`), `/r/<token>` page in
+  `app/main.py`, migration `0014` (`whatsapp_links`), `docs/WHATSAPP.md`, `tests/test_whatsapp.py`.
+- Changed: `context.channel` + `tools_for` (WhatsApp: `WHATSAPP_PRIVATE_TOOLS`, no `PERSON_PRESENT_TOOLS`, in
+  `packs.py`); `execution` keeps `user_key` unset on WhatsApp; `routes_chat._before_the_model(remember=)`;
+  hooks in `service.notify`, `approvals.create`, `router.resolve_approval`, `privacy.erase_user`, scheduler
+  housekeeping (`purge_pages`); Settings card and result page in `app.js`/`style.css`; `PUBLIC_APP_URL` setting.
 
 ## `claude-api-migration` (2026-11-16): what changed
 

@@ -47,6 +47,9 @@ def create(
     from app import push
 
     push.wake_admins(session, "approval", id=row.id)  # approvers' phones fetch /v1/approvals
+    from app.whatsapp import bot
+
+    bot.approval_requested(session, row)  # Approve / Reject buttons to linked admins
     return row
 
 

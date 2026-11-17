@@ -78,6 +78,9 @@ def erase_user(session: Session, user_id: str, *, delete_account: bool = False, 
     from app import devices
 
     counts["devices"] = devices.erase_owner(session, user_id)
+    from app.whatsapp import links as whatsapp
+
+    counts["whatsapp"] = int(whatsapp.unlink(session, user_id))  # its conversation went with the checkpoints
 
     user = session.get(User, user_id)
     if user is not None:

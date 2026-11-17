@@ -31,10 +31,12 @@ from app.departments.packs import (
     FILE_TOOLS,
     LOOKUP_TOOLS,
     MAIL_TOOLS,
+    PERSON_PRESENT_TOOLS,
     PRIVATE_TOOLS,
     REMINDER_TOOLS,
     SCOUT_TOOLS,
     TEMPLATE_TOOLS,
+    WHATSAPP_PRIVATE_TOOLS,
 )
 from app.orchestrator.scout_tools import (
     scout_findings,
@@ -2950,8 +2952,14 @@ def tool_signatures(department: str | None) -> list[str]:
 
 
 def tools_for(department: str | None) -> dict[str, Callable[..., Any]]:
-    """The tool subset an agent in `department` may call (ACL still applies)."""
-    names = DEPARTMENT_TOOLS.get(department, ()) if department else PRIVATE_TOOLS
-    if names == ("*",):
-        return dict(TOOLS)
-    return {n: TOOLS[n] for n in names if n in TOOLS}
+    """The tool subset an agent in `department` may call (ACL still applies). On WhatsApp
+    (context.channel): no person-present tools, and private chat gets WHATSAPP_PRIVATE_TOOLS."""
+    from app.orchestrator.context import channel
+
+    whatsapp = channel.get() == "whatsapp"
+    names = DEPARTMENT_TOOLS.get(department, ()) if department else (
+        WHATSAPP_PRIVATE_TOOLS if whatsapp else PRIVATE_TOOLS)
+    chosen = dict(TOOLS) if names == ("*",) else {n: TOOLS[n] for n in names if n in TOOLS}
+    if whatsapp:
+        chosen = {n: fn for n, fn in chosen.items() if n not in PERSON_PRESENT_TOOLS}
+    return chosen

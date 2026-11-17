@@ -1071,3 +1071,9 @@ label.narrow { max-width: 420px; }
 .scout-rounds > summary h2::before { content: "▸"; display: inline-block; width: 1.1em; transition: transform .15s; }
 .scout-rounds[open] > summary h2::before { transform: rotate(90deg); }
 .scout-rounds[open] > summary { margin-bottom: 12px; }
+
+/* WhatsApp: the link code in Settings, and the per-person result page (/r/<token>) */
+.link-code { font-family: var(--mono); font-size: 22px; font-weight: 600; letter-spacing: 0.12em; color: var(--ink-strong); margin: 6px 0 10px; }
+.result-page { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
+.result-page .eyebrow { margin-bottom: 14px; }
+.result-body > * + * { margin-top: 14px; }

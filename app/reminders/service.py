@@ -118,6 +118,9 @@ def notify(session: Session, owner_id: str, kind: str, title: str, body: str = "
     from app import push
 
     push.wake(session, owner_id, "notification", kind=kind, id=row.id)  # the phone app fetches it
+    from app.whatsapp import bot
+
+    bot.notify(session, owner_id, kind, title, body)  # and a linked WhatsApp number (app/whatsapp/)
     return row
 
 

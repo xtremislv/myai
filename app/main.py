@@ -30,6 +30,7 @@ from app.api import (
     routes_scouts,
     routes_templates,
     routes_voice,
+    routes_whatsapp,
 )
 from app.config import get_settings, validate_secrets
 from app.db.session import engine, init_db
@@ -100,6 +101,7 @@ app.include_router(routes_browser.router)
 app.include_router(routes_devices.router)
 app.include_router(routes_scouts.router)
 app.include_router(routes_voice.router)
+app.include_router(routes_whatsapp.router)
 WEB_DIR = Path(__file__).parent / "web"
 
 
@@ -122,6 +124,16 @@ def ui_page() -> HTMLResponse:
     return HTMLResponse(_ui_page(), headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/r/{token}", include_in_schema=False)
+def whatsapp_result_page(token: str) -> HTMLResponse:
+    """A person's WhatsApp result page (app/whatsapp/links.py): the app's own files, in result mode; the page
+    fetches /v1/whatsapp/page/<token>. Absolute asset paths, as this isn't under /ui/."""
+    page = (_ui_page().replace('href="style.css', 'href="/ui/style.css').replace('src="app.js', 'src="/ui/app.js')
+            .replace("<body>", '<body data-page="result">')
+            .replace("<title>TW-ai</title>", '<title>TW-ai result</title>\n  <meta name="robots" content="noindex">'))
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
 app.mount("/ui", StaticFiles(directory=WEB_DIR, html=True), name="ui")
 
 
@@ -129,7 +141,7 @@ app.mount("/ui", StaticFiles(directory=WEB_DIR, html=True), name="ui")
 async def ui_security_headers(request: Request, call_next):
     """The UI holds tokens that can open private chats, so it only runs its own files."""
     response = await call_next(request)
-    if request.url.path.startswith("/ui"):
+    if request.url.path.startswith(("/ui", "/r/")):
         response.headers["Content-Security-Policy"] = (
             "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; "
             "img-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"

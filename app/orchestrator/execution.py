@@ -94,6 +94,14 @@ def _outcome(graph, config: dict, final: dict[str, Any]) -> str | PendingAction:
     return ""
 
 
+def _tool_key(chat_key: bytes | None) -> bytes | None:
+    """The key tools may use for the person's own files and saved details: none on WhatsApp, whose
+    conversation key is the server's, not theirs (context.channel)."""
+    from app.orchestrator.context import channel
+
+    return None if channel.get() == "whatsapp" else chat_key
+
+
 def run(
     subject: Subject,
     message: str,
@@ -131,7 +139,7 @@ def run(
                 mode=waiting["mode"], reason="the person sent a new message instead of confirming",
             )
     token = attachment_text.set(attachments)
-    key_token = user_key.set(chat_key)
+    key_token = user_key.set(_tool_key(chat_key))
     files_token = attachment_files.set(files)
     try:
         with _graph_cm(mode, serde) as graph:
@@ -221,7 +229,7 @@ def resume_private(
 ) -> str | PendingAction:
     """The person confirmed (or declined) an action in their own private chat."""
     config = {"configurable": {"thread_id": private_thread(subject.id, thread_id)}, "recursion_limit": _limit(mode)}
-    key_token = user_key.set(chat_key)
+    key_token = user_key.set(_tool_key(chat_key))
     try:
         with _graph_cm(mode, user_keys.checkpoint_serde(chat_key)) as graph:
             pending = _pending_interrupt(graph, config)

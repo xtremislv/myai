@@ -208,10 +208,11 @@ def _remember_thread(session: Session, key: bytes, owner_id: str, thread_id: str
 
 
 def _before_the_model(
-    body: ChatIn, subject: Subject, key: bytes, session: Session
+    body: ChatIn, subject: Subject, key: bytes, session: Session, *, remember: bool = True
 ) -> tuple[str, ChatOut | None]:
     """Everything up to generating a private reply. Returns the mode, plus a finished answer
-    if nothing is left to generate: a flagged message, or work."""
+    if nothing is left to generate: a flagged message, or work. remember=False (the WhatsApp bot,
+    whose conversation key isn't the person's) keeps it out of the app's chat list."""
     history = execution.private_history(subject, body.thread_id, key)[-WORK_CONTEXT_MESSAGES:]
     recent = history[-RECENT_MESSAGES:]
     mine = _departments_of(subject)
@@ -253,7 +254,8 @@ def _before_the_model(
         reply = _work_reply(result)
         made = list(dashboards.get() or []) if result.outcome == "ok" else []
         execution.record_private(subject, body.thread_id, key, body.message, reply, result.department, made)
-        _remember_thread(session, key, subject.id, body.thread_id, body.message)
+        if remember:
+            _remember_thread(session, key, subject.id, body.thread_id, body.message)
         return mode, ChatOut(
             thread_id=body.thread_id, reply=reply, mode=mode, outcome=result.outcome, route="work",
             department=result.department, approval_id=result.approval_id, task_id=result.task_id,

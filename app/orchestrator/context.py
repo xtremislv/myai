@@ -43,6 +43,12 @@ tool_groups: ContextVar[tuple[str, frozenset[str] | None] | None] = ContextVar("
 user_key: ContextVar[bytes | None] = ContextVar("user_key", default=None)
 
 
+# Where this turn's message came from: None for the web/Android app, "whatsapp" for the WhatsApp bot
+# (app/whatsapp/). On WhatsApp nobody can take over a live browser or type a secret, and the person's own
+# chat key isn't there, so tools_for() leaves those tools out and user_key stays None.
+channel: ContextVar[str | None] = ContextVar("channel", default=None)
+
+
 # This turn's chat attachments as files ({"name", "content_type", "data"}), for tools that need
 # the file itself, e.g. a Word template. Same lifetime rule as attachment_text.
 attachment_files: ContextVar[list[dict] | None] = ContextVar("attachment_files", default=None)

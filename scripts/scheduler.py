@@ -19,6 +19,7 @@ from app import scout
 from app.db.session import SessionLocal
 from app.reminders import delivery, digest, service
 from app.storage import deptfiles, userfiles
+from app.whatsapp import links as whatsapp_links
 
 TICK = 30
 DIGEST_EVERY = 300
@@ -54,6 +55,7 @@ def housekeeping(session) -> int:
         userfiles.purge_trash(session)
         + service.prune_notifications(session)
         + deptfiles.purge_versions()
+        + whatsapp_links.purge_pages(session)
     )
 
 

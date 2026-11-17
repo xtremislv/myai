@@ -77,6 +77,14 @@ PRIVATE_TOOLS = (
     *LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *MAIL_TOOLS, *FILE_TOOLS, *REMINDER_TOOLS, *TEMPLATE_TOOLS,
     *WALLET_TOOLS, *DATA_TOOLS, "more_tools",
 )
+# WhatsApp (app/whatsapp/, owner 2026-11-17): its conversation is encrypted with a server key, not the person's,
+# so their own files, mailbox, templates and saved details stay in the app; so do tools that need the person at a
+# live browser or typing a secret. Work keeps its department's tools minus the person-present ones.
+PERSON_PRESENT_TOOLS = ("ask_person_to_browse", "ask_person_for_secret", "fill_saved", "list_saved_details")
+WHATSAPP_PRIVATE_TOOLS = (  # web_research is left out: in private chat it saves its sheet to My files
+    *(t for t in LOOKUP_TOOLS if t != "web_research"), *REMINDER_TOOLS, "run_python", "make_dashboard",
+    "job_status", "more_tools",
+)
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
 ALWAYS_CRITICAL = ("send_mail", "delete_file", "browser_commit")

@@ -444,6 +444,29 @@ class ChannelSync(Base):
     stats_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WhatsAppLink(Base):
+    """A person's WhatsApp number, linked by sending a one-time code from it to the bot (app/whatsapp/).
+
+    The bot's conversation is encrypted with a key derived from the server's notes key (the person's own key
+    isn't on WhatsApp). `page` is their latest long answer or dashboard, shown at one secret link per person
+    (/r/<token>); only the token's hash is kept, and `page_version` changes it."""
+
+    __tablename__ = "whatsapp_links"
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True, unique=True)  # digits, with country code
+    pending_phone: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    code_expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    linked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_inbound_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    thread_version: Mapped[int] = mapped_column(Integer, default=1)
+    notify: Mapped[bool] = mapped_column(Boolean, default=True)
+    page_version: Mapped[int] = mapped_column(Integer, default=1)
+    page_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    page: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted JSON {"title","markdown","dashboards"}
+    page_updated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 def get_session() -> Iterator[Session]:
     """FastAPI dependency."""
     with SessionLocal() as session:

@@ -246,6 +246,9 @@ def resolve_approval(session: Session, approval: Approval, *, resumer=resume_gra
                 task.state = "failed"
             session.commit()
             _finish(session, subject, dept, "error", str(e), start)
+            from app.whatsapp import bot
+
+            bot.work_result(session, approval, "It failed on the server. Ask again, or check it in the app.")
             return RMResult("error", dept, approval_id=approval.id, task_id=approval.task_id, reason=str(e))
         # A denied action did not run, so the denial stands even if the agent
         # could not be resumed to report it.
@@ -269,6 +272,9 @@ def resolve_approval(session: Session, approval: Approval, *, resumer=resume_gra
     session.commit()
     outcome = "ok" if approved else "denied"
     _finish(session, subject, dept, outcome, approval.reason, start)
+    from app.whatsapp import bot
+
+    bot.work_result(session, approval, out or "")  # asked on WhatsApp: the answer goes there too
     return RMResult(outcome, dept, reply=out, approval_id=approval.id, task_id=approval.task_id,
                     reason=approval.reason)
 

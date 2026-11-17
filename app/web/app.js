@@ -2418,6 +2418,7 @@ async function accountView() {
     await mailSettingsCard(),
     ...(await Promise.all((await api("/v1/me/department-mailboxes")).map((d) => mailSettingsCard(d.box)))),
     await walletCard(),
+    await whatsappCard(),
     h("div", { class: "card" },
       h("h2", null, "Profile"),
       h("dl", { class: "facts" },
@@ -2543,6 +2544,71 @@ const WALLET_FORMS = {
   address: [["label", "Name, e.g. Home"], ["name", "Full name"], ["phone", "Phone"], ["line1", "Address line 1"], ["line2", "Address line 2"],
     ["city", "City"], ["state", "State"], ["pincode", "PIN code"]],
 };
+
+// WhatsApp (app/whatsapp/): the person links their number by sending a one-time code from it to the bot.
+async function whatsappCard() {
+  const card = h("div", { class: "card" });
+  const info = await api("/v1/me/whatsapp");
+  const error = errorBox();
+  const redraw = async () => card.replaceWith(await whatsappCard());
+  const intro = h("p", { class: "muted" }, "Use the assistant from WhatsApp: ask questions, send work requests, and get your "
+    + "reminders and notifications there. Your WhatsApp conversation is kept apart from your encrypted chats here, and "
+    + "your own files, mailbox and saved details stay in the app. WhatsApp messages pass through Meta's servers.");
+  if (!info.configured) {
+    fill(card, h("h2", null, "WhatsApp"), intro,
+      h("div", { class: "notice info" }, "Not set up on this server yet: ask your administrator (Credentials page)."));
+    return card;
+  }
+  const act = (fn) => async () => { error.clear(); try { await fn(); await redraw(); } catch (err) { error.fail(err); } };
+  if (info.linked) {
+    const notify = h("input", { type: "checkbox", checked: info.notify });
+    notify.addEventListener("change", async () => {
+      error.clear();
+      try { await api("/v1/me/whatsapp", { method: "PUT", body: { notify: notify.checked } }); } catch (err) { notify.checked = !notify.checked; error.fail(err); }
+    });
+    fill(card, h("h2", null, "WhatsApp"), intro, error,
+      h("p", null, "Linked to ", h("strong", null, `+${info.phone}`), ". Message ", h("strong", null, `+${info.bot_number}`),
+        " to talk to the assistant. Send /help there for the commands."),
+      h("label", { class: "check" }, notify, "Send my reminders and notifications to WhatsApp too"),
+      info.page_url ? h("p", { class: "small" }, "Long answers and charts go to your result page (",
+        mdLink(info.page_url, "open it"), "). It always shows your latest result, and anyone with the link can open it: "
+        + "don't forward it. Results are removed after 7 days.") : null,
+      h("div", { class: "row" },
+        info.page_url ? h("button", { type: "button", onclick: async () => {
+          if (window.confirm("Make a new result page link? The old one stops working.")) await act(() => api("/v1/me/whatsapp/page/reset", { method: "POST" }))();
+        } }, "New page link") : null,
+        h("button", { type: "button", class: "danger", onclick: async () => {
+          if (window.confirm("Unlink this WhatsApp number? The assistant stops answering it.")) await act(() => api("/v1/me/whatsapp", { method: "DELETE" }))();
+        } }, "Unlink"),
+      ),
+    );
+    return card;
+  }
+  const phone = h("input", { type: "tel", required: true, autocomplete: "tel", placeholder: "+91 98123 45678",
+    value: info.pending_phone ? `+${info.pending_phone}` : "" });
+  const step = h("div");
+  const form = h("form", {
+    onsubmit: async (event) => {
+      event.preventDefault();
+      error.clear();
+      try {
+        const out = await api("/v1/me/whatsapp", { method: "POST", body: { phone: phone.value } });
+        step.replaceChildren(h("div", { class: "card sunk" },
+          h("p", null, "From WhatsApp on ", h("strong", null, `+${out.phone}`), ", send this message to ",
+            h("strong", null, `+${out.bot_number}`), ":"),
+          h("p", { class: "link-code" }, `LINK ${out.code}`),
+          h("p", null, mdLink(out.chat_link, "Open WhatsApp with the message ready"), ` (the code works for ${out.minutes} minutes).`),
+          h("button", { type: "button", onclick: redraw }, "I've sent it"),
+        ));
+      } catch (err) { error.fail(err); }
+    },
+  },
+    h("label", null, "Your WhatsApp number, with country code", phone),
+    h("button", { class: "primary", type: "submit" }, "Get a link code"),
+  );
+  fill(card, h("h2", null, "WhatsApp"), intro, error, form, step);
+  return card;
+}
 
 async function walletCard() {
   const card = h("div", { class: "card" });
@@ -3560,5 +3626,37 @@ function scoutSettings(scout, refresh, error) {
   );
 }
 
+// A WhatsApp result page (/r/<token>, app/whatsapp/links.py): the person's latest long answer or dashboard,
+// opened by its secret link alone. Drawn with the app's own md() and renderDashboard(), no sign-in.
+async function resultPage() {
+  const root = document.getElementById("app");
+  const token = location.pathname.split("/").filter(Boolean).pop() || "";
+  const body = h("div", { class: "result-body" }, h("div", { class: "empty" }, "Loading..."));
+  fill(root, h("main", { class: "result-page" },
+    h("div", { class: "eyebrow" }, "TW-ai · your latest result from WhatsApp"),
+    body,
+  ));
+  try {
+    const response = await fetch(`/v1/whatsapp/page/${encodeURIComponent(token)}`, { cache: "no-store" });
+    if (!response.ok) {
+      fill(body, h("div", { class: "notice" }, "This link doesn't work any more: a new one may have been made in Settings."));
+      return;
+    }
+    const page = await response.json();
+    if (!page.markdown && !(page.dashboards || []).length) {
+      fill(body, h("div", { class: "empty" }, "Nothing here right now. Long answers from WhatsApp appear here, and are removed after 7 days."));
+      return;
+    }
+    fill(body,
+      page.updated_at ? h("p", { class: "small muted" }, `Updated ${new Date(page.updated_at).toLocaleString()}`) : null,
+      mdBlock(page.markdown || ""),
+      (page.dashboards || []).map((dash) => renderDashboard(dash)),
+    );
+  } catch (err) {
+    fill(body, h("div", { class: "notice error" }, "Couldn't load the result. Check your connection and reload."));
+  }
+}
+
 // A reload keeps the person signed in while their session is still valid.
-renewSession().then((ok) => (ok ? shell() : loginScreen()));
+if (document.body.dataset.page === "result") resultPage();
+else renewSession().then((ok) => (ok ? shell() : loginScreen()));
