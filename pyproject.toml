@@ -20,6 +20,7 @@ dependencies = [
     "langchain-core>=0.3",
     "openai>=1.54",            # OpenAI-compatible client for vLLM
     "anthropic>=2.8",          # Claude through the API (LLM_PROVIDER=anthropic)
+    "h2>=4",                   # HTTP/2 to the API: parallel calls on one warm connection
     # data
     "sqlalchemy>=2.0",
     "alembic>=1.13",

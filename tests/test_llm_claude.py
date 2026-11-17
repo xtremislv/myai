@@ -157,3 +157,13 @@ def test_tool_choice_none_and_adaptive_thinking(anthropic, monkeypatch):
                         tools=[{"type": "function", "function": {"name": "a", "parameters": {}}}], tool_choice="none")
     assert req["tool_choice"] == {"type": "none"} and req["thinking"] == {"type": "adaptive"}
     assert req["output_config"] == {"effort": "low"} and req["max_tokens"] == claude.THINKING_MIN_TOKENS
+
+
+def test_api_connections_stay_warm_and_carry_parallel_calls():
+    from app.llm import anthropic_backend
+
+    http = anthropic_backend._http_client()
+    pool = http._transport._pool
+    assert pool._keepalive_expiry == anthropic_backend.KEEPALIVE_SECONDS >= 60
+    assert pool._http2  # triage and tool picking share one connection
+    http.close()

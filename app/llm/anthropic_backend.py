@@ -37,8 +37,27 @@ EMPTY = "(empty)"
 # With thinking possible, a tiny max_tokens (a 120-token verdict) would be spent before any answer.
 THINKING_MIN_TOKENS = 4096
 
+# The server is ~180 ms from the API; a fresh connection (DNS + TCP + TLS) costs ~0.6 s. The SDK's default pool
+# drops idle connections after 5 s, so every chat message paid that, twice (triage and tool picking run side by
+# side). HTTP/2 carries parallel calls on one connection, kept for 5 minutes and warmed by /readyz every minute
+# (measured 2026-11-17: two parallel calls after idling 1.7 s -> 0.57 s).
+KEEPALIVE_SECONDS = 300
+
 _client = None
 _client_lock = threading.Lock()
+
+
+def _http_client():
+    import anthropic
+    import httpx2
+
+    try:
+        import h2  # noqa: F401 - HTTP/2 needs it
+        http2 = True
+    except ImportError:
+        http2 = False
+    limits = httpx2.Limits(max_connections=1000, max_keepalive_connections=100, keepalive_expiry=KEEPALIVE_SECONDS)
+    return anthropic.DefaultHttpxClient(limits=limits, http2=http2)
 
 
 def client():
@@ -50,7 +69,8 @@ def client():
                 import anthropic
 
                 s = get_settings()
-                _client = anthropic.Anthropic(api_key=s.anthropic_api_key or None, max_retries=3)
+                _client = anthropic.Anthropic(api_key=s.anthropic_api_key or None, max_retries=3,
+                                              http_client=_http_client())
     return _client
 
 
