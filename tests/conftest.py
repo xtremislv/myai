@@ -6,6 +6,11 @@ import os
 # Stable test secrets. Set before any app import, because settings are read at import time.
 os.environ.setdefault("JWT_SECRET", "test-only-secret-" + "x" * 32)
 os.environ.setdefault("VAULT_MASTER_KEY", base64.b64encode(b"t" * 32).decode())
+# Never let the server's .env reach the model or the live usage log from a test: environment variables win over
+# .env, so on the Claude server (LLM_PROVIDER=anthropic, a real key) tests still use the mocked OpenAI-shaped client.
+os.environ["LLM_PROVIDER"] = "vllm"
+os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["LLM_USAGE_LOG"] = ""
 
 import pytest  # noqa: E402
 
