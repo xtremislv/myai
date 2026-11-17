@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="whatsapp")
 LINK_RE = re.compile(r"^\s*link\s+(\d{6})\s*$", re.I)
 APPROVAL_BUTTON = re.compile(r"ap:([0-9a-f]{32}):([yn])")
-SEEN_SECONDS = 2 * 86400
+SEEN_SECONDS = 8 * 86400  # Meta retries undelivered webhooks for up to 7 days
 STRANGER_SECONDS = 6 * 3600
 
 HELP = ("This is TW-ai, the company assistant. Ask anything: research, products and prices, reminders, "

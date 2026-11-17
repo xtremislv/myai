@@ -65,7 +65,8 @@ the public.
     "verify_token": "<any long random string>", "display_number": "<bot number with country code, e.g. 9198xxxxxxxx>",
     "template": "twai_notification", "template_lang": "en"}
    ```
-8. **Webhook** (developers.facebook.com > the app > WhatsApp > Configuration > Webhook > Edit): callback URL
+8. **Webhook** (developers.facebook.com > the app > WhatsApp > Configuration, or Use cases > Customize >
+   Configuration for an app made with "Connect with customers through WhatsApp"; Webhook > Edit): callback URL
    `https://tw-ai.in/v1/whatsapp/webhook`, verify token = the `verify_token` above > Verify and save. Then under
    **Webhook fields** subscribe to **messages** (easy to miss: without it nothing arrives).
 9. Link your number in TW-ai (Settings > WhatsApp) and send "hi".
@@ -79,11 +80,13 @@ Until the business is verified, Meta limits how many people the number may messa
   notifications on/off, result page (encrypted) and its token hash.
 - The webhook answers at once and checks Meta's signature on every call (Meta retries anything slow, which would
   run the agent again); messages run in a small pool in the gateway (`bot.EXECUTOR`, 4 at a time), one at a time per
-  conversation; Meta's retries are skipped by message id (Redis, 2 days). Each message gets a read receipt and
+  conversation; Meta's retries (up to 7 days) are skipped by message id (Redis, 8 days). Each message gets a read receipt and
   "typing..." at once. A message is marked seen when queued, so a gateway restart mid-answer loses that answer.
 - The allowlist is the linked numbers: the first thing a queued message meets, before any model call. An unlinked
   number can only send a `LINK` code or get the "not linked" reply (once per 6 hours); it never reaches the model.
 - Media: Meta sends a media id; `cloud.download_media` looks up its short-lived URL with the token and downloads
   it (size checked before and during).
 - Erasing a person's data unlinks their number; their WhatsApp conversation goes with their checkpoints.
-- Not yet: images (the agent pipeline is text only), files other than PDF/Word/Excel/text.
+- Not yet: people who use a WhatsApp username may arrive without a phone number (`from`), only a BSUID
+  (`user_id`); those messages are skipped, since linking is by number. mTLS (Cloudflare ends TLS; the signature
+  check covers it). Images (the agent pipeline is text only), files other than PDF/Word/Excel/text.

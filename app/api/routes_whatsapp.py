@@ -18,7 +18,7 @@ from app.db.session import SessionLocal, get_session
 from app.whatsapp import bot, cloud, links
 
 router = APIRouter(tags=["whatsapp"])
-MAX_BODY = 1_000_000
+MAX_BODY = 4_000_000  # Meta batches up to 1000 updates, 3 MB at most
 
 
 # ---- Meta's webhook (public; every call is checked against the app secret) ----
