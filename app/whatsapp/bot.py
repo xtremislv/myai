@@ -44,7 +44,7 @@ HELP = ("This is TW-ai, the company assistant. Ask anything: research, products 
         "work requests for your departments.\n\n"
         "Commands:\n/reset - start a new conversation\n/page - the link to your result page\n"
         "/mute - stop notifications here\n/unmute - turn them back on\n/help - this message\n\n"
-        "Your own files, mailbox and saved details stay in the app.")
+        "You can read and summarize your mail here; sending mail, your own files and saved details stay in the app.")
 NOT_LINKED = ("This number isn't linked to a TW-ai account. Sign in to TW-ai, open Settings > WhatsApp, "
               "enter this number and send the code it shows here.")
 ONLY_TEXT = ("I can read text, voice notes and documents (PDF, Word, Excel, text files) here. For images and other "

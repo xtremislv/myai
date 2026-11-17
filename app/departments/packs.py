@@ -78,11 +78,14 @@ PRIVATE_TOOLS = (
     *WALLET_TOOLS, *DATA_TOOLS, "more_tools",
 )
 # WhatsApp (app/whatsapp/, owner 2026-11-17): its conversation is encrypted with a server key, not the person's,
-# so their own files, mailbox, templates and saved details stay in the app; so do tools that need the person at a
-# live browser or typing a secret. Work keeps its department's tools minus the person-present ones.
+# so their own files, templates and saved details stay in the app; so do tools that need the person at a live
+# browser or typing a secret. Work keeps its department's tools minus the person-present ones.
+# Mail (owner, 2026-11-17): mailbox logins are in the server vault, so reading works here. Left out: send_mail
+# (its confirmation is in the app, which can't open this server-key thread) and mail_to_sheet (saves to My files).
+WHATSAPP_MAIL_TOOLS = tuple(t for t in MAIL_TOOLS if t not in ("send_mail", "mail_to_sheet"))
 PERSON_PRESENT_TOOLS = ("ask_person_to_browse", "ask_person_for_secret", "fill_saved", "list_saved_details")
 WHATSAPP_PRIVATE_TOOLS = (  # web_research is left out: in private chat it saves its sheet to My files
-    *(t for t in LOOKUP_TOOLS if t != "web_research"), *REMINDER_TOOLS, "run_python", "make_dashboard",
+    *(t for t in LOOKUP_TOOLS if t != "web_research"), *WHATSAPP_MAIL_TOOLS, *REMINDER_TOOLS, "run_python", "make_dashboard",
     "job_status", "more_tools",
 )
 # Tools that need a person's go-ahead in every department and in private chat (where the person

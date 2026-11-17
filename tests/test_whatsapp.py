@@ -261,8 +261,9 @@ def test_whatsapp_leaves_out_the_persons_own_data_and_person_present_tools():
         research = set(tools.tools_for("researcher"))
     finally:
         channel.reset(token)
-    assert {"read_file", "write_file", "read_mail", "send_mail", "fill_saved", "browser_open", "web_research"} & private == set()
+    assert {"read_file", "write_file", "send_mail", "mail_to_sheet", "fill_saved", "browser_open", "web_research"} & private == set()
     assert {"web_search", "gadget_search", "set_reminder", "make_dashboard"} <= private <= app_private
+    assert {"list_mailboxes", "read_mail", "search_mail", "open_mail", "summarize_mail", "mark_mail"} <= private
     assert not research & set(PERSON_PRESENT_TOOLS) and "web_search" in research
 
 

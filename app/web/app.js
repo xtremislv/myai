@@ -2553,7 +2553,8 @@ async function whatsappCard() {
   const redraw = async () => card.replaceWith(await whatsappCard());
   const intro = h("p", { class: "muted" }, "Use the assistant from WhatsApp: ask questions, send work requests, and get your "
     + "reminders and notifications there. Your WhatsApp conversation is kept apart from your encrypted chats here, and "
-    + "your own files, mailbox and saved details stay in the app. WhatsApp messages pass through Meta's servers.");
+    + "your own files and saved details stay in the app. You can read and summarize your mail there; sending mail stays "
+    + "in the app. WhatsApp messages pass through Meta's servers.");
   if (!info.configured) {
     fill(card, h("h2", null, "WhatsApp"), intro,
       h("div", { class: "notice info" }, "Not set up on this server yet: ask your administrator (Credentials page)."));

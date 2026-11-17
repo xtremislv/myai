@@ -30,7 +30,8 @@ which breaks WhatsApp's terms and gets numbers banned). Code: `app/whatsapp/` an
 
 | Question | Decision |
 |---|---|
-| Private data | The WhatsApp conversation is encrypted with a key derived from the server's notes key (like reminders), not the person's own key, which only their password or phone app opens. So their encrypted app chats, My files, own mailbox, templates and saved logins/cards are **not** reachable from WhatsApp. |
+| Private data | The WhatsApp conversation is encrypted with a key derived from the server's notes key (like reminders), not the person's own key, which only their password or phone app opens. So their encrypted app chats, My files, templates and saved logins/cards are **not** reachable from WhatsApp. |
+| Mail (owner, later 2026-11-17) | Mailboxes (own + their departments') can be listed, read, searched, summarized and marked from WhatsApp: mailbox logins are in the server vault. Sending mail and mail-to-sheet stay in the app (the send confirmation and My files need the person's own key). Mail text passes through Meta's servers in readable form, like every WhatsApp answer. |
 | Result page | Secret link only, no sign-in. |
 | Outside 24 hours | WhatsApp allows free-form messages only within 24 hours of the person's last message. Outside it, notifications go as the approved template with the title (`Reminder: Call the courier`), which Meta charges per message. |
 | Confirmations | Approve / Reject buttons for admins. Live-browser steps (sign-in, OTP, CVV) and saved card/UPI filling stay in the app; those tools aren't offered on WhatsApp. |
