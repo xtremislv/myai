@@ -125,6 +125,11 @@ Postgres integration tests only on a throwaway DB:
   Change settings with `python3 scripts/env_set.py KEY=value` + restart. Budget alerts run in the scheduler.
 - The owner's budget is 50,000 INR a month: don't raise it, change the targets or turn off alerts without asking.
 - Spend: `.venv/bin/python -m scripts.llm_cost --hours 24` (last table = actual Claude spend by model).
+- **Prepaid credit** (`app/llm/credit.py`): the API has no balance endpoint, so the server counts down from the
+  balance entered after each top-up: `.venv/bin/python -m scripts.llm_credit set <USD from the Console>` (no restart;
+  `.venv/bin/python -m scripts.llm_credit` shows the estimate). At `LLM_CREDIT_ALERTS` ($10 and $5 left) the admins get a
+  bell notice and an email (plus `LLM_CREDIT_ALERT_EMAILS`), once per level per top-up; an API "credit balance is too
+  low" refusal alerts at once. Checked by the scheduler every 30 s; also in `GET /v1/admin/llm-usage` (`credit`).
 - Token counts per task are in `llm_usage.jsonl` (counts only, never content) and Prometheus `llm_task_tokens_total`.
 - API errors: `grep -i anthropic /var/log/ai-platform/gateway.log`; 429 = rate limit (lower
   `LLM_BACKGROUND_CONCURRENCY`), 401 = key, 529/5xx = Anthropic side (the SDK retries 3 times).

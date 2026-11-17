@@ -167,3 +167,32 @@ def test_api_connections_stay_warm_and_carry_parallel_calls():
     assert pool._keepalive_expiry == anthropic_backend.KEEPALIVE_SECONDS >= 60
     assert pool._http2  # triage and tool picking share one connection
     http.close()
+
+
+def test_cache_breakpoints_on_the_system_prompt_and_before_the_clock_stamp():
+    from app.orchestrator import clock
+
+    history = [{"role": "system", "content": clock.with_now("You are TW-ai.")},
+               {"role": "user", "content": "first question"},
+               {"role": "assistant", "content": "first answer"},
+               {"role": "user", "content": "second question"}]
+    req = claude.params(clock.place_clock(history), model="claude-sonnet-5-5", max_tokens=500, tools=None,
+                        tool_choice=None)
+    assert req["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    last = req["messages"][-1]["content"]
+    assert last[0] == {"type": "text", "text": "second question", "cache_control": {"type": "ephemeral"}}
+    assert last[1]["text"].startswith("[Now: ") and "cache_control" not in last[1]
+    # Next turn: everything up to "second question" is byte-identical, so the entry written there is read back.
+    nxt = claude.params(clock.place_clock(history + [{"role": "assistant", "content": "second answer"},
+                                                    {"role": "user", "content": "third"}]),
+                        model="claude-sonnet-5-5", max_tokens=500, tools=None, tool_choice=None)
+    assert nxt["messages"][2]["content"][0]["text"] == "second question"
+    assert nxt["system"] == req["system"]
+    breakpoints = 1 + sum("cache_control" in b for t in nxt["messages"] for b in t["content"]) + 1
+    assert breakpoints <= 4
+
+
+def test_no_history_breakpoint_without_a_stamp_or_text():
+    req = claude.params([{"role": "user", "content": "plain"}], model="claude-haiku-5-5", max_tokens=50,
+                        tools=None, tool_choice=None)
+    assert "cache_control" not in req["messages"][-1]["content"][0] and "system" not in req

@@ -406,8 +406,12 @@ def _claude(
         try:
             text, calls, usage, raw = claude.call(request, sink, timeout=kwargs.get("timeout"))
             llm_requests_total.labels(model=model, status="ok").inc()
-        except Exception:
+        except Exception as exc:
             llm_requests_total.labels(model=model, status="error").inc()
+            from app.llm import credit
+
+            if credit.is_out_of_credit(exc):
+                credit.mark_empty()  # the scheduler alerts the admins (credit.check)
             raise
         finally:
             llm_latency_seconds.labels(model=model).observe(time.perf_counter() - start)

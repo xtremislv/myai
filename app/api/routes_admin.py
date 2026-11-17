@@ -100,4 +100,7 @@ def llm_usage() -> dict:
 
     summary = model_manager.month_summary()
     summary["provider"] = get_settings().llm_provider
+    from app.llm import credit
+
+    summary["credit"] = credit.status()
     return summary

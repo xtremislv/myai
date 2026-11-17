@@ -67,6 +67,17 @@ def budget(session) -> int:
     return model_manager.check_budget(session)
 
 
+def credit(session) -> int:
+    """Prepaid API credit alerts (app/llm/credit.py): each LLM_CREDIT_ALERTS level once per top-up, and
+    at once when the API refuses calls for lack of credit."""
+    from app.config import get_settings
+    from app.llm import credit as llm_credit
+
+    if get_settings().llm_provider != "anthropic":
+        return 0
+    return llm_credit.check(session)
+
+
 def scouts(session) -> int:
     return scout.start_due(SessionLocal, scout.live_tools)
 
@@ -88,6 +99,7 @@ def main() -> None:
         started = time.monotonic()
         _job("reminders", reminders)
         _job("scouts", scouts)
+        _job("credit", credit)  # one Redis read: every tick, so "credit used up" goes out at once
         if started - last_digest >= DIGEST_EVERY:
             _job("budget", budget)
             _job("digests", digests)

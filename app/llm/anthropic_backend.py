@@ -202,19 +202,51 @@ def convert_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     return "\n\n".join(system), turns
 
 
+# The clock stamp app/orchestrator/clock.place_clock puts on the latest user message.
+_STAMP = re.compile(r"\n+(\[Now: [^\]\n]*\])\s*$")
+CACHE = {"type": "ephemeral"}
+
+
+def _mark_history(turns: list[dict]) -> None:
+    """A cache breakpoint on the latest user message, before its clock stamp.
+
+    The stamp moves to the next user message on the next turn, so the history up to here is only
+    read back from the cache if an entry ends exactly here (the automatic breakpoint at the very end
+    includes the stamp, and is only reused by this turn's own tool rounds)."""
+    last = turns[-1]
+    if last["role"] != "user":
+        return
+    blocks = last["content"]
+    for i in range(len(blocks) - 1, -1, -1):
+        block = blocks[i]
+        if block.get("type") != "text":
+            continue
+        match = _STAMP.search(block["text"])
+        if not match or not block["text"][:match.start()].strip():
+            return
+        blocks[i:i + 1] = [{"type": "text", "text": block["text"][:match.start()], "cache_control": CACHE},
+                           {"type": "text", "text": match.group(1)}]
+        return
+
+
 def params(messages: list[dict], *, model: str, max_tokens: int, tools: list[dict] | None,
            tool_choice: str | None) -> dict[str, Any]:
     system, turns = convert_messages(messages)
+    _mark_history(turns)
     out: dict[str, Any] = {
         "model": model,
         "max_tokens": max(max_tokens, THINKING_MIN_TOKENS) if thinks(model) else max_tokens,
         "messages": turns,
-        # Caches the longest stable prefix (tools, system prompt, earlier turns) for 5 minutes.
-        "cache_control": {"type": "ephemeral"},
+        # Up to three 5-minute cache entries (prompt caching measured at 0 reads on 2026-11-17 with only the
+        # automatic one, which sits after each request's unique tail):
+        #   tools + system prompt: shared by every call with the same prompt and tool groups, any person;
+        #   the history up to the latest user message, before its clock stamp (_mark_history): the next turn;
+        #   automatic, at the end: this turn's next tool round.
+        "cache_control": CACHE,
         **thinking_params(model),
     }
     if system:
-        out["system"] = system
+        out["system"] = [{"type": "text", "text": system, "cache_control": CACHE}]
     if tools:
         out["tools"] = convert_tools(tools)
         # "any"/"tool" (forced calls) are refused by the newest models; the app only uses auto and none.

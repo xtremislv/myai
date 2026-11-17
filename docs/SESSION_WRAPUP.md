@@ -16,8 +16,14 @@ this file, this file is right.
 - **Latency on Claude (2026-11-17):** a message waits for two API round trips before its first word (Haiku triage +
   tool picking side by side, then Sonnet). The API is ~180 ms away and a new connection costs ~0.6 s, so calls share
   one HTTP/2 connection kept 5 minutes (`anthropic_backend._http_client`, warmed by /readyz each minute). Opus (asked
-  for by words like "compare", "analyze", "plan") always thinks, so its start is slower. Prompt caching showed 0
-  cached tokens on the first chats (tool list changes with the picked groups, the clock moves): not yet looked at.
+  for by words like "compare", "analyze", "plan") always thinks, so its start is slower.
+- **Prompt caching (2026-11-17):** only the automatic breakpoint (after each request's unique tail) was sent, so every
+  call wrote and none read. Now also explicit breakpoints on the system prompt (with tools) and on the latest user
+  message before its `[Now: ...]` stamp (`anthropic_backend.params`/`_mark_history`). Check reads in
+  `llm_usage.jsonl` ("cached"); a different tool-group mix still misses the system entry.
+- **Prepaid credit alerts (2026-11-17):** `app/llm/credit.py`, `scripts/llm_credit.py`; balance set to $49.43 on
+  2026-11-17 ($50 top-up minus $0.57 already spent). Reset it after every top-up. See CLAUDE_CODE_SERVER.md.
+- **Scouts paused (owner, 2026-11-17):** all three `enabled=false`; resume from the Scouts page.
 - Repo: GitHub `xtremislv/myai`. Never push to `main` (owner's rule). Branch map: `BRANCHES.md`.
 - Android app: see `docs/ANDROID_APP.md`. **1.0.81** is published (2026-11-14: voice input via the server's Whisper,
   RECORD_AUDIO). 1.0.71 was published 2026-11-13. 1.0.70 crashed right after sign-in

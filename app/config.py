@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     llm_budget_currency: str = "INR"
     llm_usd_rate: float = 88.0  # INR per USD for the budget (update when the rate moves)
     llm_budget_hard_stop: bool = False  # true: refuse model calls once the budget is used up
+    # Prepaid API credit (app/llm/credit.py): the balance is set with scripts/llm_credit.py after each top-up.
+    llm_credit_alerts: str = "10,5"   # USD left at which admins get a bell notice and an email
+    llm_credit_alert_emails: str = ""  # extra addresses (comma-separated) for those emails
     # Claude only: "off" (default: faster, cheaper) or "adaptive" (the model thinks when it helps).
     # Claude Opus 5.5 always thinks. LLM_EFFORT: low|medium|high|xhigh|max, empty = the model's default.
     llm_thinking: str = "off"

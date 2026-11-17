@@ -315,9 +315,12 @@ def cost_usd(model: str, usage: Any) -> float:
 
 
 def record(tier: str, model: str, usage: Any) -> float:
+    from app.llm import credit
+
     usd = cost_usd(model, usage)
     month = month_key()
     ledger.add(_k(month, "usd", tier), usd)
+    credit.spend(usd)
     return usd
 
 

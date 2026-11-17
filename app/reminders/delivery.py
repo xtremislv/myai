@@ -68,6 +68,17 @@ def email_admins(session: Session, subject: str, body: str) -> int:
     return len(to)
 
 
+def email_addresses(session: Session, addresses: list[str], subject: str, body: str) -> int:
+    """Email these addresses from the notification mailbox only. Returns how many were sent (0 without one)."""
+    cfg = _sender(AESGCMVault(session))
+    if cfg is None:
+        return 0
+    footer = "\n\n-- \nSent by your AI Platform server."
+    for address in sorted(set(addresses)):
+        send(cfg, address, subject, body + footer)
+    return len(set(addresses))
+
+
 def email_person(session: Session, user: User, subject: str, body: str) -> bool:
     """False if there is no address or no mailbox to send from."""
     to = address_of(session, user)
