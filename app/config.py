@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     llm_usd_rate: float = 88.0  # INR per USD for the budget (update when the rate moves)
     llm_budget_hard_stop: bool = False  # true: refuse model calls once the budget is used up
     # Prepaid API credit (app/llm/credit.py): the balance is set with scripts/llm_credit.py after each top-up.
+    whatsapp_verify_token: str = ""  # TEMPORARY: webhook check before the whatsapp/cloud secret (routes_whatsapp)
     public_app_url: str = ""  # https://tw-ai.in: links the server sends (WhatsApp result pages)
     llm_credit_alerts: str = "10,5"   # USD left at which admins get a bell notice and an email
     llm_credit_alert_emails: str = ""  # extra addresses (comma-separated) for those emails

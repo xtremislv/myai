@@ -465,3 +465,19 @@ def test_an_api_without_typing_indicators_still_gets_the_read_receipt(db, sent):
         MEDIA.update(no_typing=False)
     reads = [m for m in sent if m.get("status") == "read"]
     assert reads == [{"messaging_product": "whatsapp", "status": "read", "message_id": "wamid.1"}]
+
+
+def test_verify_token_fallback_before_the_secret(monkeypatch):
+    """Temporary: WHATSAPP_VERIFY_TOKEN passes Meta's check while whatsapp/cloud is missing."""
+    from fastapi.testclient import TestClient
+
+    from app.api import routes_whatsapp
+    from app.main import app
+
+    monkeypatch.setattr(routes_whatsapp.cloud, "config", lambda session: None)
+    monkeypatch.setattr(routes_whatsapp, "get_settings", lambda: type("S", (), {"whatsapp_verify_token": "tok-123"})())
+    client = TestClient(app)
+    ok = client.get("/v1/whatsapp/webhook", params={"hub.mode": "subscribe", "hub.verify_token": "tok-123", "hub.challenge": "42"})
+    assert ok.status_code == 200 and ok.text == "42"
+    bad = client.get("/v1/whatsapp/webhook", params={"hub.mode": "subscribe", "hub.verify_token": "nope", "hub.challenge": "42"})
+    assert bad.status_code == 403
