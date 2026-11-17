@@ -35,7 +35,7 @@ from app.whatsapp import format as fmt
 logger = logging.getLogger(__name__)
 
 EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="whatsapp")
-LINK_RE = re.compile(r"^\s*link\s+(\d{6})\s*$", re.I)
+LINK_RE = re.compile(r"^[\s*_]*link\b[\s:#*_-]*(\d(?:[\s-]?\d){5})[\s*_.]*$", re.I)  # "LINK 123456", "link: 123 456"
 APPROVAL_BUTTON = re.compile(r"ap:([0-9a-f]{32}):([yn])")
 SEEN_SECONDS = 8 * 86400  # Meta retries undelivered webhooks for up to 7 days
 STRANGER_SECONDS = 6 * 3600
@@ -217,12 +217,13 @@ def _media(session: Session, cfg: cloud.Config, phone: str, link, message: dict)
 def _stranger(session: Session, cfg: cloud.Config, phone: str, text: str) -> None:
     match = LINK_RE.match(text or "")
     if match:
-        row = links.confirm(session, phone, match.group(1))
+        row = links.confirm(session, phone, re.sub(r"\D", "", match.group(1)))
         if row is not None:
             user = session.get(User, row.user_id)
             _send(cfg, phone, f"Linked to your TW-ai account ({user.username if user else row.user_id}).\n\n{HELP}")
         elif _once(f"wa:badcode:{phone}", 60):
-            _send(cfg, phone, "That code didn't match, or it expired. Get a new one in TW-ai under Settings > WhatsApp.")
+            _send(cfg, phone, "That code didn't match, or it expired. Get a new one in TW-ai under Settings > WhatsApp, and send it "
+                  "from the same WhatsApp number you entered there.")
         return
     if _once(f"wa:stranger:{phone}", STRANGER_SECONDS):
         _send(cfg, phone, NOT_LINKED)
