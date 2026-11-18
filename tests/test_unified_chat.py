@@ -177,7 +177,7 @@ def test_internal_fields_are_stripped_before_the_model_server(monkeypatch):
 # ---- requests in a chat ----
 def test_order_goes_to_accounts_and_the_requester_can_follow_it(api, monkeypatch):
     _sorted_as(monkeypatch, route="work", action="order")
-    body = _send(api, LEE, "get us five laptops")
+    body = _send(api, LEE, "get five laptops for the office team")
     assert (body["outcome"], body["department"]) == ("forwarded", "account")
     assert "accounts team" in body["reply"]
 
@@ -344,8 +344,11 @@ def test_triage_decisions(monkeypatch, verdict, route, department, action):
     monkeypatch.setattr(
         guards, "triage_verdict", lambda *a: {"safety": "none", **verdict}
     )
-    result = guards.triage("x", _departments(), [])
+    # A purchase goes to Accounts only when the message says it's for work (guards.says_work, 2026-11-18).
+    result = guards.triage("pay the warehouse invoice" if action else "x", _departments(), [])
     assert (result.route, result.department, result.action) == (route, department, action)
+    if action:
+        assert guards.triage("pay it", _departments(), []).route == "private"
 
 
 def test_many_steps_choose_agents_mode_unless_the_caller_set_one(api, monkeypatch):

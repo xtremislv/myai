@@ -39,6 +39,16 @@ BLOCKED_NOTE = (
 )
 
 
+def popup_note(popup: dict, elements: list[dict]) -> str:
+    """What the agent is told when a popup covers the page: its text and its controls, first."""
+    labels = {e["ref"]: e["label"] for e in elements} | {e["ref"]: e["label"] for e in popup.get("extra", [])}
+    controls = ", ".join(f"[{r}] '{labels.get(r) or '(no label)'}'" for r in popup.get("refs", [])[:12]) or "none found"
+    return ("POPUP: a popup/dialog covers the page" + (f" ('{popup.get('text', '')[:200]}')" if popup.get("text") else "")
+            + f". Its controls: {controls}. Deal with it first: close it (its '× close' or '(icon)' control, usually at "
+            "its top right) or use its own buttons (e.g. 'Continue booking', 'Accept'). Everything marked (behind the "
+            "popup) can't be clicked, and a screenshot now shows only the popup.")
+
+
 def indian_location(settings) -> dict:
     """The browser looks like a person in India (owner, 2026-11-18): Indian languages first, and a location in
     India for sites that ask (movie and shop sites pick the city from it). An unreadable setting is left out."""
@@ -91,6 +101,15 @@ _MARK_JS = r"""
   const sel = 'a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=tab],' +
               '[role=checkbox],[role=radio],[role=option],[role=menuitem],[role=combobox],[contenteditable=true]';
   document.querySelectorAll('[data-ai-ref]').forEach(e => e.removeAttribute('data-ai-ref'));
+  // A control with no words (an icon): name it from its class/id/test id, so "×" isn't a blank button.
+  const iconLabel = (el) => {
+    const hint = [el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className, el.id,
+                  el.getAttribute('data-testid'), el.getAttribute('data-test'), el.getAttribute('aria-describedby')]
+                  .filter(Boolean).join(' ').toLowerCase();
+    if (/close|dismiss|cross|cancel-icon|modal-x|btn-x/.test(hint) || (el.innerText || '').trim() === '×') return '× close';
+    if (/back|arrow-left|chevron-left/.test(hint)) return '← back';
+    return el.querySelector('svg,img,i') ? '(icon)' : '';
+  };
   const out = []; let i = 0;
   for (const el of document.querySelectorAll(sel)) {
     if (el.type === 'hidden') continue;
@@ -105,7 +124,7 @@ _MARK_JS = r"""
     const label = (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') ||
                    el.title || el.getAttribute('name') || el.getAttribute('alt') ||
                    (tag === 'input' && ['submit','button'].includes(el.type) ? el.value : '') || '')
-                   .trim().replace(/\s+/g, ' ').slice(0, 80);
+                   .trim().replace(/\s+/g, ' ').slice(0, 80) || iconLabel(el);
     let value = '';
     const ident = [el.name, el.id, el.getAttribute('autocomplete'), el.getAttribute('placeholder'),
                    el.getAttribute('aria-label')].filter(Boolean).join(' ');
@@ -122,6 +141,68 @@ _MARK_JS = r"""
   return out;
 }
 """
+
+# A popup or dialog over the page (owner, 2026-11-18: District's seat map sat behind a blurred popup and the
+# agent kept sending screenshots of it). Run after _MARK_JS: returns the popup's text and the refs of its controls,
+# or null. A full-screen fixed layer holding most of the page's controls is the page itself (an app shell), not a popup.
+_OVERLAY_JS = r"""
+() => {
+  const W = innerWidth, H = innerHeight;
+  const all = document.querySelectorAll('[data-ai-ref]').length;
+  const modal = (e) => e.tagName === 'DIALOG' || ['dialog', 'alertdialog'].includes(e.getAttribute('role')) ||
+                       e.getAttribute('aria-modal') === 'true';
+  // The nearest dialog or fixed layer above a point (any size: a popup box is often small, in front of a
+  // full-screen blurred backdrop).
+  const layerOf = (el) => {
+    for (let e = el; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+      const st = getComputedStyle(e);
+      if (modal(e) || st.position === 'fixed') return e;
+    }
+    return null;
+  };
+  const points = [[.5, .5], [.25, .35], [.75, .35], [.25, .7], [.75, .7], [.5, .85]];
+  const layers = points.map(([x, y]) => layerOf(document.elementFromPoint(W * x, H * y))).filter(Boolean);
+  if (layers.length < 4) return null;  // most of the screen must be covered (not just a sticky bar)
+  const candidates = new Set(layers);
+  document.querySelectorAll('dialog[open],[role=dialog],[role=alertdialog],[aria-modal=true]').forEach(d => {
+    const r = d.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) candidates.add(d);
+  });
+  const pointers = (c) => Array.from(c.querySelectorAll('*')).filter(e => getComputedStyle(e).cursor === 'pointer').length;
+  let best = null, refs = [], score = -1;
+  for (const c of candidates) {
+    const mine = Array.from(c.querySelectorAll('[data-ai-ref]')).map(e => +e.getAttribute('data-ai-ref'));
+    if (all > 8 && mine.length > 0.8 * all) continue;  // the page's own frame (an app shell), not a popup
+    const points_ = mine.length * 1000 + pointers(c) * 100 + Math.min((c.innerText || '').length, 99);
+    if (points_ > score) { best = c; refs = mine; score = points_; }
+  }
+  if (!best || score <= 0) return null;
+  // Popups are often built from plain clickable <div>s ("Continue booking", an × icon): number those too, so the
+  // agent can click them. Only the outermost clickable element of each, and only inside the popup.
+  const box = best.getBoundingClientRect();
+  let next = Math.max(0, ...Array.from(document.querySelectorAll('[data-ai-ref]')).map(e => +e.getAttribute('data-ai-ref')));
+  const extra = [];
+  for (const el of best.querySelectorAll('*')) {
+    if (el.hasAttribute('data-ai-ref') || el.closest('[data-ai-ref]')) continue;
+    if (getComputedStyle(el).cursor !== 'pointer') continue;
+    if (el.parentElement && el.parentElement !== best && getComputedStyle(el.parentElement).cursor === 'pointer') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 6 || r.height < 6) continue;
+    let label = (el.innerText || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    if (!label) {
+      const topRight = r.top < box.top + box.height * 0.25 && r.left > box.left + box.width * 0.6;
+      label = (topRight || /close|dismiss|cross/i.test(String(el.className))) ? '× close' : '(icon)';
+    }
+    next += 1;
+    el.setAttribute('data-ai-ref', String(next));
+    extra.push({ref: next, label});
+    refs.push(next);
+    if (extra.length >= 8) break;
+  }
+  return {text: (best.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 240), refs, extra};
+}
+"""
+
 
 # What an element is, for the commit and sensitive-field checks.
 _INFO_JS = r"""
@@ -149,7 +230,11 @@ _INFO_JS = r"""
 # "Place your order" / "Pay" still needs browser_commit and a person's go-ahead.
 SAFE_CLICK = re.compile(
     r"^\s*(add to (?:cart|bag|basket)|go to (?:cart|bag|basket)|view (?:cart|bag|basket)|cart|"
-    r"proceed to checkout|(?:secure )?checkout|check out|deliver to this address|use this address)\b",
+    r"proceed to checkout|(?:secure )?checkout|check out|deliver to this address|use this address|"
+    # Steps on the way to choosing seats or rooms, and popups' "I agree / continue" (2026-11-18: District's
+    # "Continue booking" popup over the seat map): they choose nothing and pay nothing.
+    r"continue (?:booking|to (?:book|booking|seats?|seat selection))|select seats?|choose seats?|book tickets|"
+    r"(?:i )?(?:accept|agree)(?: (?:&|and) continue)?|got it|okay|ok)\b",
     re.IGNORECASE,
 )
 COMMIT_WORDS = re.compile(
@@ -328,6 +413,11 @@ class Browser:
 
     async def _snapshot(self, page, note: str = "") -> str:
         elements = await page.evaluate(_MARK_JS, 150)
+        try:
+            popup = await page.evaluate(_OVERLAY_JS)
+        except Exception:  # noqa: BLE001 - a page mid-navigation: no popup note this time
+            popup = None
+        on_top = set(popup["refs"]) if popup else set()
         title, text = extract.page_text(await page.content())
         # After scrolling, show the text around where the page is now, not its top.
         ratio = await page.evaluate(
@@ -350,8 +440,12 @@ class Browser:
                 line += " (disabled: the page needs something first, e.g. a delivery pincode or a size)"
             if not e["inView"]:
                 line += " (below)"
+            if popup and e["ref"] not in on_top:
+                line += " (behind the popup)"
             lines.append(line)
         more = f"\n…and {len(elements) - MAX_ELEMENTS} more controls (scroll to see them)" if len(elements) > MAX_ELEMENTS else ""
+        if popup:
+            note = (f"{note}\n" if note else "") + popup_note(popup, elements)
         blocked = extract.block_kind(title, text)
         if blocked:
             note = (f"{note}\n" if note else "") + BLOCKED_NOTE.format(
@@ -523,6 +617,14 @@ class Browser:
         """Cookies and local storage of an open session, to save its logins."""
         s = self._sessions.get(key)
         return None if s is None else await s.context.storage_state()
+
+    async def popup(self, key: str) -> str:
+        """The POPUP note when a popup or dialog covers this session's page, else "" (for show_person)."""
+        s = await self._session(key, create=False)
+        async with s.lock:
+            elements = await s.page.evaluate(_MARK_JS, 150)
+            found = await s.page.evaluate(_OVERLAY_JS)
+            return popup_note(found, elements) if found else ""
 
     async def screen(self, key: str) -> tuple[bytes, str, str]:
         """(JPEG of the visible page, url, title), for the person watching."""

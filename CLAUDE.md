@@ -123,6 +123,12 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   month is over budget). `request_spend` adds up a request's cost. On WhatsApp, specialists and the supervisor get the
   WhatsApp instructions, and booking/ordering requests run as the single agent (`bot.whatsapp_mode`). An API failure
   (529/5xx/429/timeout) before any words were streamed is retried once on `FALLBACK_TIER` (`client._fallback`).
+- Popups (2026-11-18): page snapshots run `_OVERLAY_JS` after `_MARK_JS`: a popup's text and controls come first
+  (`popup_note`; clickable divs in it get refs, an icon in its top corner is '× close'), the rest is marked (behind the
+  popup), and `show_person` won't send a screenshot while one covers the page (unless `popup_ok`). Popup steps like
+  'Continue booking' / 'Accept' are `SAFE_CLICK`, paying never is.
+- Purchases go to Accounts only when the person said they're for work (`guards.says_work`: the message or their last
+  two); otherwise triage keeps them private and the assistant asks "personal or work?".
 - Security audit 2026-11-18 rules: every password or recovery-code check goes through `attempts.guarded(...)`
   (`app/auth/attempts.py`: per account+address, account, address; Redis with in-process fallback) and
   `security.password_matches` (a missing user still costs a bcrypt check). IMAP folder names go through

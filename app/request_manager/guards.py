@@ -133,6 +133,22 @@ class Triage:
     mode: str = "single"  # single | agents (team only when a caller asks for it)
 
 
+# Words that say a purchase is for the company, in the message or the person's last two messages.
+WORK_SIGNS = re.compile(
+    r"\b(offices?|company|company's|team|teams|clients?|business|official|corporate|warehouse|suppliers?|vendors?|"
+    r"invoices?|gst|reimburs\w*|staff|employees?|departments?|colleagues?|techwiser|gadgetwiser|for work|at work|"
+    r"work[- ]related|work (?:order|purchase|booking|expense))\b", re.IGNORECASE)
+# A bare answer to "personal or work?".
+WORK_ANSWER = re.compile(r"^\W*(?:it'?s |its |this is |for )*(?:work|office|company|official|business)\W*$", re.I)
+WORK_RECENT = 2
+
+
+def says_work(message: str, recent: list[dict] | None) -> bool:
+    """True when the person said this purchase is for work (WORK_SIGNS, or answering "work")."""
+    theirs = [str(m.get("content") or "") for m in (recent or []) if m.get("role") == "user"][-WORK_RECENT:]
+    return any(WORK_SIGNS.search(t) or WORK_ANSWER.match(t) for t in (message, *theirs))
+
+
 def triage_verdict(
     message: str, departments: dict[str, str], recent: list[dict], others: dict[str, str] | None = None
 ) -> dict | None:
@@ -194,6 +210,11 @@ def triage(
     action = verdict.get("action") if verdict.get("action") in ("order", "service", "bill") else None
     if action and verdict["route"] == "private":
         action = None  # a personal purchase stays in the person's own (encrypted) chat
+    if action and not says_work(message, recent):
+        # Owner, 2026-11-18: a WhatsApp movie booking went to the accounts inbox though nobody said it was for work.
+        # A purchase goes to Accounts only when the person said so; otherwise it stays private, where the assistant
+        # asks "personal or work?" before buying anything (its instructions), and a "for work" answer comes back here.
+        return Triage(mode=private_mode)
     if action:  # anyone may ask for these: they go to the accounts inbox
         return Triage(route="work", action=action, mode=mode)
     department = verdict.get("department")

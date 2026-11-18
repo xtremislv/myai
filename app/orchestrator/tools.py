@@ -2332,7 +2332,8 @@ def ask_person_to_browse(state: dict[str, Any], reason: str) -> str:
 SHOW_PER_TURN = 3  # pictures/questions show_person may send in one turn
 
 
-def show_person(state: dict[str, Any], message: str, options: str = "", screenshot: bool = True) -> str:
+def show_person(state: dict[str, Any], message: str, options: str = "", screenshot: bool = True,
+                popup_ok: bool = False) -> str:
     """WhatsApp only: send the person a screenshot of the page the browser is on (a CAPTCHA or sign-in page, a
     seat map, the product to confirm), with a question and up to three reply buttons. Their reply comes as
     their next message. The app has the live browser instead (ask_person_to_browse)."""
@@ -2359,6 +2360,17 @@ def show_person(state: dict[str, Any], message: str, options: str = "", screensh
         key = logins.session_key(_subject(state).id, _browser_scope(state)[0])
         if not b.has(key):
             return "ERROR: no page is open. browser_open the page first, or call with screenshot false."
+        if not popup_ok:
+            # A popup over the page hides what the person should see (2026-11-18: the seat map behind District's
+            # "Continue booking" popup, sent again and again). Clear it first, unless the popup is the point.
+            try:
+                covered = b.call(b.popup, key)
+            except Exception:  # noqa: BLE001 - can't tell: take the picture anyway
+                covered = ""
+            if covered:
+                return ("NOT SENT: " + covered + " Close it or use its buttons, then call show_person again. Only if "
+                        "the popup itself is what the person must see (a CAPTCHA, a question only they can answer), "
+                        "call show_person with popup_ok true.")
         try:
             picture, _url, _title = b.call(b.screen, key)
         except Exception as e:  # noqa: BLE001
@@ -2939,7 +2951,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                    "when you need them: a CAPTCHA or sign-in page (they can't solve it from WhatsApp: offer what "
                    "else to do), a choice only they can make (seats, a showtime, a size), or to confirm a product "
                    "or a filled form before you go on. Then stop: their reply is their next message. screenshot "
-                   "false sends only the question.",
+                   "false sends only the question. If a popup covers the page it isn't sent: close the popup first "
+                   "(popup_ok true only when the popup itself is what they must see).",
     "browser_open": "Open a URL in a real browser (runs JavaScript, keeps cookies for this task). "
                     "Shows the page text and numbered controls.",
     "browser_read": "Show the current browser page again with its numbered controls.",

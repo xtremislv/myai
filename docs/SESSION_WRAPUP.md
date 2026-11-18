@@ -63,6 +63,11 @@ this file, this file is right.
   supervisor; WhatsApp bookings run as the single agent. Replayed on the real request: never stuck.
   `RESCUE_ENABLED=false` on the server until the owner turns it back on. No way to cancel one running request except
   a gateway restart.
+- **Popups and work purchases (2026-11-18, late):** District's "Introducing Best Seats" popup (blurred page, an × and
+  "Continue booking" as plain divs) hid the seat map and the agent kept sending screenshots of it: popups are now
+  detected and reported first with clickable controls, screenshots wait until they're gone, and popup steps are safe
+  clicks. A personal WhatsApp movie booking had gone to the Accounts inbox (department task 1ba47072…, kind service):
+  purchases now go to Accounts only when the person said they're for work (`guards.says_work`).
 - **Prepaid credit alerts (2026-11-17):** `app/llm/credit.py`, `scripts/llm_credit.py`; balance set to $49.43 on
   2026-11-17 ($50 top-up minus $0.57 already spent). Reset it after every top-up. See CLAUDE_CODE_SERVER.md.
 - **Scouts paused (owner, 2026-11-17):** all three `enabled=false`; resume from the Scouts page.
