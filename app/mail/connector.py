@@ -15,11 +15,16 @@ from __future__ import annotations
 import datetime as dt
 import email
 import email.policy
+import hashlib
 import imaplib
 import json
 import re
 import smtplib
 import ssl
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import make_msgid, parseaddr
@@ -27,8 +32,13 @@ from email.utils import make_msgid, parseaddr
 from app.browsing import extract
 
 TIMEOUT = 60  # seconds per network read: a big mailbox search or message can take a while
-# A summary reads at most this much of each email: the text comes first, attachments after it.
-SUMMARY_FETCH_BYTES = 256 * 1024
+# A summary reads at most this much of each email: the text comes first, attachments after it, and
+# only ~3,000 characters of the text are used. (256 KB pulled attachments too: ~1 s per email.)
+SUMMARY_FETCH_BYTES = 64 * 1024
+# A signed-in IMAP connection is kept this long after use, so the next call (the agent's next tool
+# round, or the next message) skips TLS and the login. Servers drop idle sessions after ~30 minutes.
+IDLE_SECONDS = 120
+POOL_PER_MAILBOX = 2
 _ADDR = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 
 
@@ -110,6 +120,92 @@ def _imap(cfg: MailConfig) -> imaplib.IMAP4_SSL:
             pass
         raise
     return conn
+
+
+_pool: dict[tuple, list[tuple[imaplib.IMAP4, float]]] = {}
+_pool_lock = threading.Lock()
+
+
+def _pool_key(cfg: MailConfig) -> tuple:
+    # The credentials are part of the key: a changed password or new sign-in never reuses the old session.
+    secret = cfg.password or json.dumps(cfg.oauth or {}, sort_keys=True, default=str)
+    return (cfg.imap_host, cfg.imap_port, cfg.username, cfg.oauth_provider,
+            hashlib.sha256(secret.encode()).hexdigest())
+
+
+def _close(conn) -> None:
+    try:
+        conn.logout()
+    except Exception:  # noqa: BLE001 - already gone
+        try:
+            conn.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@contextmanager
+def _session(cfg: MailConfig) -> Iterator[imaplib.IMAP4]:
+    """A signed-in connection: an idle one from the last two minutes when it still answers, else a
+    new one. Given back after a clean run, closed after an error (its state is unknown)."""
+    key, now = _pool_key(cfg), time.monotonic()
+    conn, stale = None, []
+    with _pool_lock:
+        for k in list(_pool):
+            fresh = [(c, t) for c, t in _pool[k] if now - t < IDLE_SECONDS]
+            stale += [c for c, t in _pool[k] if now - t >= IDLE_SECONDS]
+            if fresh:
+                _pool[k] = fresh
+            else:
+                del _pool[k]
+        if _pool.get(key):
+            conn = _pool[key].pop()[0]
+    for old in stale:
+        _close(old)
+    if conn is not None:
+        try:
+            if conn.noop()[0] != "OK":
+                raise imaplib.IMAP4.error("noop")
+        except Exception:  # noqa: BLE001 - dropped by the server: sign in again
+            _close(conn)
+            conn = None
+    if conn is None:
+        conn = _imap(cfg)
+    try:
+        yield conn
+    except BaseException:
+        _close(conn)
+        raise
+    if not isinstance(conn, imaplib.IMAP4):  # a test double: never kept between calls
+        _close(conn)
+        return
+    with _pool_lock:
+        idle = _pool.setdefault(key, [])
+        extra = conn if len(idle) >= POOL_PER_MAILBOX else None
+        if extra is None:
+            idle.append((conn, time.monotonic()))
+    if extra is not None:
+        _close(extra)
+
+
+def _fetched(rows) -> Iterator[tuple[bytes, bytes, bytes]]:
+    """(uid, response items, message bytes) per email of a FETCH reply. Servers may put UID or FLAGS
+    after the message literal, in the plain bytes element that follows it."""
+    pending: list = []
+
+    def done():
+        if pending:
+            meta, raw, tail = pending
+            uid = re.search(rb"UID (\d+)", meta + b" " + tail)
+            if uid:
+                yield uid.group(1), meta + b" " + tail, raw
+
+    for row in rows or []:
+        if isinstance(row, tuple) and len(row) >= 2:
+            yield from done()
+            pending = [row[0], row[1], b""]
+        elif isinstance(row, bytes) and pending:
+            pending[2] += row
+    yield from done()
 
 
 def _xoauth2(cfg: MailConfig) -> str:
@@ -288,8 +384,7 @@ def list_messages(cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_o
     no folder given looks through every folder (the archive folder) when the server has one.
     hours > 0: only emails received in that many past hours (exact count, every folder on Gmail)."""
     after = since_hours(hours)
-    conn = _imap(cfg)
-    try:
+    with _session(cfg) as conn:
         folder = _folder(box)
         prefix = ""
         gmail = "X-GM-EXT-1" in getattr(conn, "capabilities", ())
@@ -342,8 +437,6 @@ def list_messages(cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_o
         if last < total:
             head += f" {total - last} more: call again with page={page + 1} to see them."
         return "\n".join([head, *(found[u] for u in shown if u in found)])
-    finally:
-        conn.logout()
 
 
 def _select(conn, box: str, query: str) -> tuple[str, str]:
@@ -366,8 +459,7 @@ def search_all(cfg: MailConfig, box: str, query: str, limit: int, body_bytes: in
     """(total matches, up to `limit` newest matching emails), on one connection. Each email is
     {"id", "message_id", "from", "from_email", "subject", "date", "unread", "attachments", "body"};
     with body_bytes 0 only the headers are fetched (fast), else the first body_bytes of each."""
-    conn = _imap(cfg)
-    try:
+    with _session(cfg) as conn:
         _, prefix = _select(conn, box, query)
         uids = _search(conn, ["ALL"], query)[::-1]
         total = len(uids)
@@ -387,8 +479,6 @@ def search_all(cfg: MailConfig, box: str, query: str, limit: int, body_bytes: in
             if progress:
                 progress(min(start + FETCH_CHUNK, len(wanted)), len(wanted))
         return total, [found[u] for u in wanted if u in found]
-    finally:
-        conn.logout()
 
 
 def _summary_of(mail_id: str, meta: bytes, raw: bytes, with_body: bool) -> dict:
@@ -421,26 +511,60 @@ def _body(msg) -> str:
     return content
 
 
+MAX_OPEN = 10  # emails one open_mail call reads
+
+
+def _format_open(msg, max_chars: int) -> str:
+    files = [p.get_filename() for p in msg.iter_attachments() if p.get_filename()]
+    head = "\n".join(
+        f"{h}: {_header(msg, h)}" for h in ("From", "To", "Cc", "Date", "Subject", "Message-ID") if msg.get(h)
+    )
+    return (
+        head + (f"\nAttachments: {', '.join(files)}" if files else "")
+        + "\n\n" + extract.clip(_body(msg).strip(), max_chars)
+    )
+
+
 def read_message(cfg: MailConfig, message_id: str, box: str = "inbox", max_chars: int = 12_000) -> str:
-    conn = _imap(cfg)
-    try:
-        folder, uid = _target(conn, message_id, box)
-        conn.select(_quote(folder) if " " in folder else folder, readonly=True)
-        _, rows = conn.uid("FETCH", uid, "(BODY.PEEK[])")
-        raw = next((r[1] for r in rows if isinstance(r, tuple)), None)
-        if raw is None:
-            return f"ERROR: no message with id {message_id}"
-        msg = email.message_from_bytes(raw, policy=email.policy.default)
-        files = [p.get_filename() for p in msg.iter_attachments() if p.get_filename()]
-        head = "\n".join(
-            f"{h}: {_header(msg, h)}" for h in ("From", "To", "Cc", "Date", "Subject", "Message-ID") if msg.get(h)
-        )
-        return (
-            head + (f"\nAttachments: {', '.join(files)}" if files else "")
-            + "\n\n" + extract.clip(_body(msg).strip(), max_chars)
-        )
-    finally:
-        conn.logout()
+    return read_messages(cfg, [message_id], box, max_chars)
+
+
+def read_messages(cfg: MailConfig, message_ids: list[str], box: str = "inbox", max_chars: int = 12_000) -> str:
+    """Several emails in full on one connection, one FETCH per folder. One id: the email alone;
+    several: each under an "=== email <id> ===" line, in the order asked."""
+    ids = list(dict.fromkeys(str(m).strip() for m in message_ids if str(m).strip()))[:MAX_OPEN]
+    if not ids:
+        return "ERROR: no email id given"
+    with _session(cfg) as conn:
+        archive = _all_mail(conn) if any(i.lower().startswith(ALL_PREFIX) for i in ids) else None
+        by_folder: dict[str, list[tuple[str, str]]] = {}
+        texts: dict[str, str] = {}
+        for mail_id in ids:
+            try:
+                if mail_id.lower().startswith(ALL_PREFIX):
+                    folder, uid = archive or _folder(box), str(int(mail_id[len(ALL_PREFIX):]))
+                else:
+                    folder, uid = _folder(box), str(int(mail_id))
+            except ValueError:
+                texts[mail_id] = f"ERROR: '{mail_id}' is not an email id"
+                continue
+            by_folder.setdefault(folder, []).append((mail_id, uid))
+        for folder, wanted in by_folder.items():
+            conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+            _, rows = conn.uid("FETCH", ",".join(uid for _, uid in wanted), "(UID BODY.PEEK[])")
+            raw_of = {uid.decode(): raw for uid, _, raw in _fetched(rows)}
+            if len(wanted) == 1 and not raw_of:  # a server that leaves UID out of a one-email reply
+                raw_of = {wanted[0][1]: next((r[1] for r in rows or [] if isinstance(r, tuple)), None)}
+            for mail_id, uid in wanted:
+                raw = raw_of.get(uid)
+                if raw is None:
+                    texts[mail_id] = f"ERROR: no message with id {mail_id}"
+                    continue
+                msg = email.message_from_bytes(raw, policy=email.policy.default)
+                texts[mail_id] = _format_open(msg, max_chars)
+    if len(ids) == 1:
+        return texts[ids[0]]
+    return "\n\n".join(f"=== email {i} ===\n{texts[i]}" for i in ids)
 
 
 def fetch_messages(
@@ -449,8 +573,7 @@ def fetch_messages(
 ) -> list[dict]:
     """The newest messages with their text, without marking them read. Each is
     {"id", "message_id", "from", "subject", "date", "unread", "attachments", "body"}."""
-    conn = _imap(cfg)
-    try:
+    with _session(cfg) as conn:
         after = since_hours(hours)
         gmail = "X-GM-EXT-1" in getattr(conn, "capabilities", ())
         folder, prefix = _folder(box), ""
@@ -469,32 +592,18 @@ def fetch_messages(
         else:
             found = _search(conn, criteria, query)
         uids = found[-max(1, min(limit, MAX_SUMMARY)):][::-1]
-        out = []
-        for uid in uids:
-            _, rows = conn.uid("FETCH", uid, f"(UID FLAGS BODY.PEEK[]<0.{SUMMARY_FETCH_BYTES}>)")
-            for row in rows:
-                if not isinstance(row, tuple):
+        # All of them in one FETCH per 50 (one email per FETCH was a server round trip each: 40-60 s for 40).
+        got: dict[bytes, dict] = {}
+        for start in range(0, len(uids), FETCH_CHUNK):
+            chunk = uids[start:start + FETCH_CHUNK]
+            _, rows = conn.uid("FETCH", b",".join(chunk), f"(UID FLAGS BODY.PEEK[]<0.{SUMMARY_FETCH_BYTES}>)")
+            for uid, meta, raw in _fetched(rows):
+                if uid in got:
                     continue
-                meta, raw = row
-                msg = email.message_from_bytes(raw, policy=email.policy.default)
-                try:
-                    body = _body(msg).strip()
-                except Exception:  # noqa: BLE001 - an odd encoding must not stop the rest
-                    body = ""
-                out.append({
-                    "id": prefix + uid.decode(),
-                    "message_id": _header(msg, "Message-ID"),
-                    "from": _header(msg, "From"),
-                    "subject": _header(msg, "Subject") or "(no subject)",
-                    "date": _header(msg, "Date"),
-                    "unread": b"\\Seen" not in meta,
-                    "attachments": [p.get_filename() for p in msg.iter_attachments() if p.get_filename()],
-                    "body": extract.clip(" ".join(body.split()), body_chars),
-                })
-                break
-        return out
-    finally:
-        conn.logout()
+                mail = _summary_of(prefix + uid.decode(), meta, raw, True)
+                mail["body"] = extract.clip(mail["body"], body_chars)
+                got[uid] = mail
+        return [got[u] for u in uids if u in got]
 
 
 def check_login(cfg: MailConfig) -> None:
@@ -510,15 +619,12 @@ def set_flag(cfg: MailConfig, message_id: str, action: str, box: str = "inbox") 
              "flag": ("+FLAGS", "\\Flagged"), "unflag": ("-FLAGS", "\\Flagged")}
     if action not in flags:
         return f"ERROR: action must be one of {', '.join(flags)}"
-    conn = _imap(cfg)
-    try:
+    with _session(cfg) as conn:
         folder, uid = _target(conn, message_id, box)
         conn.select(_quote(folder) if " " in folder else folder)
         op, flag = flags[action]
         status, _ = conn.uid("STORE", uid, op, flag)
         return f"Marked message {message_id} as {action}." if status == "OK" else f"ERROR: could not mark {message_id}"
-    finally:
-        conn.logout()
 
 
 def valid_recipients(to: str) -> list[str]:

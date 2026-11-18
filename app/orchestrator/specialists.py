@@ -157,8 +157,8 @@ SPECIALISTS: dict[str, Specialist] = {
             max_rounds=8,
             prompt=(
                 "You are the MAIL specialist. To see what is in a mailbox, use summarize_mail (it reads "
-                "the emails for you); open single messages with open_mail when you need the exact "
-                "words. To find every email on a topic, use search_mail and keep calling it with the "
+                "the emails for you); open messages with open_mail only when you need the exact "
+                "words, several ids in one call. To find every email on a topic, use search_mail and keep calling it with the "
                 "next page until it says there are no more, then report how many there are; "
                 "summarize_mail with query reads up to 40 of them for you. To say HOW MANY emails "
                 "arrived in a period ('today', 'in the last 3 hours'), call read_mail with hours set, "

@@ -302,7 +302,13 @@ def open_mail(state: dict[str, Any], message_id: str, category: str = "", folder
     cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
-    return untrusted(f"an email in the {category} mailbox", _mail_call(connector.read_message, cfg, message_id, folder or "inbox"))
+    ids = [i for i in re.split(r"[\s,;]+", str(message_id)) if i][:connector.MAX_OPEN]
+    if len(ids) > 1:
+        each = max(4_000, 40_000 // len(ids))  # several at once share about 40k characters
+        return untrusted(f"{len(ids)} emails in the {category} mailbox",
+                         _mail_call(connector.read_messages, cfg, ids, folder or "inbox", each))
+    return untrusted(f"an email in the {category} mailbox",
+                     _mail_call(connector.read_message, cfg, ids[0] if ids else "", folder or "inbox"))
 
 
 def mark_mail(
@@ -360,7 +366,7 @@ def summarize_mail(
         from app.orchestrator.progress import step
 
         step(f"Reading {len(messages)} emails")
-        text = summary.render(summary.analyse(messages, progress=step))
+        text = summary.render(summary.analyse(messages, progress=step, on_batch=summary.early_notes(step)))
         if len(messages) >= max(1, min(int(count), connector.MAX_SUMMARY)):
             text += ("\n\nThese are only the newest {n}. If the person wants all of them, or a table or sheet, "
                      "call mail_to_sheet (every matching email, in the background).").format(n=len(messages))
@@ -2694,8 +2700,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
                    "the next page until you have them all before answering. folder: only to limit the "
                    "search to one folder; which mailbox is category. hours: only emails received in "
                    "that many past hours (Gmail's newer_than: has no hours, so use this instead).",
-    "open_mail": "Read one email in full by the id exactly as read_mail or search_mail showed it "
-                 "(ids like all-123 are from the archive search).",
+    "open_mail": "Read emails in full by the ids exactly as read_mail or search_mail showed them "
+                 "(ids like all-123 are from the archive search). Several at once: message_id \"12, 15, all-30\" "
+                 "(up to 10 in one call); never open emails one call at a time. To learn what several emails "
+                 "say, use summarize_mail instead (with query or hours to pick them): it is much faster.",
     "mark_mail": "Mark an email by id: action read, unread, flag or unflag.",
     "send_mail": "Send an email (or a reply: in_reply_to is the original's Message-ID). Call it with the "
                  "final text when asked to send: the app shows the exact email for confirmation "

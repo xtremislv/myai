@@ -69,14 +69,17 @@ def _parse(reply: str, batch: list[dict]) -> list[dict[str, Any]]:
     return out
 
 
-PARALLEL = 4  # batches read at once (vLLM serves them together)
+# Batches read at once: all of a 40-email summary (MAX_SUMMARY / BATCH) in one round. Small batches
+# in parallel beat big ones: a call's time is mostly its output, ~130 tokens per email.
+PARALLEL = 10
 
 
 def analyse(messages: list[dict], chat=None, progress=None, *, batch_size: int = BATCH,
-            parallel: int = PARALLEL) -> list[dict[str, Any]]:
-    """Each email's gist, action, deadline and kind. A batch the model fails on keeps its
-    emails with their opening lines, rather than failing the whole summary."""
-    from concurrent.futures import ThreadPoolExecutor
+            parallel: int = PARALLEL, on_batch=None) -> list[dict[str, Any]]:
+    """Each email's gist, action, deadline and kind, in the order given. A batch the model fails on
+    keeps its emails with their opening lines, rather than failing the whole summary.
+    on_batch(items) gets each batch's results as soon as it is read, fastest first."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     chat = chat or llm.chat
     batches = [messages[i:i + batch_size] for i in range(0, len(messages), batch_size)]
@@ -97,15 +100,43 @@ def analyse(messages: list[dict], chat=None, progress=None, *, batch_size: int =
 
     import contextvars
 
-    items: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=parallel) as pool:
+    results: dict[int, list[dict[str, Any]]] = {}
+    read = 0
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
         # Each worker runs in a copy of this context, so a background job's calls stay background.
-        futures = [pool.submit(contextvars.copy_context().run, one, b) for b in batches]
-        for done, got in enumerate((f.result() for f in futures), 1):
-            items.extend(got)
+        futures = {pool.submit(contextvars.copy_context().run, one, b): n for n, b in enumerate(batches)}
+        for future in as_completed(futures):
+            got = future.result()
+            results[futures[future]] = got
+            read += len(got)
+            if on_batch:
+                try:
+                    on_batch(got)
+                except Exception:  # noqa: BLE001 - showing early results must never lose the summary
+                    logger.warning("mail summary: on_batch failed")
             if progress and len(batches) > 1:
-                progress(f"Read {min(done * batch_size, len(messages))} of {len(messages)} emails")
-    return items
+                progress(f"Read {read} of {len(messages)} emails")
+    return [item for n in range(len(batches)) for item in results[n]]
+
+
+EARLY_MAX = 8  # urgent / to-do emails shown as steps while the rest are still being read
+
+
+def early_notes(step, limit: int = EARLY_MAX):
+    """An on_batch for analyse: each urgent or actionable email as a progress step ("Urgent: ...")
+    the moment its batch is read, so the person sees what matters before the full answer."""
+    shown = [0]
+
+    def note(items: list[dict[str, Any]]) -> None:
+        for i in sorted(items, key=lambda i: (not i["urgent"], not i["action"])):
+            if shown[0] >= limit or not (i["urgent"] or i["action"]):
+                return
+            shown[0] += 1
+            sender = re.sub(r"\s*<[^>]*>", "", i["from"]).strip('" ') or i["from"]
+            what = i["action"] or i["gist"]
+            when = f" (by {i['deadline']})" if i["deadline"] else ""
+            step(f"{'Urgent' if i['urgent'] else 'To do'}: {i['subject'][:70]} from {sender[:40]}: {what[:110]}{when}")
+    return note
 
 
 def render(items: list[dict[str, Any]], *, heading: str = "") -> str:
