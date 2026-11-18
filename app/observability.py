@@ -7,6 +7,7 @@ content: private chats are not to be readable there.
 from __future__ import annotations
 
 import logging
+import re
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
@@ -74,7 +75,34 @@ host_disk_free_ratio.labels(mount="/").set_function(lambda: _free_ratio("/"))
 tracer = trace.get_tracer(_settings.otel_service_name)
 
 
+# Query-string values that must never reach a log: Meta's webhook verify token (sent as
+# hub.verify_token or hub_verify_token), OAuth codes/states and anything named like a token or key.
+_SECRET_QUERY = re.compile(
+    r"([?&](?:hub[._]verify_token|[\w.]*(?:token|secret|password|api_key|apikey)|code|state)=)[^&\s]*",
+    re.IGNORECASE,
+)
+
+
+def redact_query(text: str) -> str:
+    return _SECRET_QUERY.sub(r"\1***", text)
+
+
+class RedactQueryFilter(logging.Filter):
+    """Masks secret query values in uvicorn's access log line ("%s - %s %s HTTP/%s %d", path is args[2])."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            record.args = (*args[:2], redact_query(args[2]), *args[3:])
+        elif isinstance(record.msg, str) and "?" in record.msg:
+            record.msg = redact_query(record.msg)
+        return True
+
+
 def setup_logging() -> None:
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, RedactQueryFilter) for f in access.filters):
+        access.addFilter(RedactQueryFilter())
     handler = logging.StreamHandler()
     handler.setFormatter(
         jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
