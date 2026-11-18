@@ -37,6 +37,13 @@ this file, this file is right.
   Now this turn's results stay whole (up to 80k characters), the stamp is split the same way every round and fixed
   per turn (`clock.turn_stamp`). Still open: a different tool-group mix between messages (toolsel) changes the
   tools at the very start, so the next message's first call misses everything; options in the 2026-11-18 session.
+- **Security audit (2026-11-18):** fixed: IMAP command injection through line breaks in folder/search (mail tools),
+  /metrics was public on port 9100 (now 127.0.0.1), no limit on wrong passwords (login, phone login, recovery,
+  change-password, recovery-code, wallet reveal: `app/auth/attempts.py`) and timing showed which usernames exist,
+  WhatsApp link codes now used up after 5 wrong tries, quadratic WhatsApp link regex, chat messages capped at
+  200k characters, `/v1/*` no-store (and `/r/` really no-store), JWT algorithm allowlist. Not done (owner's call):
+  username normalisation; SSH (root password login, firewall off: the owner said leave E2E ports alone); Cloudflare
+  rate-limit rule and HSTS; rotating the WhatsApp verify token.
 - **Prepaid credit alerts (2026-11-17):** `app/llm/credit.py`, `scripts/llm_credit.py`; balance set to $49.43 on
   2026-11-17 ($50 top-up minus $0.57 already spent). Reset it after every top-up. See CLAUDE_CODE_SERVER.md.
 - **Scouts paused (owner, 2026-11-17):** all three `enabled=false`; resume from the Scouts page.

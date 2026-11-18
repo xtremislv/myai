@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     # A separate port that is never published, so metrics can't be reached from the internet.
     metrics_port: int = 9100
+    # Where /metrics listens. Localhost: Prometheus scrapes it on this server, and the internet must
+    # not (it showed the month's spend on port 9100 to anyone: security audit 2026-11-18). Docker
+    # sets 0.0.0.0, inside its own network, where the port is never published.
+    metrics_host: str = "127.0.0.1"
 
     # --- Ops alerts: Prometheus posts to /v1/ops/alerts/api/v2/alerts with this bearer token ---
     alert_webhook_token: str = ""
@@ -142,6 +146,7 @@ def get_settings() -> Settings:
 # Values shipped in code or in .env.example: public, so never valid as secrets.
 _PUBLIC_JWT_SECRETS = {"change-me-in-prod", "please-change-this-to-a-long-random-string"}
 _MIN_JWT_SECRET_LENGTH = 32
+_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
 
 
 def secret_problems(settings: Settings) -> list[str]:
@@ -153,6 +158,10 @@ def secret_problems(settings: Settings) -> list[str]:
             f"JWT_SECRET must be a private random string of at least {_MIN_JWT_SECRET_LENGTH} "
             "characters: with a known secret, anyone can forge an admin token"
         )
+
+    if settings.jwt_algorithm not in _JWT_ALGORITHMS:
+        problems.append(f"JWT_ALGORITHM must be one of {', '.join(sorted(_JWT_ALGORITHMS))} (tokens are signed "
+                        "with the shared JWT_SECRET; 'none' or a public-key algorithm would let tokens be forged)")
 
     try:
         key_length = len(base64.b64decode(settings.vault_master_key, validate=True))

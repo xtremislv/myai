@@ -27,6 +27,16 @@ def fresh_settings():
 
 
 @pytest.fixture(autouse=True)
+def local_attempt_counts(monkeypatch):
+    """No Redis in tests, and a fresh count of wrong passwords for each test."""
+    from app.auth import attempts
+
+    store = attempts.FailoverCounts(attempts.InMemoryCounts(), attempts.InMemoryCounts())
+    monkeypatch.setattr(attempts, "counts", lambda: store)
+    return store
+
+
+@pytest.fixture(autouse=True)
 def local_concurrency_limits(monkeypatch):
     """No Redis in tests."""
     limiter = concurrency.ConcurrencyLimiter(concurrency.InMemorySlots())

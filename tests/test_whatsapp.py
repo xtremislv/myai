@@ -466,3 +466,17 @@ def test_an_api_without_typing_indicators_still_gets_the_read_receipt(db, sent):
         MEDIA.update(no_typing=False)
     reads = [m for m in sent if m.get("status") == "read"]
     assert reads == [{"messaging_product": "whatsapp", "status": "read", "message_id": "wamid.1"}]
+
+
+def test_five_wrong_codes_use_up_the_pending_code(db):
+    """Security audit 2026-11-18: a 6-digit code could be guessed for its whole 15 minutes."""
+    with db() as s:
+        code = links.start(s, "u1", PHONE)
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(links.CODE_TRIES):
+            assert links.confirm(s, PHONE, wrong) is None
+        assert links.get(s, "u1").code_hash is None                   # used up
+        assert links.confirm(s, PHONE, code) is None                  # even the right one now
+        code = links.start(s, "u1", PHONE)                            # a new code gets new tries
+        assert links.confirm(s, PHONE, wrong) is None
+        assert links.confirm(s, PHONE, code).phone == PHONE

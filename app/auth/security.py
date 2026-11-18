@@ -24,6 +24,21 @@ def verify_password(raw: str, hashed: str) -> bool:
     return bcrypt.checkpw(raw.encode()[:_BCRYPT_MAX_BYTES], hashed.encode())
 
 
+_dummy_hash: str | None = None
+
+
+def password_matches(user, raw: str) -> bool:
+    """verify_password for a user who may not exist: a missing user still costs one bcrypt check,
+    so the answer's timing doesn't tell which usernames exist (security audit 2026-11-18)."""
+    global _dummy_hash
+    if user is None:
+        if _dummy_hash is None:
+            _dummy_hash = hash_password(uuid.uuid4().hex)
+        verify_password(raw, _dummy_hash)
+        return False
+    return verify_password(raw, user.password_hash)
+
+
 def issue_token(user_id: str, username: str, roles: list[str], chat_key: bytes | None = None, *,
                 version: int = 0, auth_time: int | None = None) -> str:
     """`version` is the user's session_version (see check_session). `auth_time` is when the password
@@ -44,7 +59,14 @@ def issue_token(user_id: str, username: str, roles: list[str], chat_key: bytes |
     return jwt.encode(payload, _settings.jwt_secret, algorithm=_settings.jwt_algorithm)
 
 
+# Only shared-secret algorithms: the header's "alg" is never trusted, and a setting of "none" or a
+# public-key algorithm is refused here as well as at boot (config.secret_problems).
+_HMAC_ALGORITHMS = ("HS256", "HS384", "HS512")
+
+
 def decode_token(token: str) -> dict:
+    if _settings.jwt_algorithm not in _HMAC_ALGORITHMS:
+        raise jwt.InvalidAlgorithmError(f"JWT_ALGORITHM {_settings.jwt_algorithm!r} is not allowed")
     return jwt.decode(token, _settings.jwt_secret, algorithms=[_settings.jwt_algorithm])
 
 

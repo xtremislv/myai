@@ -13,7 +13,9 @@ PREVIEW_CHARS = 900
 _TABLE_RULE = re.compile(r"^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$", re.M)
 _HEADING = re.compile(r"^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$", re.M)
 _BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.S)
-_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
+# Link text never holds "[": with it, a long run of "[" made each match scan to the end of the text
+# (quadratic: 48k characters took 11 s; security audit 2026-11-18).
+_LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^)\s]+)\)")
 _BULLET = re.compile(r"^([ \t]*)[*+][ \t]+", re.M)
 _RULE = re.compile(r"^[ \t]*([-*_])[ \t]*(\1[ \t]*){2,}$", re.M)
 

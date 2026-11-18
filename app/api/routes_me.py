@@ -8,7 +8,17 @@ from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Cookie,
+    Depends,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -695,15 +705,18 @@ def delete_wallet(item_id: str, subject: Subject = Depends(current_subject), ses
 
 
 @router.post("/me/wallet/{item_id}/reveal")
-def reveal_wallet(item_id: str, body: RevealIn, subject: Subject = Depends(current_subject),
+def reveal_wallet(item_id: str, body: RevealIn, request: Request, subject: Subject = Depends(current_subject),
                   key: bytes = Depends(chat_key), session: Session = Depends(get_session)) -> dict:
-    """The whole saved detail, after the person types their account password again."""
+    """The whole saved detail, after the person types their account password again (limited like
+    sign-in, so a stolen session can't guess it)."""
     from app import wallet
+    from app.auth import attempts
     from app.auth.security import verify_password
 
     user = _user(session, subject)
-    if not verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "wrong password")
+    with attempts.guarded("reauth", subject.id, request, wrong=(403,)):
+        if not verify_password(body.password, user.password_hash):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "wrong password")
     try:
         kind, data = wallet.get(session, key, subject.id, item_id)
     except wallet.WalletError as e:

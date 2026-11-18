@@ -148,7 +148,13 @@ async def ui_security_headers(request: Request, call_next):
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-cache"
+        # A route's own choice stands: the /r/ result page is no-store (it was overwritten to no-cache).
+        response.headers.setdefault("Cache-Control", "no-cache")
+    elif request.url.path.startswith("/v1/"):
+        # API answers are a person's data: no cache (Cloudflare, a proxy, the browser) may keep them, and
+        # one person's answer can never be served to another (security audit 2026-11-18). Routes that
+        # set their own (the published APK, the chat stream) keep it.
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 

@@ -6,16 +6,18 @@ import time
 import uuid
 
 from cryptography.exceptions import InvalidTag
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.acl.models import Subject
 from app.api.deps import current_subject, require_admin
+from app.auth import attempts
 from app.auth.security import (
     auth_time,
     end_sessions,
     hash_password,
+    password_matches,
     session_current,
     token_for,
     verify_password,
@@ -175,33 +177,40 @@ def end_session(
 
 
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, response: Response, session: Session = Depends(get_session)) -> TokenOut:
-    user = session.query(User).filter(User.username == body.username).one_or_none()
-    if user is None or not verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
-    if user.disabled:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
-    if user.wrapped_chat_key is None:
-        return _keep_session(response, TokenOut(
-            access_token=token_for(user), must_change_password=True
-        ))
-    try:
-        chat_key = user_keys.unlock(user, body.password)
-    except InvalidTag as e:  # bcrypt only checks 72 bytes; the key needs the whole password
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
-    return _keep_session(response, TokenOut(access_token=token_for(user, chat_key)))
+def login(body: LoginIn, response: Response, request: Request, session: Session = Depends(get_session)) -> TokenOut:
+    with attempts.guarded("login", body.username, request):
+        user = session.query(User).filter(User.username == body.username).one_or_none()
+        if not password_matches(user, body.password):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+        if user.disabled:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
+        if user.wrapped_chat_key is None:
+            return _keep_session(response, TokenOut(
+                access_token=token_for(user), must_change_password=True
+            ))
+        try:
+            chat_key = user_keys.unlock(user, body.password)
+        except InvalidTag as e:  # bcrypt only checks 72 bytes; the key needs the whole password
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
+        return _keep_session(response, TokenOut(access_token=token_for(user, chat_key)))
 
 
 @router.post("/change-password", response_model=TokenOut)
 def change_password(
     body: ChangePasswordIn,
     response: Response,
+    request: Request,
     subject: Subject = Depends(current_subject),
     session: Session = Depends(get_session),
 ) -> TokenOut:
-    user = session.get(User, subject.id)
-    if user is None or not verify_password(body.old_password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+    with attempts.guarded("reauth", subject.id, request):
+        user = session.get(User, subject.id)
+        if not password_matches(user, body.old_password):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+    return _change_password(body, response, user, session)
+
+
+def _change_password(body: ChangePasswordIn, response: Response, user: User, session: Session) -> TokenOut:
     if body.new_password == body.old_password:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "new password must be different")
     recovery_code = None
@@ -224,17 +233,19 @@ def change_password(
 
 
 @router.post("/recover", response_model=TokenOut)
-def recover(body: RecoverIn, response: Response, session: Session = Depends(get_session)) -> TokenOut:
+def recover(body: RecoverIn, response: Response, request: Request, session: Session = Depends(get_session)) -> TokenOut:
     """Set a new password with a recovery code. The code is used up: a new one is issued."""
-    user = session.query(User).filter(User.username == body.username).one_or_none()
-    if user is None or user.wrapped_recovery_key is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad username or recovery code")
-    if user.disabled:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
-    try:
-        chat_key = user_keys.unlock_with_recovery_code(user, body.recovery_code)
-    except InvalidTag as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad username or recovery code") from e
+    with attempts.guarded("login", body.username, request):
+        user = session.query(User).filter(User.username == body.username).one_or_none()
+        if user is None or user.wrapped_recovery_key is None:
+            user_keys.dummy_unlock(body.recovery_code)  # same work as a real check: no hint the user exists
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad username or recovery code")
+        if user.disabled:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
+        try:
+            chat_key = user_keys.unlock_with_recovery_code(user, body.recovery_code)
+        except InvalidTag as e:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad username or recovery code") from e
     user_keys.wrap_with_password(user, body.new_password, chat_key)
     new_code = user_keys.add_recovery_code(user, chat_key)
     user.password_hash = hash_password(body.new_password)
@@ -250,17 +261,19 @@ def recover(body: RecoverIn, response: Response, session: Session = Depends(get_
 @router.post("/recovery-code", response_model=RecoveryCodeOut)
 def new_recovery_code(
     body: PasswordIn,
+    request: Request,
     subject: Subject = Depends(current_subject),
     session: Session = Depends(get_session),
 ) -> RecoveryCodeOut:
     """Replace the recovery code, for a user who lost it but still has their password."""
-    user = session.get(User, subject.id)
-    if user is None or user.wrapped_chat_key is None or not verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
-    try:
-        chat_key = user_keys.unlock(user, body.password)
-    except InvalidTag as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
+    with attempts.guarded("reauth", subject.id, request):
+        user = session.get(User, subject.id)
+        if user is None or user.wrapped_chat_key is None or not verify_password(body.password, user.password_hash):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+        try:
+            chat_key = user_keys.unlock(user, body.password)
+        except InvalidTag as e:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
     code = user_keys.add_recovery_code(user, chat_key)
     session.commit()
     return RecoveryCodeOut(recovery_code=code)

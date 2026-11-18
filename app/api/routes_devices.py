@@ -18,7 +18,7 @@ import time
 from typing import Literal
 
 from cryptography.exceptions import InvalidTag
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 from app import app_release, devices, push
 from app.acl.models import Subject
 from app.api.deps import checked_claims, current_subject
-from app.auth.security import token_for, verify_password
+from app.auth import attempts
+from app.auth.security import password_matches, token_for
 from app.config import get_settings
 from app.db.session import User, get_session
 from app.vault import user_keys
@@ -124,19 +125,20 @@ def _optional_chat_key(checked: tuple[dict, Subject] = Depends(checked_claims)) 
 
 
 @router.post("/v1/auth/device/login", response_model=DeviceTokenOut)
-def device_login(body: DeviceLoginIn, session: Session = Depends(get_session)) -> DeviceTokenOut:
-    """Sign a phone in with username and password. Same checks as /v1/auth/login."""
-    user = session.query(User).filter(User.username == body.username).one_or_none()
-    if user is None or not verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
-    if user.disabled:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
-    chat_key = None
-    if user.wrapped_chat_key is not None:
-        try:
-            chat_key = user_keys.unlock(user, body.password)
-        except InvalidTag as e:  # bcrypt only checks 72 bytes; the key needs the whole password
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
+def device_login(body: DeviceLoginIn, request: Request, session: Session = Depends(get_session)) -> DeviceTokenOut:
+    """Sign a phone in with username and password. Same checks (and attempt limits) as /v1/auth/login."""
+    with attempts.guarded("login", body.username, request):
+        user = session.query(User).filter(User.username == body.username).one_or_none()
+        if not password_matches(user, body.password):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+        if user.disabled:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "this account is disabled")
+        chat_key = None
+        if user.wrapped_chat_key is not None:
+            try:
+                chat_key = user_keys.unlock(user, body.password)
+            except InvalidTag as e:  # bcrypt only checks 72 bytes; the key needs the whole password
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials") from e
     row, refresh_token = devices.register(session, user, chat_key, name=body.name, platform=body.platform,
                                           push_token=body.push_token)
     return _token_out(user, chat_key, row.id, refresh_token)

@@ -367,3 +367,96 @@ def test_an_admin_reset_ends_the_persons_sessions(api):
     assert api.client.post(f"/v1/auth/users/{alice}/reset-password", headers=ADMIN,
                            json={"password": "temporary-long-pass"}).status_code == 200
     assert _me(api, mine) == 401
+
+
+# ---- Security audit 2026-11-18: wrong passwords and recovery codes are limited; a missing user takes as long ----
+
+
+def _try(api, path, password, username="alice", **extra):
+    body = {"username": username, "password": password, **extra}
+    if path.endswith("recover"):
+        body = {"username": username, "recovery_code": password, "new_password": "a-new-password-1", **extra}
+    return api.client.post(path, json=body)
+
+
+@pytest.mark.parametrize("path", ["/v1/auth/login", "/v1/auth/device/login", "/v1/auth/recover"])
+def test_five_wrong_tries_from_one_place_lock_that_account_there(api, path):
+    for _ in range(5):
+        assert _try(api, path, "wrong-password-xx").status_code == 401
+    refused = _try(api, path, "wrong-password-xx")
+    assert refused.status_code == 429 and refused.headers["retry-after"] == "900"
+    if path != "/v1/auth/recover":  # even the right password waits now
+        assert _try(api, path, INITIAL).status_code == 429
+
+
+def test_a_correct_login_resets_the_count_and_other_accounts_are_untouched(api, local_attempt_counts):
+    for _ in range(4):
+        _try(api, "/v1/auth/login", "wrong-password-xx")
+    assert _try(api, "/v1/auth/login", INITIAL).status_code == 200
+    for _ in range(4):
+        assert _try(api, "/v1/auth/login", "wrong-password-xx").status_code == 401
+    for _ in range(5):  # a username that doesn't exist counts too, and answers the same
+        assert _try(api, "/v1/auth/login", "wrong-password-xx", username="nobody").status_code == 401
+    assert _try(api, "/v1/auth/login", "wrong-password-xx", username="nobody").status_code == 429
+    assert _try(api, "/v1/auth/login", INITIAL).status_code == 200
+
+
+def test_one_address_is_capped_over_all_usernames(api):
+    from app.auth import attempts
+
+    for n in range(attempts.PER_ADDRESS):
+        assert _try(api, "/v1/auth/login", "wrong-password-xx", username=f"user{n}").status_code == 401
+    assert _try(api, "/v1/auth/login", INITIAL).status_code == 429
+
+
+def test_the_account_limit_holds_across_addresses(monkeypatch):
+    from app.auth import attempts
+
+    for n in range(attempts.PER_ACCOUNT):
+        guard = attempts.Guard("login", "alice", None)
+        guard.keys = attempts._keys("login", "alice", f"10.0.0.{n}")  # a new address every time
+        guard.check()
+        guard.failed()
+    with pytest.raises(Exception) as refused:
+        fresh = attempts.Guard("login", "Alice", None)
+        fresh.keys = attempts._keys("login", "Alice", "10.9.9.9")
+        fresh.check()
+    assert getattr(refused.value, "status_code", None) == 429
+
+
+def test_signed_in_password_checks_are_limited_per_person(api):
+    token = api.client.post("/v1/auth/login", json={"username": "alice", "password": INITIAL}).json()["access_token"]
+    headers = {"authorization": f"Bearer {token}"}
+    body = {"old_password": "wrong-password-xx", "new_password": "another-password-1"}
+    for _ in range(5):
+        assert api.client.post("/v1/auth/change-password", headers=headers, json=body).status_code == 401
+    assert api.client.post("/v1/auth/change-password", headers=headers, json=body).status_code == 429
+
+
+def test_a_missing_user_still_costs_a_password_check(monkeypatch):
+    from app.auth import security
+
+    calls = []
+    real = security.verify_password
+    monkeypatch.setattr(security, "verify_password", lambda raw, hashed: calls.append(hashed) or real(raw, hashed))
+    assert security.password_matches(None, "anything-at-all") is False
+    assert len(calls) == 1 and calls[0].startswith("$2")
+
+
+def test_redis_down_still_limits(monkeypatch):
+    from app.auth import attempts
+
+    class Down:
+        def __getattr__(self, name):
+            def fail(*a):
+                raise ConnectionError("redis down")
+            return fail
+
+    store = attempts.FailoverCounts(Down(), attempts.InMemoryCounts())
+    monkeypatch.setattr(attempts, "counts", lambda: store)
+    guard = attempts.Guard("login", "bob", None)
+    for _ in range(attempts.PER_ACCOUNT_AND_ADDRESS):
+        guard.failed()
+    with pytest.raises(Exception) as refused:
+        guard.check()
+    assert getattr(refused.value, "status_code", None) == 429

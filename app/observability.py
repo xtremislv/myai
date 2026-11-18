@@ -130,10 +130,11 @@ def setup_log_export() -> None:
     logging.getLogger().addHandler(log_export_handler(exporter))
 
 
-def start_metrics_server(port: int | None = None):
-    """Serve /metrics on a port of its own. docker-compose never publishes it, so Prometheus
-    can reach it over the internal network and the internet can't."""
-    server, _thread = start_http_server(_settings.metrics_port if port is None else port)
+def start_metrics_server(port: int | None = None, host: str | None = None):
+    """Serve /metrics on a port of its own, on localhost unless METRICS_HOST says otherwise
+    (docker-compose: 0.0.0.0 inside its network, never published)."""
+    server, _thread = start_http_server(_settings.metrics_port if port is None else port,
+                                        addr=_settings.metrics_host if host is None else host)
     return server
 
 

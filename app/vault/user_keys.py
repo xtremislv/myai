@@ -89,6 +89,12 @@ def add_recovery_code(user, key: bytes) -> str:
     return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
+def dummy_unlock(code: str) -> None:
+    """The key derivation of a recovery-code check, for a username that has none: the refusal
+    then takes as long as a real one."""
+    _password_key(_normalize_code(code), b"\0" * 16)
+
+
 def unlock_with_recovery_code(user, code: str) -> bytes:
     """Raises cryptography's InvalidTag if the code is wrong."""
     return AESGCM(_password_key(_normalize_code(code), user.recovery_salt)).decrypt(

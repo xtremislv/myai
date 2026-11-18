@@ -111,6 +111,13 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   apps update themselves (`--required` if old apps would break). Never sign with another key than
   `~/.config/twai-android/release.jks`: phones refuse the update.
 
+- Security audit 2026-11-18 rules: every password or recovery-code check goes through `attempts.guarded(...)`
+  (`app/auth/attempts.py`: per account+address, account, address; Redis with in-process fallback) and
+  `security.password_matches` (a missing user still costs a bcrypt check). IMAP folder names go through
+  `connector._mailbox_arg` and searches through `_quote`/`_search`: control characters never reach a command line.
+  `/metrics` listens on `METRICS_HOST` (127.0.0.1). `/v1/*` answers default to `Cache-Control: no-store`.
+  JWTs use HS256/384/512 only. Chat messages are capped at `routes_chat.MAX_MESSAGE_CHARS`.
+
 ## Build-now vs build-on-server
 Pure code/config is built & tested here; GPU bring-up, real model/weights, TLS/DNS, load/security testing
 happen on the server (see HANDOFF §3 and PROGRESS_AND_ROADMAP §10).

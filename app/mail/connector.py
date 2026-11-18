@@ -254,13 +254,31 @@ def _login(server: smtplib.SMTP, username: str, password: str) -> None:
         raise smtplib.SMTPAuthenticationError(code, resp)
 
 
+# Control characters never go into an IMAP command line: imaplib sends arguments as they are, so a
+# folder or search with "\r\n" (say, from a prompt injection in an email) would end the command and
+# run its own after it (DELETE, MOVE, RENAME) on the person's mailbox (security review 2026-11-18).
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _plain(text: str, what: str) -> str:
+    if _CONTROL.search(text):
+        raise ValueError(f"{what} can't contain line breaks or other control characters")
+    return text
+
+
 def _folder(box: str) -> str:
-    box = (box or "INBOX").strip()
+    box = _plain((box or "INBOX").strip(), "A folder name")
     return "INBOX" if box.lower() == "inbox" else box
 
 
+def _mailbox_arg(folder: str) -> str:
+    """A folder name as one IMAP quoted string (RFC 3501), whatever it contains."""
+    folder = _plain(folder, "A folder name")
+    return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _quote(text: str) -> str:
-    return '"' + text.replace("\\", "").replace('"', "") + '"'
+    return '"' + _plain(text, "A search").replace("\\", "").replace('"', "") + '"'
 
 
 def _header(msg, name: str) -> str:
@@ -314,6 +332,7 @@ def _criterion(term: str) -> tuple[str, str]:
 
 
 def _search(conn, base: list[str], query: str) -> list[bytes]:
+    query = _plain(" ".join((query or "").split()), "A search")  # line breaks and tabs become spaces
     if not query:
         _, data = conn.uid("SEARCH", *base)
         return (data[0] or b"").split()
@@ -396,7 +415,7 @@ def list_messages(cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_o
         if ((query or (after and gmail)) and (box or "inbox").strip().lower() in ("", "inbox", "all")
                 and (archive := _all_mail(conn))):
             folder, prefix = archive, ALL_PREFIX
-        status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+        status, _ = conn.select(_mailbox_arg(folder), readonly=True)
         if status != "OK":
             return f"ERROR: no mailbox folder named '{box}'"
         base = ["UNSEEN"] if unread_only else ["ALL"]
@@ -450,7 +469,7 @@ def _select(conn, box: str, query: str) -> tuple[str, str]:
     folder, prefix = _folder(box), ""
     if query and (box or "inbox").strip().lower() in ("", "inbox", "all") and (archive := _all_mail(conn)):
         folder, prefix = archive, ALL_PREFIX
-    status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+    status, _ = conn.select(_mailbox_arg(folder), readonly=True)
     if status != "OK":
         raise ValueError(f"no mailbox folder named '{box}'")
     return folder, prefix
@@ -643,15 +662,16 @@ def _open_text(head, text: str, parts: list, max_chars: int, part: int = 1) -> s
 
 
 def _ids_by_folder(conn, ids: list[str], box: str) -> tuple[dict[str, list[tuple[str, str]]], dict[str, str]]:
+    home = _folder(box)  # a bad folder name is an error of its own, not a bad id
     archive = _all_mail(conn) if any(i.lower().startswith(ALL_PREFIX) for i in ids) else None
     by_folder: dict[str, list[tuple[str, str]]] = {}
     errors: dict[str, str] = {}
     for mail_id in ids:
         try:
             if mail_id.lower().startswith(ALL_PREFIX):
-                folder, uid = archive or _folder(box), str(int(mail_id[len(ALL_PREFIX):]))
+                folder, uid = archive or home, str(int(mail_id[len(ALL_PREFIX):]))
             else:
-                folder, uid = _folder(box), str(int(mail_id))
+                folder, uid = home, str(int(mail_id))
         except ValueError:
             errors[mail_id] = f"ERROR: '{mail_id}' is not an email id"
             continue
@@ -701,7 +721,7 @@ def read_messages(cfg: MailConfig, message_ids: list[str], box: str = "inbox", m
     with _session(cfg) as conn:
         by_folder, texts = _ids_by_folder(conn, ids, box)
         for folder, wanted in by_folder.items():
-            conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+            conn.select(_mailbox_arg(folder), readonly=True)
             uids = [uid.encode() for _, uid in wanted]
             info = _structure(conn, uids)
             body = _texts(conn, info)
@@ -739,7 +759,7 @@ def read_attachment(cfg: MailConfig, message_id: str, name: str, box: str = "inb
         if errors:
             return next(iter(errors.values()))
         folder, [(mail_id, uid)] = next(iter(by_folder.items()))
-        conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+        conn.select(_mailbox_arg(folder), readonly=True)
         info = _structure(conn, [uid.encode()]).get(uid.encode())
         if info is None:
             return f"ERROR: no message with id {mail_id}"
@@ -773,7 +793,7 @@ def fetch_messages(
         if ((query or (after and gmail)) and (box or "inbox").strip().lower() in ("", "inbox", "all")
                 and (archive := _all_mail(conn))):
             folder, prefix = archive, ALL_PREFIX
-        status, _ = conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+        status, _ = conn.select(_mailbox_arg(folder), readonly=True)
         if status != "OK":
             raise ValueError(f"no mailbox folder named '{box}'")
         criteria = ["UNSEEN"] if unread_only else ["ALL"]
@@ -806,7 +826,7 @@ def set_flag(cfg: MailConfig, message_id: str, action: str, box: str = "inbox") 
         return f"ERROR: action must be one of {', '.join(flags)}"
     with _session(cfg) as conn:
         folder, uid = _target(conn, message_id, box)
-        conn.select(_quote(folder) if " " in folder else folder)
+        conn.select(_mailbox_arg(folder))
         op, flag = flags[action]
         status, _ = conn.uid("STORE", uid, op, flag)
         return f"Marked message {message_id} as {action}." if status == "OK" else f"ERROR: could not mark {message_id}"

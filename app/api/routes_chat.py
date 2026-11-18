@@ -69,8 +69,13 @@ REPORT_EXCERPT_CHARS = 2000
 NSFW_SAMPLE_CHARS = 4000
 
 
+# A message's length: room for a long pasted document (~50k tokens), not for megabytes that only cost
+# time and money (security audit 2026-11-18: there was no cap).
+MAX_MESSAGE_CHARS = 200_000
+
+
 class ChatIn(BaseModel):
-    message: str
+    message: str = Field(max_length=MAX_MESSAGE_CHARS)
     thread_id: str = Field(min_length=1, max_length=THREAD_ID_MAX)  # private to the caller
     # "auto" lets triage decide. "single" = one agent loop; "team" = planner -> researcher -> writer;
     # "agents" = a supervisor handing tasks to specialists (research, browser, mail, booking...).

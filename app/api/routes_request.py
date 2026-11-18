@@ -23,7 +23,7 @@ router = APIRouter(tags=["request-manager"])
 
 
 class RequestIn(BaseModel):
-    message: str
+    message: str = Field(max_length=200_000)  # as routes_chat.MAX_MESSAGE_CHARS
     thread_id: str = Field(min_length=1, max_length=128)
     mode: Literal["single", "team", "agents"] = "single"
     department: str | None = None  # optional explicit hint

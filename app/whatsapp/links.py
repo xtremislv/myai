@@ -94,13 +94,44 @@ def start(session: Session, user_id: str, raw_phone: str) -> str:
     row.code_expires_at = _now() + dt.timedelta(minutes=CODE_MINUTES)
     session.add(row)
     session.commit()
+    start_clears_tries(phone)  # a new code gets its own tries
     return code
 
 
+CODE_TRIES = 5  # wrong codes from a number before its pending codes are used up
+
+
 def confirm(session: Session, phone: str, code: str) -> WhatsAppLink | None:
-    """The link this code (sent from this number) completes, or None."""
+    """The link this code (sent from this number) completes, or None. After CODE_TRIES wrong codes
+    from this number, every code pending for it is used up and a new one must be made in the app
+    (security audit 2026-11-18: a code could be guessed for its whole 15 minutes)."""
+    from app.auth import attempts
+
+    tries = attempts.counts()
+    key = f"attempts:whatsapp-link:{phone}"
     now = _now()
-    for row in session.query(WhatsAppLink).filter(WhatsAppLink.pending_phone == phone).all():
+    rows = session.query(WhatsAppLink).filter(WhatsAppLink.pending_phone == phone).all()
+    if tries.get(key) >= CODE_TRIES:
+        rows = []  # used up: the codes below are cleared, and nothing can match
+    linked = _match(session, rows, phone, code, now)
+    if linked is not None:
+        tries.clear(key)
+        return linked
+    if tries.add(key) >= CODE_TRIES:
+        for row in session.query(WhatsAppLink).filter(WhatsAppLink.pending_phone == phone).all():
+            row.pending_phone = row.code_hash = row.code_expires_at = None
+        session.commit()
+    return None
+
+
+def start_clears_tries(phone: str) -> None:
+    from app.auth import attempts
+
+    attempts.counts().clear(f"attempts:whatsapp-link:{phone}")
+
+
+def _match(session: Session, rows: list[WhatsAppLink], phone: str, code: str, now: dt.datetime) -> WhatsAppLink | None:
+    for row in rows:
         expires = _aware(row.code_expires_at)
         if row.code_hash and expires and expires > now and hmac.compare_digest(row.code_hash, _code_hash(row.user_id, code)):
             row.phone, row.linked_at, row.last_inbound_at = phone, now, now
