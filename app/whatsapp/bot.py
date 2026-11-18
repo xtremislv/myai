@@ -358,6 +358,7 @@ def _answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str,
         with SessionLocal() as session:
             mode, finished = routes_chat._before_the_model(
                 routes_chat.ChatIn(message=text, thread_id=thread), subject, key, session, remember=False)
+        mode = whatsapp_mode(mode, text)
         if finished is None:
             with routes_chat._private_slot(subject) as free:
                 if not free:
@@ -385,6 +386,16 @@ def _answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str,
         inflight.finish(running, ok)
     note = f'_Heard: "{heard[:300]}{"…" if len(heard) > 300 else ""}"_' if heard else ""
     deliver(cfg, user_id, phone, _reply_text(out), list(out.dashboards or made), note=note)
+
+
+# Booking, ordering and buying on WhatsApp go to the single agent (owner, 2026-11-18): it has the WhatsApp
+# instructions in one place (show the options, ask, stop), and a team handing a booking around cost more and asked less.
+BOOKING_WORDS = re.compile(r"\b(book|booking|ticket|tickets|showtimes?|seats?|reserve|reservation|order|buy|"
+                           r"purchase|checkout|cab|taxi|flight|train|hotel|table for)\b", re.I)
+
+
+def whatsapp_mode(mode: str, text: str) -> str:
+    return "single" if mode in ("agents", "team") and BOOKING_WORDS.search(text or "") else mode
 
 
 def show(user_id: str, message: str, picture: bytes | None, choices: list[str]) -> str:

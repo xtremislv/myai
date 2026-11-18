@@ -115,10 +115,13 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - After changing `android/`, commit and run `scripts/publish_android.sh "notes"` so the website offers it and installed
   apps update themselves (`--required` if old apps would break). Never sign with another key than
   `~/.config/twai-android/release.jks`: phones refuse the update.
-- Getting unstuck (owner, 2026-11-18): a turn with 2 failed tool results (or 1 after 5 rounds) is stuck
-  (`nodes.stuck_signals`): once per request it gets `RESCUE_NOTE` (diagnose, search web/forums for a fix, take another
-  route; never bypass a block), the web/forum tools, `RESCUE_ROUNDS` more rounds, and `model_manager.escalated`
-  (one tier up: Sonnet->Opus, Opus->Fable; the budget/mix rules still apply). Same in specialists. An API failure
+- Getting unstuck (owner, 2026-11-18; `RESCUE_ENABLED`): stuck = the last 2 rounds of tool calls all failed
+  (`nodes.stuck_signals`). Once per request: `RESCUE_NOTE` (diagnose, search web/forums for a fix, another route; never
+  bypass a block), the web/forum tools, `RESCUE_ROUNDS` more rounds, and `model_manager.escalated` for `RESCUE_STEPS`
+  calls of the stuck agent only (a specialist's report ends it): one tier up from the model really in use
+  (`rescue_tier`: to Opus; Fable only from Opus and under INR 25 spent by the request; nothing over INR 50 or when the
+  month is over budget). `request_spend` adds up a request's cost. On WhatsApp, specialists and the supervisor get the
+  WhatsApp instructions, and booking/ordering requests run as the single agent (`bot.whatsapp_mode`). An API failure
   (529/5xx/429/timeout) before any words were streamed is retried once on `FALLBACK_TIER` (`client._fallback`).
 - Security audit 2026-11-18 rules: every password or recovery-code check goes through `attempts.guarded(...)`
   (`app/auth/attempts.py`: per account+address, account, address; Redis with in-process fallback) and

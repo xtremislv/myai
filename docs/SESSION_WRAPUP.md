@@ -56,6 +56,13 @@ this file, this file is right.
   specialists too. Claude API failures (overloaded/5xx/429/timeout) are retried once on another model if no words were
   shown yet. The browser now has a location in India (BROWSER_LOCATION, default Noida) and en-IN/hi languages: District
   showed Hong Kong before (the proxy and this server are both Indian addresses; the browser had no location).
+- **Recovery step tightened (2026-11-18, evening):** its first live run was a false alarm (BookMyShow blocked while
+  District/PVR worked) and kept a WhatsApp booking on Fable for 6 minutes (~INR 160; stopped by a gateway restart, no
+  reply sent). Now: stuck = last 2 rounds failed completely; 3 stepped-up calls of the stuck agent only; Opus first from
+  the model in use; caps INR 25 (Fable) / INR 50 (any step-up) per request; WhatsApp instructions for specialists and
+  supervisor; WhatsApp bookings run as the single agent. Replayed on the real request: never stuck.
+  `RESCUE_ENABLED=false` on the server until the owner turns it back on. No way to cancel one running request except
+  a gateway restart.
 - **Prepaid credit alerts (2026-11-17):** `app/llm/credit.py`, `scripts/llm_credit.py`; balance set to $49.43 on
   2026-11-17 ($50 top-up minus $0.57 already spent). Reset it after every top-up. See CLAUDE_CODE_SERVER.md.
 - **Scouts paused (owner, 2026-11-17):** all three `enabled=false`; resume from the Scouts page.

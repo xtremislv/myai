@@ -628,3 +628,10 @@ def test_a_video_becomes_frames_and_its_words(db, sent, monkeypatch, tmp_path):
     assert seen["text"] == bot.VIDEO_ASK and 6 <= len(seen["images"]) <= 16
     assert "Words spoken in the video (transcribed): this sprayer costs 300" in seen["attachments"]
     assert _texts(sent)[-1].startswith("1. A car foam sprayer")
+
+
+def test_bookings_on_whatsapp_go_to_the_single_agent():
+    assert bot.whatsapp_mode("agents", "book 2 tickets for Ramayana in Noida tonight") == "single"
+    assert bot.whatsapp_mode("team", "order the cheapest of these earbuds") == "single"
+    assert bot.whatsapp_mode("agents", "compare the iPhone 17 and Pixel 10 cameras in depth") == "agents"
+    assert bot.whatsapp_mode("single", "hi") == "single"

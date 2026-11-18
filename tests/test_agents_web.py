@@ -382,25 +382,41 @@ def test_a_specialist_that_refuses_without_tools_is_sent_back_to_search(monkeypa
     assert any("Story about AI ads" in m["content"] for m in final["messages"] if m["role"] == "tool")
 
 
-# ---- getting unstuck (owner, 2026-11-18) ----
-def _turn_with_failures(results, rounds=1):
+# ---- getting unstuck (owner, 2026-11-18; tightened the same day after a false alarm kept a request on Fable) ----
+def _turn(rounds_of_results, tool_rounds=None):
+    """rounds_of_results: one list of result texts per round of tool calls."""
     msgs = [{"role": "user", "content": "book tickets"}]
-    for n, text in enumerate(results):
+    n = 0
+    for results in rounds_of_results:
+        ids = [f"c{n + i}" for i in range(len(results))]
         msgs.append({"role": "assistant", "content": "", "tool_calls": [
-            {"id": f"c{n}", "type": "function", "function": {"name": "fetch_page", "arguments": "{}"}}]})
-        msgs.append({"role": "tool", "tool_call_id": f"c{n}", "name": "fetch_page", "content": json.dumps(text)})
-    return {"messages": msgs, "scratchpad": {}, "subject_id": "u1", "subject_roles": [], "tool_rounds": rounds}
+            {"id": i, "type": "function", "function": {"name": "fetch_page", "arguments": "{}"}} for i in ids]})
+        msgs += [{"role": "tool", "tool_call_id": i, "name": "fetch_page", "content": json.dumps(t)} for i, t in zip(ids, results)]
+        n += len(results)
+    return {"messages": msgs, "scratchpad": {}, "subject_id": "u1", "subject_roles": [],
+            "tool_rounds": len(rounds_of_results) if tool_rounds is None else tool_rounds}
 
 
-def test_a_turn_is_stuck_after_two_failures_or_one_late_failure():
-    blocked = "ERROR: https://in.bookmyshow.com/x: BLOCKED (address): in.bookmyshow.com refuses this server's address"
-    assert nodes.stuck_signals(_turn_with_failures(["fine page", blocked])) == []
-    assert nodes.stuck_signals(_turn_with_failures([blocked], rounds=5))[0].startswith("- fetch_page: ")
-    two = nodes.stuck_signals(_turn_with_failures([blocked, "<<UNTRUSTED...>>\nERROR: timed out"]))
-    assert len(two) == 2 and "BLOCKED (address)" in two[0]
+BLOCKED = "ERROR: https://in.bookmyshow.com/x: BLOCKED (address): in.bookmyshow.com refuses this server's address"
 
 
-def test_the_stuck_turn_gets_a_stronger_model_the_brief_search_tools_and_more_rounds(monkeypatch):
+def test_stuck_means_the_last_two_rounds_failed_completely():
+    # the request that started this: BookMyShow blocked while PVR answered, then one flaky click
+    assert nodes.stuck_signals(_turn([[BLOCKED, "PVR showtimes page"], ["ERROR: the site could not be reached"]])) == []
+    assert nodes.stuck_signals(_turn([["ERROR: a"], ["ERROR: b"], ["a good page"]])) == []
+    stuck = nodes.stuck_signals(_turn([["fine"], [BLOCKED], ["<<UNTRUSTED...>>\nERROR: timed out", "ERROR: c"]]))
+    assert len(stuck) == 3 and "BLOCKED (address)" in stuck[0]
+    assert nodes.stuck_signals(_turn([["ERROR: only one round"]])) == []
+
+
+@pytest.fixture
+def rescue_on(monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "rescue_enabled", True)
+
+
+def test_the_stuck_turn_is_stepped_up_for_three_calls_with_the_brief_and_search_tools(monkeypatch, rescue_on):
     from app.llm import model_manager
 
     seen = []
@@ -413,39 +429,56 @@ def test_the_stuck_turn_gets_a_stronger_model_the_brief_search_tools_and_more_ro
     monkeypatch.setattr(nodes.llm, "chat", chat)
     monkeypatch.setattr(nodes.toolsel, "select", lambda schemas, dept, messages: [
         t for t in schemas if t["function"]["name"] in ("browser_open", "fetch_page")])
-    state = _turn_with_failures(["ERROR: x", "ERROR: y"])
+    state = _turn([["ERROR: x"], ["ERROR: y"]])
     out = nodes.agent(state)
-    assert out["rescues"] == 1 and seen[0]["up"] is True
+    assert out["rescues"] == 1 and out["rescue_left"] == nodes.RESCUE_STEPS - 1 and seen[0]["up"] is True
     assert seen[0]["note"].startswith("You seem to be stuck: 2 step(s) failed") and "forum_search" in seen[0]["note"]
     assert {"web_search", "forum_search", "read_thread"} <= seen[0]["tools"]
-    assert model_manager.escalated.get() is False  # only for this turn's calls
-    # later in the same turn: still stepped up, no second brief, and 4 more rounds than usual
-    later = {**state, "rescues": 1, "tool_rounds": nodes.MAX_TOOL_ROUNDS}
-    out = nodes.agent(later)
-    assert "rescues" not in out and seen[1]["up"] is True and "stuck" not in seen[1]["note"]
-    assert out["next"] == "__end__" and not seen[1]["note"].startswith("You have used all")
-    nodes.agent({**later, "tool_rounds": nodes.MAX_TOOL_ROUNDS + nodes.RESCUE_ROUNDS})
-    assert seen[2]["note"].startswith("You have used all your tool calls")
+    assert model_manager.escalated.get() is False
+    out = nodes.agent({**state, "rescues": 1, "rescue_left": 1})
+    assert seen[1]["up"] is True and "stuck" not in seen[1]["note"] and out["rescue_left"] == 0
+    out = nodes.agent({**state, "rescues": 1, "rescue_left": 0, "tool_rounds": nodes.MAX_TOOL_ROUNDS})
+    assert seen[2]["up"] is False and out["next"] == "__end__"                   # back to the usual model...
+    assert not seen[2]["note"].startswith("You have used all")                     # ...still with the extra rounds
+    nodes.agent({**state, "rescues": 1, "tool_rounds": nodes.MAX_TOOL_ROUNDS + nodes.RESCUE_ROUNDS})
+    assert seen[3]["note"].startswith("You have used all your tool calls")
 
 
-def test_a_stuck_specialist_is_stepped_up_once(monkeypatch):
+def test_a_stuck_specialist_is_stepped_up_until_its_report(monkeypatch, rescue_on):
     from app.llm import model_manager
 
     seen = []
+    replies = iter(["", "", "Report: District has the showtimes."])
 
     def chat(messages, tools=None, **kw):
-        seen.append((model_manager.escalated.get(), "You seem to be stuck" in str(messages[-1].get("content")),
-                     {t["function"]["name"] for t in tools or []}))
-        return "Report: BookMyShow refused; District has the showtimes."
+        seen.append((model_manager.escalated.get(), "You seem to be stuck" in str(messages[-1].get("content"))))
+        text = next(replies, "Report.")
+        return text or nodes.llm.Reply("", [{"id": "z", "name": "fetch_page", "args": {"url": "https://x"}}])
 
     monkeypatch.setattr(specialists.llm, "chat", chat)
     node = specialists.make_specialist("browser")
-    turn = _turn_with_failures(["ERROR: a", "ERROR: b"])
+    turn = _turn([["ERROR: a"], ["ERROR: b"]])
     state = {**turn, "agent_start": 1, "agent_rounds": 2, "assignments": ["find showtimes"]}
     out = node(state)
-    assert out["rescues"] == 1 and seen[0][0] is True and seen[0][1] is True and "forum_search" in seen[0][2]
-    node({**state, "rescues": 1})
-    assert seen[-1][0] is True and seen[-1][1] is False  # still stepped up, no second brief
+    assert out["rescues"] == 1 and seen[0] == (True, True) and out["rescue_left"] == nodes.RESCUE_STEPS - 1
+    out = node({**state, "rescues": 1, "rescue_left": out["rescue_left"]})
+    assert seen[-1] == (True, False)
+    out = node({**state, "rescues": 1, "rescue_left": out["rescue_left"]})
+    assert out["rescue_left"] == 0 and out.get("next") != "tools"                  # its report ends the step-up
+
+
+def test_specialists_and_the_supervisor_get_the_whatsapp_instructions():
+    from app.orchestrator.context import channel
+
+    state = {"messages": [{"role": "user", "content": "x"}], "assignments": ["t"], "scratchpad": {}}
+    assert "show_person" not in specialists._specialist_convo(state, specialists.SPECIALISTS["browser"])[0]["content"]
+    token = channel.set("whatsapp")
+    try:
+        prompt = specialists._specialist_convo(state, specialists.SPECIALISTS["browser"])[0]["content"]
+        assert "show_person" in prompt and "never click through every option" in prompt
+        assert "choose finish" in specialists._whatsapp_supervisor()
+    finally:
+        channel.reset(token)
 
 
 def test_getting_unstuck_can_be_switched_off(monkeypatch):
@@ -456,5 +489,5 @@ def test_getting_unstuck_can_be_switched_off(monkeypatch):
     monkeypatch.setattr(get_settings(), "rescue_enabled", False)
     monkeypatch.setattr(nodes.llm, "chat", lambda messages, tools=None, **kw: seen.append(
         (model_manager.escalated.get(), str(messages[-1].get("content")))) or "Answer.")
-    out = nodes.agent(_turn_with_failures(["ERROR: a", "ERROR: b"]))
-    assert "rescues" not in out and seen == [(False, seen[0][1])] and "stuck" not in seen[0][1]
+    out = nodes.agent(_turn([["ERROR: a"], ["ERROR: b"]]))
+    assert "rescues" not in out and seen[0][0] is False and "stuck" not in seen[0][1]

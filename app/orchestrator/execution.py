@@ -143,6 +143,9 @@ def run(
     key_token = user_key.set(_tool_key(chat_key))
     files_token = attachment_files.set(files)
     images_token = attachment_images.set(images)
+    from app.llm.model_manager import request_spend
+
+    spend_token = request_spend.set([0.0])  # this request's model spend (the step-up's cap)
     try:
         with _graph_cm(mode, serde) as graph:
             if context and not chat_key:
@@ -152,6 +155,7 @@ def run(
     finally:
         attachment_files.reset(files_token)
         attachment_images.reset(images_token)
+        request_spend.reset(spend_token)
         user_key.reset(key_token)
         attachment_text.reset(token)
 

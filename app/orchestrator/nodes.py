@@ -296,8 +296,9 @@ def final_message(text: str, state: dict[str, Any]) -> dict[str, Any]:
 # ---- getting unstuck (owner, 2026-11-18): when a turn keeps failing, a stronger model steps back, looks for a
 # fix on the web and forums, and tries another route, once per turn and with a few more steps ----
 RESCUE_ROUNDS = 4
-STUCK_ERRORS = 2       # failed tool results in this turn that make it stuck...
-STUCK_ROUNDS = 5       # ...or one failure once this many rounds have gone by
+STUCK_ROUNDS = 2       # the last this-many rounds of tool calls all failed (nothing in them worked): stuck
+RESCUE_STEPS = 3       # model calls that are stepped up, then back to the usual model (owner, 2026-11-18: one
+                       # false alarm kept a whole request on Fable)
 RESCUE_TOOLS = ("web_search", "forum_search", "read_thread", "github_search", "fetch_page", "news_search")
 RESCUE_NOTE = (
     "You seem to be stuck: {n} step(s) failed in this request:\n{failures}\n"
@@ -334,17 +335,23 @@ def _gist(content: str) -> str:
 
 
 def stuck_signals(state: dict[str, Any]) -> list[str]:
-    """The failed steps of this turn when it counts as stuck (STUCK_ERRORS failures, or one after STUCK_ROUNDS
-    rounds), else []. Each is "tool: the start of its result"."""
+    """The failed steps when this turn is stuck, else []: stuck means the last STUCK_ROUNDS rounds of tool calls
+    each failed completely. A round where something worked (a blocked site, but another source answered; one
+    flaky click among good steps) is progress, not stuck. Each is "tool: the start of its result"."""
     turn = this_turn(state.get("messages", []))
-    names = {tc["id"]: tc["function"]["name"] for m in turn if m.get("role") == "assistant"
-             for tc in m.get("tool_calls") or []}
-    failures = [f"- {names.get(m.get('tool_call_id'), m.get('name') or 'tool')}: " + _gist(m.get("content"))
-                for m in turn if m.get("role") == "tool" and _failed(m.get("content"))]
-    rounds = state.get("tool_rounds", 0)
-    if len(failures) >= STUCK_ERRORS or (failures and rounds >= STUCK_ROUNDS):
-        return failures[-6:]
-    return []
+    rounds: list[list[str]] = []  # per round: its failures, or None in it when something worked
+    names: dict[str, str] = {}
+    for m in turn:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            rounds.append([])
+            names.update({tc["id"]: tc["function"]["name"] for tc in m["tool_calls"]})
+        elif m.get("role") == "tool" and rounds:
+            rounds[-1].append(f"- {names.get(m.get('tool_call_id'), m.get('name') or 'tool')}: {_gist(m.get('content'))}"
+                              if _failed(m.get("content")) else "")
+    last = rounds[-STUCK_ROUNDS:]
+    if len(last) < STUCK_ROUNDS or any(not r or "" in r for r in last):
+        return []
+    return [f for r in last for f in r][-6:]
 
 
 def _with_rescue_tools(tools: list[dict[str, Any]], state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -363,7 +370,8 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
     on = get_settings().rescue_enabled
     rescued = on and state.get("rescues", 0) > 0
     failures = [] if rescued or not on else stuck_signals(state)
-    token = escalated.set(True) if rescued or failures else None
+    left = RESCUE_STEPS if failures else state.get("rescue_left", 0) if rescued else 0
+    token = escalated.set(True) if left > 0 else None
     try:
         out = _agent(state, rescued, failures)
     finally:
@@ -371,6 +379,8 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
             escalated.reset(token)
     if failures:
         out["rescues"] = 1
+    if left > 0:
+        out["rescue_left"] = left - 1
     return out
 
 

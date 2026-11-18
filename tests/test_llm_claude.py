@@ -251,18 +251,42 @@ def test_no_switch_after_words_were_shown_or_for_a_bad_request(anthropic, monkey
     assert len(tries) == 2
 
 
-def test_a_stuck_turn_steps_up_a_tier_within_the_budget_rules(anthropic, monkeypatch):
+def test_a_stuck_turn_steps_up_from_the_model_really_in_use_within_the_caps(anthropic, monkeypatch):
     from app.llm import model_manager as mm
 
     msgs = [{"role": "user", "content": "find showtimes"}]
-    token = mm.escalated.set(True)
+    spend = [0.0]
+    tokens = (mm.escalated.set(True), mm.request_spend.set(spend))
     try:
-        assert mm.choose("orchestrator.nodes.agent", msgs).model == "claude-opus-5-5"       # Sonnet -> Opus
-        long = msgs + [{"role": "tool", "content": "x"}] * 5                                  # Opus already -> Fable
-        assert mm.choose("orchestrator.nodes.agent", long).model == "claude-fable-5-2"
-        assert mm.choose("request_manager.guards.triage", msgs).tier == "light"              # sorting isn't stepped up
+        assert mm.choose("orchestrator.nodes.agent", msgs).model == "claude-opus-5-5"         # Sonnet -> Opus
+        # The mix stepped a specialist down to Haiku: Opus, not Fable (what went wrong on 2026-11-18)
+        monkeypatch.setattr(mm, "steer", lambda tier, reason, task, summary: ("light", reason))
+        assert mm.choose("orchestrator.specialists.body", msgs).model == "claude-opus-5-5"
+        monkeypatch.setattr(mm, "steer", lambda tier, reason, task, summary: (tier, reason))
+        assert mm.choose("orchestrator.specialists.body", msgs).model == "claude-fable-5-2"    # Opus already -> Fable
+        spend[0] = (mm.RESCUE_DEEP_UNDER_INR + 1) / 88
+        assert mm.choose("orchestrator.specialists.body", msgs).model == "claude-opus-5-5"     # over INR 25: no Fable
+        assert mm.choose("orchestrator.nodes.agent", msgs).model == "claude-opus-5-5"          # still Opus first
+        spend[0] = (mm.RESCUE_CAP_INR + 1) / 88
+        assert mm.choose("orchestrator.nodes.agent", msgs).model == "claude-sonnet-5-5"        # over INR 50: none
+        assert mm.choose("request_manager.guards.triage", msgs).tier == "light"                # sorting: never
+        spend[0] = 0.0
         real = mm.month_summary
-        monkeypatch.setattr(mm, "month_summary", lambda *a: {**real(*a), "mode": "over budget"})
-        assert mm.choose("orchestrator.nodes.agent", msgs).tier == "standard"               # budget used up: no Opus
+        monkeypatch.setattr(mm, "month_summary", lambda *a: {**real(*a), "mode": "economy"})
+        assert mm.choose("orchestrator.nodes.agent", msgs).model == "claude-sonnet-5-5"        # over budget: none
     finally:
-        mm.escalated.reset(token)
+        mm.request_spend.reset(tokens[1])
+        mm.escalated.reset(tokens[0])
+
+
+def test_a_request_adds_up_what_it_spends(anthropic):
+    from app.llm import model_manager as mm
+
+    spend = [0.0]
+    token = mm.request_spend.set(spend)
+    try:
+        mm.record("standard", "claude-sonnet-5-5", _block(input_tokens=1_000_000, output_tokens=0,
+                                                         cache_read_input_tokens=0, cache_creation_input_tokens=0))
+    finally:
+        mm.request_spend.reset(token)
+    assert round(spend[0], 2) == 2.0 and mm.spent_inr() == 0.0

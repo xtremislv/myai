@@ -33,6 +33,7 @@ from app.orchestrator.nodes import (
     READ_SOURCES,
     RESCUE_NOTE,
     RESCUE_ROUNDS,
+    RESCUE_STEPS,
     VIDEO_HINT,
     _department,
     _with_rescue_tools,
@@ -425,7 +426,7 @@ def supervisor(state: dict[str, Any]) -> dict[str, Any]:
     listing = "\n".join(f"- {name}: {SPECIALISTS[name].about}" for name in team)
     with tracer.start_as_current_span("agents.supervisor"):
         convo = [
-            {"role": "system", "content": with_now(SUPERVISOR_PROMPT.format(team=listing))},
+            {"role": "system", "content": with_now(SUPERVISOR_PROMPT.format(team=listing) + _whatsapp_supervisor())},
             *_conversation(state),
             *_reports(state),
         ]
@@ -463,12 +464,31 @@ def _same_task(task: str, earlier: list[str]) -> bool:
 
 
 # ---- specialists ----
+def _whatsapp_note() -> str:
+    """On WhatsApp: the same instructions as the single agent (show_person and stop, no exploring on their behalf)."""
+    from app.orchestrator.context import channel
+    from app.orchestrator.nodes import WHATSAPP_NOTE
+
+    return (f" {WHATSAPP_NOTE} When you have the options (showtimes, products, seats), show the person the best "
+            "ones with show_person and report back at once: never click through every option for them."
+            if channel.get() == "whatsapp" else "")
+
+
+def _whatsapp_supervisor() -> str:
+    from app.orchestrator.context import channel
+
+    return ("\n\nThis conversation is on WhatsApp. As soon as a specialist reports that it showed the person a "
+            "choice or a screenshot (show_person) or has options for them to choose from, choose finish (the writer "
+            "gives them the options and they reply). Don't hand the same task to another specialist."
+            if channel.get() == "whatsapp" else "")
+
+
 def _specialist_convo(state: dict[str, Any], spec: Specialist) -> list[dict[str, Any]]:
     task = (state.get("assignments") or [""])[-1]
     own_work = state.get("messages", [])[state.get("agent_start", 0):]
     return [
         {"role": "system", "content": with_now(
-            f"{spec.prompt} {UNTRUSTED_RULE} {BLOCKED_HINT} If a tool returns an ERROR, fix the call or try another "
+            f"{spec.prompt} {UNTRUSTED_RULE} {BLOCKED_HINT}{_whatsapp_note()} If a tool returns an ERROR, fix the call or try another "
             "way; never claim you have no access or ask for passwords or credentials: report the error itself. When the task is done, or can't be done, reply without calling a tool: a short "
             "report of what you found or did, with the facts, figures, dates and links that matter, "
             "and anything left undone."
@@ -519,14 +539,17 @@ def make_specialist(name: str):
         rescued = on and state.get("rescues", 0) > 0
         failures = [] if rescued or not on else stuck_signals(
             {"messages": [{"role": "user", "content": ""}, *own], "tool_rounds": state.get("agent_rounds", 0)})
-        token = escalated.set(True) if rescued or failures else None
+        left = RESCUE_STEPS if failures else state.get("rescue_left", 0) if rescued else 0
+        token = escalated.set(True) if left > 0 else None
         try:
-            out = body(state, rescued, failures)
+            out = body(state, left > 0, failures)  # extra rounds and search tools: the stuck specialist only
         finally:
             if token is not None:
                 escalated.reset(token)
         if failures:
             out["rescues"] = 1
+        # Stepped up for a few calls of this specialist only: its report ends it, so the next one starts as usual.
+        out["rescue_left"] = max(0, left - 1) if out.get("next") == "tools" else 0
         return out
 
     def body(state: dict[str, Any], rescued: bool, failures: list[str]) -> dict[str, Any]:

@@ -300,10 +300,37 @@ class BudgetExceeded(RuntimeError):
 # still apply afterwards (steer), so a month over budget stays on the cheaper models.
 
 escalated: ContextVar[bool] = ContextVar("escalated", default=False)
+# What this request has spent on the model so far, in USD ([total]): set fresh by orchestrator.execution for each
+# request, added to by record(). The step-up stops at RESCUE_CAP_INR and only uses deep under RESCUE_DEEP_UNDER_INR
+# (owner, 2026-11-18, after a stuck WhatsApp request spent ~INR 160 on Fable).
+request_spend: ContextVar[list | None] = ContextVar("request_spend", default=None)
+RESCUE_CAP_INR = 50
+RESCUE_DEEP_UNDER_INR = 25
+
+
+def spent_inr() -> float:
+    spend = request_spend.get()
+    return (spend[0] if spend else 0.0) * float(_settings().llm_usd_rate)
 
 
 def step_up(tier: str) -> str:
     return "complex" if TIERS.index(tier) < TIERS.index("complex") else "deep"
+
+
+def rescue_tier(tier: str, reason: str, summary: dict[str, Any]) -> tuple[str, str]:
+    """The tier for a stuck task's call, from the tier it would get anyway (after the budget and the mix): one up,
+    so Haiku or Sonnet becomes Opus, and Opus becomes Fable only while the request has spent under
+    RESCUE_DEEP_UNDER_INR. Nothing changes while the month is over (or projected over) budget, or once the request
+    has spent RESCUE_CAP_INR."""
+    if summary["mode"] in ("over budget", "economy"):
+        return tier, f"{reason}; stuck, but no step-up ({summary['mode']})"
+    spent = spent_inr()
+    if spent >= RESCUE_CAP_INR:
+        return tier, f"{reason}; stuck, but this request has spent its INR {RESCUE_CAP_INR} for stepping up"
+    up = step_up(tier)
+    if up == "deep" and spent >= RESCUE_DEEP_UNDER_INR:
+        return tier, f"{reason}; stuck, already on {tier} (over INR {RESCUE_DEEP_UNDER_INR} for deep)"
+    return up, f"{reason}; stepped up: the task got stuck"
 
 
 # When the API fails a call after the SDK's own retries (overloaded, 5xx, timeout): the tier tried once instead.
@@ -319,9 +346,11 @@ def choose(task: str, messages: list[dict], tools: list | None = None, requested
     if not _settings().llm_smart_routing:
         return Choice("standard", _settings().llm_model, "smart routing off")
     tier, reason = base_tier(task, messages, tools, background)
+    summary = month_summary()
+    tier, reason = steer(tier, reason, task, summary)
     if escalated.get() and task.startswith(ANSWER_TASKS):
-        tier, reason = step_up(tier), f"{reason}; stepped up: the task got stuck"
-    tier, reason = steer(tier, reason, task, month_summary())
+        # From the model it would really use (the mix may have stepped it down), not the one it was meant for.
+        tier, reason = rescue_tier(tier, reason, summary)
     ledger.add(_k(month_key(), "calls", tier), 1)
     return Choice(tier, models()[tier], reason)
 
@@ -343,6 +372,9 @@ def record(tier: str, model: str, usage: Any) -> float:
     from app.llm import credit
 
     usd = cost_usd(model, usage)
+    spend = request_spend.get()
+    if spend is not None:
+        spend[0] += usd
     month = month_key()
     ledger.add(_k(month, "usd", tier), usd)
     credit.spend(usd)
