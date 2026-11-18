@@ -511,11 +511,13 @@ def make_specialist(name: str):
     def node(state: dict[str, Any]) -> dict[str, Any]:
         """A stuck specialist (nodes.stuck_signals on its own work) steps up a tier, gets the brief and the web and
         forum tools, and RESCUE_ROUNDS more rounds: once per request, shared with the rest of the team."""
+        from app.config import get_settings
         from app.llm.model_manager import escalated
 
         own = state.get("messages", [])[state.get("agent_start", 0):]
-        rescued = state.get("rescues", 0) > 0
-        failures = [] if rescued else stuck_signals(
+        on = get_settings().rescue_enabled
+        rescued = on and state.get("rescues", 0) > 0
+        failures = [] if rescued or not on else stuck_signals(
             {"messages": [{"role": "user", "content": ""}, *own], "tool_rounds": state.get("agent_rounds", 0)})
         token = escalated.set(True) if rescued or failures else None
         try:

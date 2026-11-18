@@ -11,6 +11,7 @@ from typing import Any
 
 from langgraph.types import interrupt
 
+from app.config import get_settings
 from app.db.session import SessionLocal
 from app.departments.packs import critical_tools, is_finance_call, needs_go_ahead
 from app.llm import client as llm
@@ -359,8 +360,9 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
     stuck steps up a model tier for the rest of the turn (stuck_signals, RESCUE_NOTE)."""
     from app.llm.model_manager import escalated
 
-    rescued = state.get("rescues", 0) > 0
-    failures = [] if rescued else stuck_signals(state)
+    on = get_settings().rescue_enabled
+    rescued = on and state.get("rescues", 0) > 0
+    failures = [] if rescued or not on else stuck_signals(state)
     token = escalated.set(True) if rescued or failures else None
     try:
         out = _agent(state, rescued, failures)

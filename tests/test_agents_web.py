@@ -446,3 +446,15 @@ def test_a_stuck_specialist_is_stepped_up_once(monkeypatch):
     assert out["rescues"] == 1 and seen[0][0] is True and seen[0][1] is True and "forum_search" in seen[0][2]
     node({**state, "rescues": 1})
     assert seen[-1][0] is True and seen[-1][1] is False  # still stepped up, no second brief
+
+
+def test_getting_unstuck_can_be_switched_off(monkeypatch):
+    from app.config import get_settings
+    from app.llm import model_manager
+
+    seen = []
+    monkeypatch.setattr(get_settings(), "rescue_enabled", False)
+    monkeypatch.setattr(nodes.llm, "chat", lambda messages, tools=None, **kw: seen.append(
+        (model_manager.escalated.get(), str(messages[-1].get("content")))) or "Answer.")
+    out = nodes.agent(_turn_with_failures(["ERROR: a", "ERROR: b"]))
+    assert "rescues" not in out and seen == [(False, seen[0][1])] and "stuck" not in seen[0][1]

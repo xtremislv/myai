@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     # the location get these coordinates (default: Noida); without them District guessed Hong Kong. Change with
     # BROWSER_LOCATION="lat,lon" (e.g. Delhi 28.6139,77.2090; Mumbai 19.0760,72.8777).
     browser_location: str = "28.5355,77.3910"
+    # Getting unstuck (orchestrator.nodes.stuck_signals): off stops the step-up to a stronger model and the brief.
+    rescue_enabled: bool = True
     browser_languages: str = "en-IN,en;q=0.9,hi;q=0.8"
 
     # --- Web access for agents (app/browsing) ---
