@@ -35,7 +35,14 @@ def _secret(subject_id: str, scope: str) -> str:
     return f"browser/{scope}/{subject_id}"
 
 
+# The WhatsApp bot's browser (tools._browser_scope): no saved logins in, nothing saved out. Its conversation is
+# encrypted with a server key, so it never gets the person's own signed-in sessions.
+EPHEMERAL_SCOPES = ("whatsapp",)
+
+
 def load(subject_id: str, scope: str, chat_key: bytes | None) -> dict | None:
+    if scope in EPHEMERAL_SCOPES:
+        return None
     try:
         if scope == "private":
             if chat_key is None:
@@ -59,7 +66,7 @@ def load(subject_id: str, scope: str, chat_key: bytes | None) -> dict | None:
 
 def save(subject_id: str, scope: str, state: dict | None, chat_key: bytes | None, *, force: bool = False) -> None:
     key = session_key(subject_id, scope)
-    if state is None or (not force and time.monotonic() - _last_saved.get(key, 0) < SAVE_EVERY):
+    if scope in EPHEMERAL_SCOPES or state is None or (not force and time.monotonic() - _last_saved.get(key, 0) < SAVE_EVERY):
         return
     try:
         data = json.dumps(state)

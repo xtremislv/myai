@@ -47,8 +47,15 @@ HELP = ("This is TW-ai, the company assistant. Ask anything: research, products 
         "You can read and summarize your mail here; sending mail, your own files and saved details stay in the app.")
 NOT_LINKED = ("This number isn't linked to a TW-ai account. Sign in to TW-ai, open Settings > WhatsApp, "
               "enter this number and send the code it shows here.")
-ONLY_TEXT = ("I can read text, voice notes and documents (PDF, Word, Excel, text files) here. For images and other "
-             "files, use the TW-ai app.")
+ONLY_TEXT = ("I can read text, voice notes, photos, videos and documents (PDF, Word, Excel, text files) here. For "
+             "other files, use the TW-ai app.")
+IMAGE_MAX = 5 * 1024 * 1024    # WhatsApp's own limit for photos
+VIDEO_MAX = 16 * 1024 * 1024   # and for videos
+# A photo or video with no words: what most people send one for (owner, 2026-11-18: gadgets in reels).
+VIDEO_ASK = "What's in this video? If it shows products or gadgets, list each one and find where to buy it."
+IMAGE_ASK = "What's in this picture? If it shows products or gadgets, name each one and find where to buy it."
+# Reply buttons the assistant offers with show_person (tools.show_person): the button's words are the answer.
+ASK_BUTTON = "ask:"
 VOICE_MAX = 12 * 1024 * 1024  # as the app's voice input (routes_voice.MAX_BYTES)
 DOC_MAX = 20 * 1024 * 1024
 NSFW_SAMPLE_CHARS = 4000
@@ -142,22 +149,78 @@ def handle_message(message: dict, *, runner=None) -> None:
             return
         links.touch(session, link)
         cloud.mark_read(cfg, message["id"])
-        if button:
+        if button and not button.startswith(ASK_BUTTON):
             _button(session, cfg, phone, user, button)
             return
-        heard = ""
+        heard, images, seen = "", None, ""
         if message.get("type") in ("audio", "document"):
             got = _media(session, cfg, phone, link, message)
             if got is None:
                 return
             text, heard = got
+        elif message.get("type") in ("image", "video"):
+            got = _visual(session, cfg, phone, link, message)
+            if got is None:
+                return
+            text, images, seen = got
         elif message.get("type") not in ("text", "interactive", "button") or not text.strip():
             _send(cfg, phone, ONLY_TEXT)
             return
         elif _command(session, cfg, phone, link, user, text):
             return
         user_id, thread = user.id, links.thread_id(link)
-    answer(cfg, user_id, thread, phone, text.strip(), runner=runner, heard=heard)
+    answer(cfg, user_id, thread, phone, text.strip(), runner=runner, heard=heard, images=images, seen=seen)
+
+
+def _visual(session: Session, cfg: cloud.Config, phone: str, link, message: dict) -> tuple[str, list, str] | None:
+    """A photo or video: (what to answer, pictures for the model, words spoken in the video), or None when
+    there's nothing to answer. Nothing is stored: the pictures go to the model for this turn only."""
+    from fastapi import HTTPException
+
+    from app.request_manager import guards
+    from app.whatsapp import media
+
+    kind = message["type"]
+    obj = message.get(kind) or {}
+    try:
+        data, mime = cloud.download_media(cfg, str(obj.get("id", "")), VIDEO_MAX if kind == "video" else IMAGE_MAX)
+    except cloud.MediaTooLarge:
+        _send(cfg, phone, "That's too large for me (photos up to 5 MB, videos up to 16 MB).")
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("whatsapp media download failed: %s", type(e).__name__)
+        _send(cfg, phone, "I couldn't fetch that from WhatsApp. Try sending it again.")
+        return None
+    caption = str(obj.get("caption") or "").strip()
+    spoken = ""
+    try:
+        if kind == "image":
+            pictures = [media.image(data, mime)]
+        else:
+            _send(cfg, phone, "Watching the video…")
+            pictures, audio, _seconds = media.video(data)
+            if audio:
+                from app.api import routes_voice
+
+                try:
+                    routes_voice._throttle(link.user_id)
+                    spoken = str(routes_voice.transcribe(audio).get("text") or "").strip()
+                except HTTPException:
+                    spoken = ""  # the pictures still go; the words are a bonus
+    except media.MediaError as e:
+        _send(cfg, phone, str(e))
+        return None
+    if spoken:
+        flagged, _why = guards.is_nsfw(spoken[:NSFW_SAMPLE_CHARS])
+        if flagged:  # as a document: refused and reported
+            guards.report_nsfw(session, link.user_id, f"[WhatsApp video, spoken words] {spoken[:2000]}")
+            _send(cfg, phone, "I can't help with that video. As the company's rules require, it was reported to HR and "
+                              "the admin.")
+            return None
+    if not pictures:
+        _send(cfg, phone, "I couldn't get any pictures out of that video.")
+        return None
+    return caption or (VIDEO_ASK if kind == "video" else IMAGE_ASK), pictures, spoken
 
 
 def _media(session: Session, cfg: cloud.Config, phone: str, link, message: dict) -> tuple[str, str] | None:
@@ -255,19 +318,34 @@ def _command(session: Session, cfg: cloud.Config, phone: str, link, user: User, 
     return True
 
 
-def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, *, runner=None, heard: str = "") -> None:
-    """Triage and run one message like the app's chat box does, then reply."""
+def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, *, runner=None, heard: str = "",
+           images: list | None = None, seen: str = "") -> None:
+    """Triage and run one message like the app's chat box does, then reply. `images`: pictures the model looks at
+    on this turn (a photo, or a video's frames); `seen`: the words spoken in that video. The WhatsApp context
+    (channel, dashboards, what show_person sent) is this turn's only: put back afterwards."""
+    from app.orchestrator.context import channel, dashboards, shown_on_whatsapp
+
+    tokens = [(var, var.set(value)) for var, value in ((channel, "whatsapp"), (dashboards, None),
+                                                       (shown_on_whatsapp, []))]
+    try:
+        _answer(cfg, user_id, thread, phone, text, runner=runner, heard=heard, images=images, seen=seen)
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
+
+
+def _answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, *, runner=None, heard: str = "",
+           images: list | None = None, seen: str = "") -> None:
     from app import inflight
     from app.api import routes_chat
     from app.orchestrator import execution
-    from app.orchestrator.context import channel, dashboards
+    from app.orchestrator.context import dashboards
 
     with SessionLocal() as session:
         user = session.get(User, user_id)
         subject = Subject(id=user.id, roles=tuple(user.roles or ()))
         key = links.chat_key(session, user_id)
         files = links.files_context(session, links.get(session, user_id))
-    channel.set("whatsapp")
     made: list = []
     dashboards.set(made)
     try:
@@ -287,7 +365,14 @@ def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, 
                     ok = True
                     return
                 run = runner or execution.run
-                result = run(subject, text, thread, mode, None, chat_key=key, attachments=files)
+                extra = {}
+                if images:
+                    # One agent looks at the pictures once per step; a team would send them with every call.
+                    mode = "single"
+                    spoken = (f"Words spoken in the video (transcribed): {seen}" if seen else "")
+                    files = "\n\n".join(x for x in (files, spoken) if x) or None
+                    extra["images"] = images
+                result = run(subject, text, thread, mode, None, chat_key=key, attachments=files, **extra)
             out = routes_chat._private_reply(thread, mode, result)
         else:
             out = finished
@@ -300,6 +385,33 @@ def answer(cfg: cloud.Config, user_id: str, thread: str, phone: str, text: str, 
         inflight.finish(running, ok)
     note = f'_Heard: "{heard[:300]}{"…" if len(heard) > 300 else ""}"_' if heard else ""
     deliver(cfg, user_id, phone, _reply_text(out), list(out.dashboards or made), note=note)
+
+
+def show(user_id: str, message: str, picture: bytes | None, choices: list[str]) -> str:
+    """For tools.show_person: a screenshot (or just the question) and up to three reply buttons, sent to this
+    person's linked number while their 24-hour window is open. "Sent" or an ERROR line for the model."""
+    with SessionLocal() as session:
+        cfg = cloud.config(session)
+        link = links.get(session, user_id)
+        if cfg is None or link is None or not link.phone:
+            return "ERROR: this person has no linked WhatsApp number."
+        if not links.in_window(link):
+            return "ERROR: WhatsApp only allows replies within 24 hours of the person's last message."
+        phone = link.phone
+    try:
+        if picture is not None:
+            cloud.send_image(cfg, phone, picture, message)
+            if choices:
+                cloud.send_buttons(cfg, phone, "Tap one, or type your answer.",
+                                   [(f"{ASK_BUTTON}{n}", c) for n, c in enumerate(choices, 1)])
+        elif choices:
+            cloud.send_buttons(cfg, phone, message, [(f"{ASK_BUTTON}{n}", c) for n, c in enumerate(choices, 1)])
+        else:
+            cloud.send_text(cfg, phone, message)
+    except (cloud.CloudError, Exception) as e:  # noqa: BLE001 - the type only: never the content
+        logger.warning("whatsapp show failed: %s %s", type(e).__name__, getattr(e, "code", ""))
+        return "ERROR: the picture couldn't be sent on WhatsApp. Describe the page in words instead."
+    return "Sent"
 
 
 def _reply_text(out) -> str:

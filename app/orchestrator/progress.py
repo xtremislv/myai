@@ -40,6 +40,7 @@ TOOL_STEPS = {
     "weather": "Checking the weather in {location}",
     "fetch_page": "Reading {url}",
     "scrape_page": "Extracting {what} from {url}",
+    "show_person": "Sending you a screenshot",
     "browser_open": "Opening {url}",
     "browser_read": "Reading the page",
     "browser_click": "Clicking on the page",

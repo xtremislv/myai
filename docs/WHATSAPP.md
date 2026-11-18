@@ -22,7 +22,20 @@ which breaks WhatsApp's terms and gets numbers banned). Code: `app/whatsapp/` an
   20 a minute per person) and answered like typed text; the reply starts with what was heard.
 - **Documents:** PDF, Word, Excel and text files (up to 20 MB): their text is screened like an app upload and kept
   with the WhatsApp conversation for 3 days (encrypted, as the conversation), read with each private message.
-  A caption is answered at once; without one the bot says it has the file. `/reset` drops them. Images: not yet.
+  A caption is answered at once; without one the bot says it has the file. `/reset` drops them.
+- **Photos and videos (2026-11-18):** a photo (up to 5 MB) or a video (up to 16 MB, e.g. a reel saved from Instagram)
+  is shown to the model as pictures: a video as up to 16 frames spread over it, plus its spoken words (Whisper, first
+  3 minutes). The caption is the question; without one the bot lists the products or gadgets it shows and where to buy
+  them. Nothing is stored: the pictures go to the model for that turn only (`context.attachment_images`), so a
+  follow-up works from the answer. ffmpeg runs as `nobody` with limits and only the `file` protocol
+  (`app/whatsapp/media.py`). Instagram links themselves give only the caption and some comments.
+- **Browser in the background (2026-11-18):** the agent can use a real browser on WhatsApp (open, read, click, type,
+  scroll) in a session of its own (scope `whatsapp`: no saved logins, nothing kept). There is no live view: with
+  `show_person` it sends a screenshot of the page with a question and up to 3 reply buttons (a CAPTCHA or sign-in
+  page, a seat map, a product to confirm), at most 3 a turn; a button's words are the person's next message.
+  Booking and paying (`browser_commit`) stay in the app: the agent gets to the final choice and gives the link.
+- **Blocked sites:** tool results say what kind of block it was (address, CAPTCHA, sign-in, busy) and the agent tries
+  other sources first (District and PVR INOX for movies when BookMyShow blocks this server's address).
 - **Approvals:** linked admins get approval requests with Approve / Reject buttons. Someone who asked for work on
   WhatsApp gets the result there once it's approved or rejected.
 

@@ -261,8 +261,12 @@ def test_whatsapp_leaves_out_the_persons_own_data_and_person_present_tools():
         research = set(tools.tools_for("researcher"))
     finally:
         channel.reset(token)
-    assert {"read_file", "write_file", "send_mail", "mail_to_sheet", "fill_saved", "browser_open", "web_research"} & private == set()
-    assert {"web_search", "gadget_search", "set_reminder", "make_dashboard"} <= private <= app_private
+    assert {"read_file", "write_file", "send_mail", "mail_to_sheet", "fill_saved", "web_research"} & private == set()
+    # The browser runs in the background (owner, 2026-11-18): screenshots instead of the live view; no booking/paying.
+    assert {"browser_open", "browser_click", "browser_type", "show_person"} <= private
+    assert {"ask_person_to_browse", "browser_commit"} & private == set()
+    assert "show_person" not in app_private and "show_person" in research
+    assert {"web_search", "gadget_search", "set_reminder", "make_dashboard"} <= private - {"show_person"} <= app_private
     assert {"list_mailboxes", "read_mail", "search_mail", "open_mail", "summarize_mail", "mark_mail"} <= private
     assert not research & set(PERSON_PRESENT_TOOLS) and "web_search" in research
 
@@ -453,7 +457,7 @@ def test_unreadable_or_too_large_files_are_refused(db, sent, monkeypatch):
     MEDIA.update(data=b"1234", mime="text/plain")
     bot.handle_message(_media_msg("document", mid="m2", filename="big.txt"))
     assert _texts(sent)[-1].startswith("That file is too large")
-    bot.handle_message({"from": PHONE, "id": "m3", "type": "image", "image": {"id": "x"}, "phone_id": "PID"})
+    bot.handle_message({"from": PHONE, "id": "m3", "type": "location", "location": {}, "phone_id": "PID"})
     assert _texts(sent)[-1] == bot.ONLY_TEXT
 
 
@@ -480,3 +484,147 @@ def test_five_wrong_codes_use_up_the_pending_code(db):
         code = links.start(s, "u1", PHONE)                            # a new code gets new tries
         assert links.confirm(s, PHONE, wrong) is None
         assert links.confirm(s, PHONE, code).phone == PHONE
+
+
+# ---- the browser in the background, shown through screenshots; photos and videos (owner, 2026-11-18) ----
+@pytest.fixture
+def uploads(sent, monkeypatch):
+    """Like `sent`, plus media uploads (multipart) answered with an id."""
+    previous = cloud.transport
+    seen: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/media"):
+            seen.append(request.content)
+            return httpx.Response(200, json={"id": "MEDIA-OUT"})
+        return previous.handle_request(request)
+
+    monkeypatch.setattr(cloud, "transport", httpx.MockTransport(handler))
+    return seen
+
+
+class _FakeBrowser:
+    def __init__(self):
+        self.open = set()
+
+    def has(self, key):
+        return key in self.open
+
+    def call(self, fn, *args):
+        return fn(*args)
+
+    def screen(self, key):
+        return b"\xff\xd8JPEG-OF-" + key.encode(), "https://www.district.in/movies", "District"
+
+
+def _as_whatsapp(fn):
+    from app.orchestrator.context import channel, shown_on_whatsapp
+
+    tokens = (channel.set("whatsapp"), shown_on_whatsapp.set([]))
+    try:
+        return fn()
+    finally:
+        shown_on_whatsapp.reset(tokens[1])
+        channel.reset(tokens[0])
+
+
+def test_show_person_sends_the_screenshot_and_buttons(db, sent, uploads, monkeypatch):
+    from app.browsing import browser as browser_mod
+    from app.orchestrator import tools
+
+    _link(db)
+    fake = _FakeBrowser()
+    monkeypatch.setattr(browser_mod, "browser", lambda: fake)
+    state = {"subject_id": "u1", "subject_roles": ["researcher"], "scratchpad": {}}
+    out = _as_whatsapp(lambda: tools.show_person(state, "Which showtime?", "6:30 PM | 9:45 PM"))
+    assert out.startswith("ERROR: no page is open")
+    fake.open.add("u1:whatsapp")  # the WhatsApp browser session, never the app's "u1:private"
+    out = _as_whatsapp(lambda: tools.show_person(state, "Which showtime?", "6:30 PM | 9:45 PM | A very long option name"))
+    assert out.startswith("Shown to the person on WhatsApp with the screenshot")
+    assert b"JPEG-OF-u1:whatsapp" in uploads[-1]
+    image = next(m for m in sent if m.get("type") == "image")
+    assert image["image"] == {"id": "MEDIA-OUT", "caption": "Which showtime?"}
+    buttons = next(m for m in sent if m.get("type") == "interactive")["interactive"]["action"]["buttons"]
+    assert [(b["reply"]["id"], b["reply"]["title"]) for b in buttons] == [
+        ("ask:1", "6:30 PM"), ("ask:2", "9:45 PM"), ("ask:3", "A very long option n")]
+
+
+def test_show_person_only_on_whatsapp_and_at_most_three_a_turn(db, sent, uploads, monkeypatch):
+    from app.orchestrator import tools
+
+    _link(db)
+    state = {"subject_id": "u1", "subject_roles": [], "scratchpad": {}}
+    assert "WhatsApp only" in tools.show_person(state, "hi", screenshot=False)
+
+    def three_then_more():
+        return [tools.show_person(state, f"question {n}", screenshot=False) for n in range(4)]
+
+    results = _as_whatsapp(three_then_more)
+    assert all(r.startswith("Shown") for r in results[:3]) and results[3].startswith("ERROR: already sent 3")
+    assert _texts(sent)[-3:] == ["question 0", "question 1", "question 2"]
+
+
+def test_a_reply_button_is_the_persons_answer(db, sent):
+    _link(db)
+    seen = {}
+    message = {"from": PHONE, "id": "b1", "type": "interactive", "phone_id": "PID",
+               "interactive": {"type": "button_reply", "button_reply": {"id": "ask:2", "title": "PVR INOX"}}}
+    bot.handle_message(message, runner=lambda s, text, *a, **k: seen.update(text=text) or "Opening PVR INOX.")
+    assert seen["text"] == "PVR INOX" and _texts(sent)[-1] == "Opening PVR INOX."
+
+
+def test_the_whatsapp_browser_keeps_no_logins(monkeypatch):
+    from app.browsing import logins
+    from app.orchestrator import tools
+
+    assert logins.load("u1", "whatsapp", b"k" * 32) is None
+    logins.save("u1", "whatsapp", {"cookies": [{"name": "sid"}]}, None, force=True)  # a no-op, never an error
+    state = {"subject_id": "u1", "scratchpad": {}}
+    assert _as_whatsapp(lambda: tools._browser_scope(state)) == ("whatsapp", None)
+    assert tools._browser_scope({"subject_id": "u1", "scratchpad": {"department": "researcher"}})[0] == "researcher"
+
+
+def test_a_photo_goes_to_the_model_as_a_picture(db, sent):
+    _link(db)
+    MEDIA.update(data=b"\xff\xd8\xff\xe0small-jpeg", mime="image/jpeg", no_typing=False)
+    seen = {}
+
+    def runner(s, text, thread, mode, dept, *, images=None, **k):
+        seen.update(text=text, images=images, mode=mode)
+        return "That's a Mi Smart Band 9."
+
+    bot.handle_message(_media_msg("image", caption="what gadget is this?"), runner=runner)
+    assert seen["text"] == "what gadget is this?" and seen["mode"] == "single"
+    assert seen["images"] == [{"label": "picture", "data": MEDIA["data"], "type": "image/jpeg"}]
+    assert _texts(sent)[-1] == "That's a Mi Smart Band 9."
+
+
+def test_a_video_becomes_frames_and_its_words(db, sent, monkeypatch, tmp_path):
+    import shutil
+    import subprocess
+
+    from app.api import routes_voice
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("no ffmpeg here")
+    path = tmp_path / "reel.mp4"
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=10",
+                    "-f", "lavfi", "-i", "sine=duration=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    "-shortest", str(path)], check=True)
+    _link(db)
+    MEDIA.update(data=path.read_bytes(), mime="video/mp4", no_typing=False)
+    monkeypatch.setattr(routes_voice, "transcribe", lambda data, language="": {"text": "this sprayer costs 300"})
+    seen = {}
+
+    def runner(s, text, thread, mode, dept, *, images=None, attachments=None, **k):
+        seen.update(text=text, images=images, attachments=attachments)
+        return "1. A car foam sprayer (Mr DIY), about ₹300."
+
+    try:
+        bot.handle_message(_media_msg("video"), runner=runner)
+    except PermissionError:
+        pytest.skip("needs root to run ffmpeg as nobody")
+    assert _texts(sent)[0] == "Watching the video…"
+    assert seen["text"] == bot.VIDEO_ASK and 6 <= len(seen["images"]) <= 16
+    assert "Words spoken in the video (transcribed): this sprayer costs 300" in seen["attachments"]
+    assert _texts(sent)[-1].startswith("1. A car foam sprayer")

@@ -39,8 +39,43 @@ SHOWN_TOOLS_NOTE = (
 )
 
 
+# When a site refuses the assistant (owner, 2026-11-18: BookMyShow's block ended a movie search that District
+# could have answered; a reel link got web-search guesses). Tool results say which kind of block it was
+# (extract.blocked_advice). Ways around a block itself (other proxies, signed-in accounts) are the owner's call.
+BLOCKED_HINT = (
+    "When a site is blocked: never retry it or pretend you saw it. Get the same thing from other sources "
+    "first, without asking: movie showtimes, seats and prices: District by Zomato (district.in), PVR INOX "
+    "(pvrcinemas.com), Cinepolis (cinepolisindia.com), or web_search '<film> showtimes <city>' (these sites guess "
+    "the city from the server's address, which is abroad: always pick the person's city on the page first); products: "
+    "other shops and product_search; news or facts: other outlets. Then tell the person in a sentence what "
+    "was blocked and why (address blocked, CAPTCHA or sign-in), what you used instead, and 1-3 concrete "
+    "next steps, such as the site's link to do it themselves. An Instagram post or reel link: fetch_page gives "
+    "its caption and some comments, never the video; use them, and when the products are shown rather than "
+    "named, ask the person to forward the video or screenshots to the WhatsApp bot (videos and images sent "
+    "there are watched and read). Never guess what a post shows from its account name."
+)
+
+
+# On WhatsApp (owner, 2026-11-18): the browser runs in the background and the person sees it through screenshots.
+WHATSAPP_NOTE = (
+    "This conversation is on WhatsApp. There is no live browser here and nobody can take it over: the browser "
+    "runs in the background. Whenever the person needs to SEE something to decide or to confirm (a CAPTCHA or "
+    "sign-in page, a seat map, showtimes, the product you found, a filled form), use show_person: it sends them "
+    "a screenshot of the page with your question and up to 3 reply buttons, then stop and wait for their "
+    "reply. They can't solve a CAPTCHA or sign in from WhatsApp: say what else can be done (another site, the "
+    "link to do it themselves, or the TW-ai app's live browser). Booking and paying can't be finished here: get "
+    "as far as the final choice (seats, price), show it, and give the link to finish. Photos and videos the "
+    "person sends here are shown to you as pictures (a video as frames in order, plus the words spoken): look at "
+    "them closely, name each product you can identify (brand, model, what it does), say how sure you are, and "
+    "find where to buy it with prices and links. Keep replies short: WhatsApp is read on a phone."
+)
+
+
 def _with_tools_note(prompt: str) -> str:
-    return with_now(f"{prompt} {SHOWN_TOOLS_NOTE}")
+    from app.orchestrator.context import channel
+
+    whatsapp = f" {WHATSAPP_NOTE}" if channel.get() == "whatsapp" else ""
+    return with_now(f"{prompt} {SHOWN_TOOLS_NOTE} {BLOCKED_HINT}{whatsapp}")
 
 
 def _system_prompt(state: dict[str, Any]) -> str:
@@ -138,8 +173,9 @@ VIDEO_HINT = (
     "comments; fetch_page on a video's link also shows the products YouTube lists under it, with shop links. Give "
     "only product links you actually saw in a tool result, and always give the video links. Only public "
     "numbers exist here: say so if asked for watch time, CTR, revenue or audience. Instagram and TikTok need a "
-    "login and refuse this browser: find their posts through articles, Reddit or web_search, and say they "
-    "couldn't be opened, never that nothing exists."
+    "login for most things: for a given post or reel, fetch_page shows its caption, and the video itself must "
+    "be sent (see 'When a site is blocked'); for finding posts, use articles, Reddit or web_search, and say "
+    "they couldn't be opened, never that nothing exists."
 )
 
 

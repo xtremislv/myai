@@ -34,10 +34,8 @@ VIEWPORT = {"width": 1280, "height": 900}
 # Shown above a page that is a site's block or "unavailable" answer to an automated browser. Don't
 # retry or work around it: say so, and offer what still works.
 BLOCKED_NOTE = (
-    "BLOCKED: {site} refused this automated browser ({why}). This is not the real page: don't click "
-    "Retry or open it again. Tell the person {site} blocks the assistant's browser, and offer instead: "
-    "the same product on a shop that works (product_search with site='reliancedigital'), or the "
-    "product link so they can order it themselves."
+    "{advice} This is not the real page: don't click Retry or open it again. For a product, a shop that works "
+    "(product_search with site='reliancedigital') is one alternative."
 )
 
 
@@ -340,9 +338,10 @@ class Browser:
                 line += " (below)"
             lines.append(line)
         more = f"\n…and {len(elements) - MAX_ELEMENTS} more controls (scroll to see them)" if len(elements) > MAX_ELEMENTS else ""
-        blocked = extract.block_reason(title, text)
+        blocked = extract.block_kind(title, text)
         if blocked:
-            note = (f"{note}\n" if note else "") + BLOCKED_NOTE.format(site=_site_of(page.url), why=blocked)
+            note = (f"{note}\n" if note else "") + BLOCKED_NOTE.format(
+                advice=extract.blocked_advice(_site_of(page.url), *blocked))
         return (
             (f"{note}\n" if note else "")
             + f"PAGE: {title}\nURL: {page.url}\n\nTEXT:\n{extract.clip(text, PAGE_TEXT_CHARS)}\n\n"

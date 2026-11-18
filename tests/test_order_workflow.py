@@ -20,7 +20,8 @@ def test_amazons_rush_hour_page_and_flipkarts_retry_page_are_blocks():
     assert extract.block_reason(*amazon)
     assert extract.block_reason(*flipkart)
     assert extract.block_reason("Noise Three Wireless Headphone", "₹1,799 Add to Cart " * 200) is None
-    assert "don't click Retry" in BLOCKED_NOTE.format(site="amazon.in", why="x")
+    note = BLOCKED_NOTE.format(advice=extract.blocked_advice("amazon.in", *extract.block_kind(*amazon)))
+    assert "don't click Retry" in note and note.startswith("BLOCKED (busy): amazon.in says it's overloaded")
 
 
 def test_a_blocked_shop_falls_back_to_one_that_works_and_gives_the_link(monkeypatch):

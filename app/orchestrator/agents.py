@@ -23,6 +23,7 @@ from app.observability import graph_node_total, tracer
 from app.orchestrator.clock import with_now
 from app.orchestrator.context import with_attachments
 from app.orchestrator.nodes import (
+    BLOCKED_HINT,
     _department,
     _parse_tool_call,
     assistant_calls,
@@ -54,7 +55,7 @@ def _researcher_prompt(state: dict) -> str:
         "You are the RESEARCHER. Follow the plan and gather facts using your department's tools. "
         "Call several tools at once when they don't depend on each other. If a tool returns an "
         "ERROR, fix the arguments and try again. When you have everything the plan needs, reply "
-        "with one short sentence saying so, without calling a tool." + gap_text
+        "with one short sentence saying so, without calling a tool. " + BLOCKED_HINT + gap_text
     )
 
 

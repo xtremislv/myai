@@ -44,6 +44,12 @@ this file, this file is right.
   200k characters, `/v1/*` no-store (and `/r/` really no-store), JWT algorithm allowlist. Not done (owner's call):
   username normalisation; SSH (root password login, firewall off: the owner said leave E2E ports alone); Cloudflare
   rate-limit rule and HSTS; rotating the WhatsApp verify token.
+- **WhatsApp browser, screenshots, photos/videos, blocked sites (2026-11-18):** the agent has a background browser on
+  WhatsApp (scope `whatsapp`, no saved logins) and `show_person` sends screenshots with up to 3 reply buttons; photos
+  and videos sent to the bot go to Claude as pictures (video: 16 frames + Whisper words; ~₹2 a reel); blocked pages
+  are classified (address/CAPTCHA/sign-in/busy) with a "try other sources first" playbook (District, PVR INOX for
+  BookMyShow). Instagram links give caption + comments only (rendered page); the video must be forwarded. Sites
+  guess the city from the proxy's address (abroad): the playbook says to pick the city first. Paying stays in the app.
 - **Prepaid credit alerts (2026-11-17):** `app/llm/credit.py`, `scripts/llm_credit.py`; balance set to $49.43 on
   2026-11-17 ($50 top-up minus $0.57 already spent). Reset it after every top-up. See CLAUDE_CODE_SERVER.md.
 - **Scouts paused (owner, 2026-11-17):** all three `enabled=false`; resume from the Scouts page.

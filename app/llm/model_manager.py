@@ -223,9 +223,16 @@ def mode(spent: float, projected: float, budget: float, elapsed_days: float = 30
 def _last_user_text(messages: list[dict]) -> str:
     for m in reversed(messages):
         if m.get("role") == "user":
-            content = m.get("content")
-            return content if isinstance(content, str) else str(content or "")
+            return _text_of(m.get("content"))
     return ""
+
+
+def _text_of(content) -> str:
+    """A message's words: the text parts of a list (a picture is not words, and its base64 is not
+    "large context")."""
+    if isinstance(content, list):
+        return "\n".join(str(p.get("text") or "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+    return str(content or "")
 
 
 def base_tier(task: str, messages: list[dict], tools: list | None, background: bool = False) -> tuple[str, str]:
@@ -242,7 +249,7 @@ def base_tier(task: str, messages: list[dict], tools: list | None, background: b
         tool_results = sum(1 for m in messages if m.get("role") == "tool")
         if tool_results >= COMPLEX_TOOL_ROUNDS:
             return "complex", f"long tool chain ({tool_results} results)"
-        size = sum(len(str(m.get("content") or "")) for m in messages)
+        size = sum(len(_text_of(m.get("content"))) for m in messages)
         if size >= COMPLEX_CONTEXT_CHARS:
             return "complex", "large context"
         if COMPLEX_WORDS.search(text):

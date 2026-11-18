@@ -119,6 +119,30 @@ def _text(content: Any) -> str:
     return "" if content is None else str(content)
 
 
+_DATA_URL = re.compile(r"^data:(image/(?:jpeg|png|gif|webp));base64,(.+)$", re.S)
+
+
+def _has_images(content: Any) -> bool:
+    return isinstance(content, list) and any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
+
+
+def _user_blocks(content: list) -> list[dict]:
+    """OpenAI content parts -> Messages API blocks: text, and base64 images (data: URLs only; nothing
+    is fetched from elsewhere)."""
+    blocks: list[dict] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "image_url":
+            match = _DATA_URL.match(str((part.get("image_url") or {}).get("url") or ""))
+            if match:
+                blocks.append({"type": "image", "source": {"type": "base64", "media_type": match.group(1),
+                                                           "data": match.group(2)}})
+        elif str(part.get("text") or "").strip():
+            blocks.append({"type": "text", "text": str(part["text"])})
+    return blocks or [{"type": "text", "text": EMPTY}]
+
+
 def convert_tools(tools: list[dict] | None) -> list[dict]:
     out = []
     for t in tools or []:
@@ -186,6 +210,8 @@ def convert_messages(messages: list[dict]) -> tuple[str, list[dict]]:
                 blocks.append({"type": "tool_use", "id": call_id, "name": fn.get("name", "unknown"), "input": args})
                 open_calls.append(call_id)
             add("assistant", blocks)
+        elif role == "user" and _has_images(m.get("content")):
+            add("user", _user_blocks(m["content"]))
         else:  # user, or a system message mid-conversation
             note = f"[System note]\n{text}" if role == "system" else text
             add("user", [{"type": "text", "text": note if note.strip() else EMPTY}])

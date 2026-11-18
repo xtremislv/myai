@@ -119,6 +119,34 @@ def send_buttons(cfg: Config, to: str, body: str, buttons: list[tuple[str, str]]
                                for i, t in buttons[:3]]}}})
 
 
+CAPTION_LIMIT = 1024
+
+
+def upload_media(cfg: Config, data: bytes, mime: str, filename: str) -> str:
+    """Upload a file the bot sends (a screenshot) to Meta; returns its media id."""
+    url = f"{GRAPH}/{cfg.api_version}/{cfg.phone_id}/media"
+    with httpx.Client(timeout=60, transport=transport) as client:
+        resp = client.post(url, headers={"Authorization": f"Bearer {cfg.token}"},
+                           data={"messaging_product": "whatsapp", "type": mime},
+                           files={"file": (filename, data, mime)})
+    if resp.status_code >= 400:
+        try:
+            err = resp.json().get("error", {})
+        except ValueError:
+            err = {}
+        raise CloudError(f"WhatsApp media upload {resp.status_code}: {err.get('message', 'error')}", err.get("code"))
+    media_id = str(resp.json().get("id") or "")
+    if not media_id:
+        raise CloudError("WhatsApp media upload returned no id")
+    return media_id
+
+
+def send_image(cfg: Config, to: str, data: bytes, caption: str = "", mime: str = "image/jpeg") -> dict[str, Any]:
+    caption = caption if len(caption) <= CAPTION_LIMIT else caption[:CAPTION_LIMIT - 1] + "…"
+    media_id = upload_media(cfg, data, mime, "screenshot.jpg" if mime == "image/jpeg" else "picture")
+    return _post(cfg, {"to": to, "type": "image", "image": {"id": media_id, **({"caption": caption} if caption else {})}})
+
+
 def template_param(text: str) -> str:
     """Template parameters may not hold new lines, tabs or more than four spaces in a row."""
     flat = re.sub(r"\s+", " ", text).strip()

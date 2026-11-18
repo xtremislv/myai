@@ -107,6 +107,11 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
   notes key (`links.chat_key`), never the person's own, so `execution` leaves `user_key` unset when `context.channel`
   is "whatsapp" and `tools_for` drops person-present tools and the person's own data. A new tool that needs the
   person at a screen goes in `PERSON_PRESENT_TOOLS`. Never log message text; the webhook checks Meta's signature.
+  The WhatsApp browser uses scope `whatsapp` (`logins.EPHEMERAL_SCOPES`: no saved logins in or out) and shows pages
+  through `show_person` (`packs.WHATSAPP_ONLY_TOOLS`, left out of the app by `tools_for`). Photos and video frames
+  reach the model only through `context.attachment_images` (+ `with_attachments`), never graph state; media decoding
+  goes through `app/whatsapp/media.py` (ffmpeg as `nobody`, limits, `-protocol_whitelist file`). A blocked page is
+  reported with `extract.block_kind`/`blocked_advice`; the playbook is `nodes.BLOCKED_HINT`.
 - After changing `android/`, commit and run `scripts/publish_android.sh "notes"` so the website offers it and installed
   apps update themselves (`--required` if old apps would break). Never sign with another key than
   `~/.config/twai-android/release.jks`: phones refuse the update.

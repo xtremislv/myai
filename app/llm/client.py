@@ -197,8 +197,26 @@ CONTEXT_MARGIN_TOKENS = 512
 MIN_REPLY_TOKENS = 256
 
 
+IMAGE_TOKENS = 1600  # what one picture costs the model (Claude: ~(width x height) / 750, capped ~1.6k)
+
+
+def _without_images(message: dict) -> tuple[dict, int]:
+    """(the message with its pictures taken out, how many there were): a base64 picture is ~100k
+    characters but ~1.6k tokens, so it is counted by IMAGE_TOKENS, not by its length."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return message, 0
+    kept = [p for p in content if not (isinstance(p, dict) and p.get("type") == "image_url")]
+    return {**message, "content": kept}, len(content) - len(kept)
+
+
 def _estimate_tokens(messages: list[dict], tools: list | None = None) -> int:
-    size = sum(len(json.dumps(m, ensure_ascii=False, default=str)) for m in messages)
+    size, images = 0, 0
+    for m in messages:
+        bare, n = _without_images(m)
+        size += len(json.dumps(bare, ensure_ascii=False, default=str))
+        images += n
+    size += images * IMAGE_TOKENS * CHARS_PER_TOKEN
     if tools:
         size += len(json.dumps(tools, ensure_ascii=False, default=str))
     return size // CHARS_PER_TOKEN

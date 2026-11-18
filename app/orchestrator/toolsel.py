@@ -38,7 +38,7 @@ from app.orchestrator.context import tool_groups
 logger = logging.getLogger(__name__)
 
 GROUPS: dict[str, tuple[str, ...]] = {
-    "web": (*LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", *WALLET_TOOLS),
+    "web": (*LOOKUP_TOOLS, *BROWSE_TOOLS, "browser_commit", "show_person", *WALLET_TOOLS),
     "mail": MAIL_TOOLS,
     "files": FILE_TOOLS,
     "reminders": REMINDER_TOOLS,

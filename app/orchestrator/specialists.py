@@ -27,6 +27,7 @@ from app.orchestrator.agents import _conversation
 from app.orchestrator.clock import with_now
 from app.orchestrator.context import with_attachments
 from app.orchestrator.nodes import (
+    BLOCKED_HINT,
     JOB_NOTE,
     PRODUCT_HINT,
     READ_SOURCES,
@@ -130,6 +131,7 @@ SPECIALISTS: dict[str, Specialist] = {
             tools=(
                 "browser_open", "browser_read", "browser_click", "browser_type", "browser_select",
                 "browser_scroll", "browser_back", "fetch_page", "scrape_page", "web_search",
+                "show_person",  # WhatsApp only (tools_for leaves it out in the app)
             ),
             max_rounds=10,
             prompt=(
@@ -252,7 +254,7 @@ SPECIALISTS: dict[str, Specialist] = {
                 "product_search", "product_page", "web_search", "news_search", "fetch_page", "browser_open",
                 "browser_read", "browser_click", "browser_type", "browser_select", "browser_scroll",
                 "browser_back", "ask_person_to_browse", "browser_commit", "set_reminder",
-                "list_saved_details", "fill_saved", "ask_person_for_secret",
+                "list_saved_details", "fill_saved", "ask_person_for_secret", "show_person",
             ),
             max_rounds=16,
             prompt=(
@@ -462,7 +464,7 @@ def _specialist_convo(state: dict[str, Any], spec: Specialist) -> list[dict[str,
     own_work = state.get("messages", [])[state.get("agent_start", 0):]
     return [
         {"role": "system", "content": with_now(
-            f"{spec.prompt} {UNTRUSTED_RULE} If a tool returns an ERROR, fix the call or try another "
+            f"{spec.prompt} {UNTRUSTED_RULE} {BLOCKED_HINT} If a tool returns an ERROR, fix the call or try another "
             "way; never claim you have no access or ask for passwords or credentials: report the error itself. When the task is done, or can't be done, reply without calling a tool: a short "
             "report of what you found or did, with the facts, figures, dates and links that matter, "
             "and anything left undone."
@@ -495,7 +497,7 @@ def _unfinished_order(name: str, state: dict[str, Any], own: list[dict[str, Any]
     if not ORDER_WORDS.search(task) or ORDER_ENDS.search(report):
         return False
     called = {tc["function"]["name"] for m in own if m.get("role") == "assistant" for tc in m.get("tool_calls") or []}
-    stopped_for_person = called & {"browser_commit", "ask_person_to_browse", "ask_person_for_secret"}
+    stopped_for_person = called & {"browser_commit", "ask_person_to_browse", "ask_person_for_secret", "show_person"}
     return bool(called & {"browser_open", "browser_click"}) and not stopped_for_person
 
 

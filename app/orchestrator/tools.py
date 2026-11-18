@@ -36,6 +36,7 @@ from app.departments.packs import (
     REMINDER_TOOLS,
     SCOUT_TOOLS,
     TEMPLATE_TOOLS,
+    WHATSAPP_ONLY_TOOLS,
     WHATSAPP_PRIVATE_TOOLS,
 )
 from app.orchestrator.scout_tools import (
@@ -1373,10 +1374,14 @@ def _readable(url: str):
             if not extract.block_reason(r_title, r_text) and len(r_text) >= len(text):
                 page = type(page)(page.url, 200, "text/html", rendered)
                 title, text, status, blocked = r_title, r_text, 200, None
-    if blocked or status >= 400:
-        why = blocked if isinstance(blocked, str) else f"HTTP {status}"
-        return (f"ERROR: {page.url} refused automated access ({why}), so its content isn't available. "
-                "Try another source for the same information.")
+    kind = extract.block_kind(title, text, status) if page.is_html else None
+    if blocked or status >= 400 or kind:
+        if kind is None:
+            kind = ("busy" if status in (429, 503) else "address",
+                    blocked if isinstance(blocked, str) else f"HTTP {status}")
+        from urllib.parse import urlsplit
+
+        return f"ERROR: {page.url}: " + extract.blocked_advice(urlsplit(page.url).hostname or page.url, *kind)
     return page, title, text
 
 
@@ -2277,10 +2282,13 @@ def start_background_task(
 def _browser_scope(state: dict[str, Any]) -> tuple[str, bytes | None]:
     """(scope, key for saved logins): the department, or "private" with the person's own key.
     Private chat gets its own browser session, so cookies never cross between private and work."""
-    from app.orchestrator.context import user_key
+    from app.orchestrator.context import channel, user_key
 
     dept = (state.get("scratchpad") or {}).get("department")
-    return (dept, None) if dept else ("private", user_key.get())
+    if dept:
+        return dept, None
+    # WhatsApp: a session of its own, never the app's private one (which may hold the person's signed-in sites).
+    return ("whatsapp", None) if channel.get() == "whatsapp" else ("private", user_key.get())
 
 
 def _browse(state: dict[str, Any], action: str, method: str, *args) -> str:
@@ -2319,6 +2327,52 @@ def ask_person_to_browse(state: dict[str, Any], reason: str) -> str:
     return ("The person now sees the live browser in the chat, with your note. Stop here: tell them in one or two "
             "sentences what to do in it (for example sign in, enter the OTP, or choose how to pay) and to reply "
             "'done' when finished. Don't call more browser tools in this turn.")
+
+
+SHOW_PER_TURN = 3  # pictures/questions show_person may send in one turn
+
+
+def show_person(state: dict[str, Any], message: str, options: str = "", screenshot: bool = True) -> str:
+    """WhatsApp only: send the person a screenshot of the page the browser is on (a CAPTCHA or sign-in page, a
+    seat map, the product to confirm), with a question and up to three reply buttons. Their reply comes as
+    their next message. The app has the live browser instead (ask_person_to_browse)."""
+    from app.orchestrator.context import channel, shown_on_whatsapp
+
+    if (err := _enforce(state, "read", "web", "browse")) is not None:
+        return err
+    shown = shown_on_whatsapp.get()
+    if channel.get() != "whatsapp" or shown is None:
+        return "ERROR: show_person works on WhatsApp only. In the app, ask_person_to_browse shows the live browser."
+    if len(shown) >= SHOW_PER_TURN:
+        return (f"ERROR: already sent {SHOW_PER_TURN} pictures this turn. Stop and answer in words; the person "
+                "replies with their next message.")
+    message = " ".join(str(message or "").split())[:900]
+    if not message:
+        return "ERROR: message is empty: say what the picture shows and what the person should decide."
+    choices = [c.strip()[:20] for c in re.split(r"[|\n]", str(options or "")) if c.strip()][:3]
+    picture = None
+    if screenshot:
+        from app.browsing import logins
+        from app.browsing.browser import browser
+
+        b = browser()
+        key = logins.session_key(_subject(state).id, _browser_scope(state)[0])
+        if not b.has(key):
+            return "ERROR: no page is open. browser_open the page first, or call with screenshot false."
+        try:
+            picture, _url, _title = b.call(b.screen, key)
+        except Exception as e:  # noqa: BLE001
+            return f"ERROR: couldn't take the screenshot ({type(e).__name__})."
+    from app.whatsapp import bot
+
+    sent = bot.show(_subject(state).id, message, picture, choices)
+    if sent.startswith("ERROR"):
+        return sent
+    shown.append(message)
+    return ("Shown to the person on WhatsApp" + (" with the screenshot" if picture else "")
+            + (f" and the buttons {', '.join(choices)}" if choices else "") + ". Stop here: end this turn with one "
+            "short line (they have the picture and question already; don't repeat it). Their answer will be their "
+            "next message: carry on from there.")
 
 
 def browser_open(state: dict[str, Any], url: str) -> str:
@@ -2631,6 +2685,7 @@ TOOLS: dict[str, Callable[..., Any]] = {
     "list_saved_details": list_saved_details,
     "fill_saved": fill_saved,
     "ask_person_for_secret": ask_person_for_secret,
+    "show_person": show_person,
     "browser_open": browser_open,
     "browser_read": browser_read,
     "browser_click": browser_click,
@@ -2879,6 +2934,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "weather": "Current weather and the next 3 days for a place, e.g. 'Mumbai' or 'Hyderabad, India'.",
     "scrape_page": "Extract from a web page by URL: what='text', 'links' or 'tables', or the text of "
                    "elements matching a CSS selector.",
+    "show_person": "WhatsApp: send the person a screenshot of the page the browser is on, with your question and "
+                   "up to 3 short reply buttons (options: 'District | PVR INOX | Skip', 20 characters each). Use it "
+                   "when you need them: a CAPTCHA or sign-in page (they can't solve it from WhatsApp: offer what "
+                   "else to do), a choice only they can make (seats, a showtime, a size), or to confirm a product "
+                   "or a filled form before you go on. Then stop: their reply is their next message. screenshot "
+                   "false sends only the question.",
     "browser_open": "Open a URL in a real browser (runs JavaScript, keeps cookies for this task). "
                     "Shows the page text and numbered controls.",
     "browser_read": "Show the current browser page again with its numbered controls.",
@@ -3007,4 +3068,9 @@ def tools_for(department: str | None) -> dict[str, Callable[..., Any]]:
     chosen = dict(TOOLS) if names == ("*",) else {n: TOOLS[n] for n in names if n in TOOLS}
     if whatsapp:
         chosen = {n: fn for n, fn in chosen.items() if n not in PERSON_PRESENT_TOOLS}
+        if "browser_open" in chosen:  # work on WhatsApp too: screenshots instead of the live view
+            chosen.update({n: TOOLS[n] for n in WHATSAPP_ONLY_TOOLS})
+    else:
+        for name in WHATSAPP_ONLY_TOOLS:
+            chosen.pop(name, None)
     return chosen

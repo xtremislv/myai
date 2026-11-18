@@ -15,7 +15,7 @@ from typing import Any
 from langgraph.types import Command
 
 from app.acl.models import Subject
-from app.orchestrator.context import attachment_files, attachment_text, user_key
+from app.orchestrator.context import attachment_files, attachment_images, attachment_text, user_key
 from app.orchestrator.state import TURN_COUNTERS, TURN_LISTS, TURN_RESET
 from app.vault import user_keys
 
@@ -113,6 +113,7 @@ def run(
     attachments: str | None = None,
     context: list[dict[str, Any]] | None = None,
     files: list[dict] | None = None,
+    images: list[dict] | None = None,
 ) -> str | PendingAction:
     """With a chat_key this is a private conversation: its own checkpoint namespace,
     encrypted with that user's key."""
@@ -141,6 +142,7 @@ def run(
     token = attachment_text.set(attachments)
     key_token = user_key.set(_tool_key(chat_key))
     files_token = attachment_files.set(files)
+    images_token = attachment_images.set(images)
     try:
         with _graph_cm(mode, serde) as graph:
             if context and not chat_key:
@@ -149,6 +151,7 @@ def run(
             return _outcome(graph, config, final)
     finally:
         attachment_files.reset(files_token)
+        attachment_images.reset(images_token)
         user_key.reset(key_token)
         attachment_text.reset(token)
 

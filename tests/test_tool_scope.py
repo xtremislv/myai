@@ -24,7 +24,10 @@ def test_scoped_subsets():
 
 
 def test_admin_and_superuser():
-    assert tools_for("admin") == TOOLS            # admin = all tools
+    from app.departments.packs import WHATSAPP_ONLY_TOOLS
+
+    # admin = all tools (in the app: show_person exists only on WhatsApp)
+    assert tools_for("admin") == {n: f for n, f in TOOLS.items() if n not in WHATSAPP_ONLY_TOOLS}
     assert "inventory_adjust" in tools_for("superuser")
 
 

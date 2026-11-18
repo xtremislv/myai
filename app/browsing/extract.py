@@ -112,6 +112,66 @@ def passing_check(title: str, text: str) -> bool:
     return bool(why) and any(s in why for s in _PASSING_SIGNS)
 
 
+# What kind of refusal a block page is, for the advice the assistant gets (security of the next step:
+# never retry or work around it; owner's rule: other ways around a block are suggested, not tried).
+_CAPTCHA_SIGNS = ("captcha", "verify you are human", "verify you are a human", "are you a robot", "robot check",
+                  "unusual traffic", "please complete the security check", "press & hold", "press and hold")
+_BUSY_SIGNS = ("it's rush hour", "service unavailable error", "looks like all of india is here",
+               "hang in there, the offers are worth the wait")
+# A sign-in wall instead of the content (Instagram, TikTok, Facebook, LinkedIn show this to signed-out visitors).
+_SIGN_IN_SIGNS = ("log in to continue", "login to continue", "sign in to continue", "log in to see",
+                  "sign up to see", "log into instagram", "log in to instagram", "login • instagram",
+                  "you must be logged in", "please log in to", "log in to tiktok", "log in to facebook",
+                  "see photos and videos from friends")
+SIGN_IN_PAGE_MAX_CHARS = 4000
+
+
+def block_kind(title: str, text: str, status: int | None = None) -> tuple[str, str] | None:
+    """("address" | "captcha" | "sign-in" | "busy", why) for a page that isn't the real content, or None.
+    address: the site refuses this server's address (a person can't fix it from here); captcha: a
+    human check; sign-in: the content is behind an account; busy: the site says to come back later."""
+    why = block_reason(title, text)
+    head = f"{title}\n{text[:800]}".lower()
+    if why is None and len(text) <= SIGN_IN_PAGE_MAX_CHARS:
+        sign = next((s for s in _SIGN_IN_SIGNS if s in head), None)
+        if sign:
+            return "sign-in", f"a sign-in page ('{sign}')"
+    if why is None:
+        if status in (401, 403):
+            return "address", f"HTTP {status}"
+        if status in (429, 503):
+            return "busy", f"HTTP {status}"
+        return None
+    if any(s in head for s in _CAPTCHA_SIGNS):
+        return "captcha", why
+    if any(s in head for s in _BUSY_SIGNS) or status in (429, 503):
+        return "busy", why
+    return "address", why
+
+
+_ADVICE = {
+    "address": ("{site} refuses this server's address ({why}). Retrying, or a person solving something, won't "
+                "change that. FIRST get the same information from another source yourself (see 'When a site is "
+                "blocked'), then tell the person {site} was blocked and what you used instead, and offer {site}'s "
+                "link so they can do it themselves."),
+    "captcha": ("{site} shows a human check / CAPTCHA ({why}). Agents never solve these. FIRST try another source "
+                "for the same thing. If only {site} will do: in the app, ask_person_to_browse; on WhatsApp, "
+                "show_person with the screenshot and ask how to go on (they can't solve it from WhatsApp: offer "
+                "the link, or the app)."),
+    "sign-in": ("{site} only shows this to signed-in people ({why}). Agents never sign in for people. FIRST try "
+                "another source. For an Instagram/TikTok/Facebook post or reel, ask the person to forward the "
+                "video or screenshots to the WhatsApp bot: you can watch videos and read images sent there. In "
+                "the app, ask_person_to_browse lets them sign in themselves; on WhatsApp, show_person can show "
+                "them the page."),
+    "busy": ("{site} says it's overloaded ({why}). Try another source now; {site} may work again later."),
+}
+
+
+def blocked_advice(site: str, kind: str, why: str) -> str:
+    """The BLOCKED line a tool result starts with: what kind of block, and what to do next."""
+    return f"BLOCKED ({kind}): " + _ADVICE.get(kind, _ADVICE["address"]).format(site=site, why=why)
+
+
 def block_reason(title: str, text: str) -> str | None:
     """Why this looks like a block or challenge page rather than the real content, or None."""
     if len(text) > BLOCK_PAGE_MAX_CHARS:

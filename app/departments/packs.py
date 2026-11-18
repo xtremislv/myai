@@ -84,9 +84,15 @@ PRIVATE_TOOLS = (
 # (its confirmation is in the app, which can't open this server-key thread) and mail_to_sheet (saves to My files).
 WHATSAPP_MAIL_TOOLS = tuple(t for t in MAIL_TOOLS if t not in ("send_mail", "mail_to_sheet"))
 PERSON_PRESENT_TOOLS = ("ask_person_to_browse", "ask_person_for_secret", "fill_saved", "list_saved_details")
+# The browser on WhatsApp (owner, 2026-11-18): it runs in the background in a session of its own (scope
+# "whatsapp": no saved logins, which are locked with the person's own key, and nothing kept), and the person
+# sees it through screenshots (show_person) instead of the live view. browser_commit (booking, paying)
+# stays in the app, where the person confirms it.
+WHATSAPP_ONLY_TOOLS = ("show_person",)  # given only on WhatsApp (tools.tools_for), never in the app
+WHATSAPP_BROWSE_TOOLS = (*(t for t in BROWSE_TOOLS if t not in PERSON_PRESENT_TOOLS), *WHATSAPP_ONLY_TOOLS)
 WHATSAPP_PRIVATE_TOOLS = (  # web_research is left out: in private chat it saves its sheet to My files
-    *(t for t in LOOKUP_TOOLS if t != "web_research"), *WHATSAPP_MAIL_TOOLS, *REMINDER_TOOLS, "run_python", "make_dashboard",
-    "job_status", "more_tools",
+    *(t for t in LOOKUP_TOOLS if t != "web_research"), *WHATSAPP_BROWSE_TOOLS, *WHATSAPP_MAIL_TOOLS,
+    *REMINDER_TOOLS, "run_python", "make_dashboard", "job_status", "more_tools",
 )
 # Tools that need a person's go-ahead in every department and in private chat (where the person
 # confirms for themselves).
