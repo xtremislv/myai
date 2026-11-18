@@ -126,3 +126,13 @@ def test_frames_and_sound_come_out_of_a_video(tmp_path):
     assert frames[1]["label"].startswith("frame 2 at 0:0") and audio and round(seconds) == 8
     with pytest.raises(media.MediaError):
         media.video(b"not a video")
+
+
+def test_the_browser_says_it_is_in_india():
+    from app.browsing.browser import indian_location
+    from app.config import Settings
+
+    out = indian_location(Settings())
+    assert out["geolocation"] == {"latitude": 28.5355, "longitude": 77.391, "accuracy": 100}  # Noida
+    assert out["permissions"] == ["geolocation"] and out["extra_http_headers"]["Accept-Language"].startswith("en-IN")
+    assert "geolocation" not in indian_location(Settings(browser_location="somewhere"))  # unreadable: left out

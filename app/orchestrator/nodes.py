@@ -45,8 +45,8 @@ SHOWN_TOOLS_NOTE = (
 BLOCKED_HINT = (
     "When a site is blocked: never retry it or pretend you saw it. Get the same thing from other sources "
     "first, without asking: movie showtimes, seats and prices: District by Zomato (district.in), PVR INOX "
-    "(pvrcinemas.com), Cinepolis (cinepolisindia.com), or web_search '<film> showtimes <city>' (these sites guess "
-    "the city from the server's address, which is abroad: always pick the person's city on the page first); products: "
+    "(pvrcinemas.com), Cinepolis (cinepolisindia.com), or web_search '<film> showtimes <city>' (the browser's "
+    "location is Noida: when the person means another city, pick it on the page first); products: "
     "other shops and product_search; news or facts: other outlets. Then tell the person in a sentence what "
     "was blocked and why (address blocked, CAPTCHA or sign-in), what you used instead, and 1-3 concrete "
     "next steps, such as the site's link to do it themselves. An Instagram post or reel link: fetch_page gives "
@@ -292,11 +292,93 @@ def final_message(text: str, state: dict[str, Any]) -> dict[str, Any]:
     return with_dashboards({"role": "assistant", "content": fixed})
 
 
+# ---- getting unstuck (owner, 2026-11-18): when a turn keeps failing, a stronger model steps back, looks for a
+# fix on the web and forums, and tries another route, once per turn and with a few more steps ----
+RESCUE_ROUNDS = 4
+STUCK_ERRORS = 2       # failed tool results in this turn that make it stuck...
+STUCK_ROUNDS = 5       # ...or one failure once this many rounds have gone by
+RESCUE_TOOLS = ("web_search", "forum_search", "read_thread", "github_search", "fetch_page", "news_search")
+RESCUE_NOTE = (
+    "You seem to be stuck: {n} step(s) failed in this request:\n{failures}\n"
+    "A stronger model is now working on it, with {extra} more steps. 1) Work out WHY it failed: wrong arguments, a "
+    "blocked or changed site, missing information, or the wrong approach. 2) If it's an error, site or tool you "
+    "don't understand, look for a fix: web_search and forum_search (Reddit, Stack Exchange, GitHub issues) with "
+    "the exact error text or the site's name and what you were trying, then read the best thread (read_thread). "
+    "3) Take a different route: another site or source, another tool, different arguments, a simpler path. Never "
+    "repeat a failed call unchanged. Never get around a block, sign-in or CAPTCHA yourself (other proxies, "
+    "accounts, solving services): if forums suggest one, offer it to the person as an option. 4) If it still "
+    "can't be done, answer: what you tried, what you found, and 1-3 options for the person."
+)
+
+
+def _failed(content: str) -> bool:
+    text = content
+    try:
+        text = json.loads(content)  # tool results are stored JSON-encoded
+    except (TypeError, ValueError):
+        pass
+    head = str(text or "")[:700]
+    return (head.startswith(("ERROR", "ACCESS DENIED", "NOT RUN: you just made"))
+            or "BLOCKED (" in head or "\nERROR:" in head)
+
+
+def _gist(content: str) -> str:
+    try:
+        content = json.loads(content)
+    except (TypeError, ValueError):
+        pass
+    text = " ".join(str(content or "").split())
+    start = text.find("BLOCKED (")  # past the untrusted-content banner, to the point
+    return text[start if start > 0 else 0:][:220]
+
+
+def stuck_signals(state: dict[str, Any]) -> list[str]:
+    """The failed steps of this turn when it counts as stuck (STUCK_ERRORS failures, or one after STUCK_ROUNDS
+    rounds), else []. Each is "tool: the start of its result"."""
+    turn = this_turn(state.get("messages", []))
+    names = {tc["id"]: tc["function"]["name"] for m in turn if m.get("role") == "assistant"
+             for tc in m.get("tool_calls") or []}
+    failures = [f"- {names.get(m.get('tool_call_id'), m.get('name') or 'tool')}: " + _gist(m.get("content"))
+                for m in turn if m.get("role") == "tool" and _failed(m.get("content"))]
+    rounds = state.get("tool_rounds", 0)
+    if len(failures) >= STUCK_ERRORS or (failures and rounds >= STUCK_ROUNDS):
+        return failures[-6:]
+    return []
+
+
+def _with_rescue_tools(tools: list[dict[str, Any]], state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The tools shown, plus the web and forum tools this department has, for looking up a fix."""
+    shown = {t["function"]["name"] for t in tools}
+    extra = [t for t in tool_schemas(_department(state))
+             if t["function"]["name"] in RESCUE_TOOLS and t["function"]["name"] not in shown]
+    return [*tools, *extra]
+
+
 def agent(state: dict[str, Any]) -> dict[str, Any]:
-    """Call the model. With tools, it may ask for several calls (-> tools node) or answer."""
+    """Call the model. With tools, it may ask for several calls (-> tools node) or answer. A turn that got
+    stuck steps up a model tier for the rest of the turn (stuck_signals, RESCUE_NOTE)."""
+    from app.llm.model_manager import escalated
+
+    rescued = state.get("rescues", 0) > 0
+    failures = [] if rescued else stuck_signals(state)
+    token = escalated.set(True) if rescued or failures else None
+    try:
+        out = _agent(state, rescued, failures)
+    finally:
+        if token is not None:
+            escalated.reset(token)
+    if failures:
+        out["rescues"] = 1
+    return out
+
+
+def _agent(state: dict[str, Any], rescued: bool, failures: list[str]) -> dict[str, Any]:
     graph_node_total.labels(node="agent").inc()
     # Only the tool groups this message needs (toolsel.py): a shorter prompt is answered faster.
     tools = toolsel.select(tool_schemas(_department(state)), _department(state), state.get("messages", []))
+    max_rounds = MAX_TOOL_ROUNDS + (RESCUE_ROUNDS if rescued or failures else 0)
+    if tools and (rescued or failures):
+        tools = _with_rescue_tools(tools, state)
     with tracer.start_as_current_span("graph.agent"):
         convo = [{"role": "system", "content": _system_prompt(state)}, *compact_tool_results(state.get("messages", []))]
         if not tools:  # private chat: no tools, and the words stream to the person
@@ -313,13 +395,17 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
             reply = llm.chat(with_attachments([*convo, {"role": "user", "content": JOB_NOTE}]),
                              tools=tools, tool_choice="none", stream=private)
             return {"messages": [final_message(reply, state)], "next": "__end__"}
-        if state.get("tool_rounds", 0) >= MAX_TOOL_ROUNDS:
+        if state.get("tool_rounds", 0) >= max_rounds:
             step("Wrapping up with what I found")
             reply = llm.chat(with_attachments([*convo, {"role": "user", "content": BUDGET_NOTE}]),
                              tools=tools, tool_choice="none", stream=private)
             return {"messages": [final_message(reply, state)], "next": "__end__"}
 
         unread = searched_without_reading(this_turn(state.get("messages", [])))
+        if failures:  # just got stuck: the brief goes with this call only (like BUDGET_NOTE), never into state
+            step("That didn't work: thinking it over with a stronger model")
+            convo = [*convo, {"role": "user", "content": RESCUE_NOTE.format(
+                n=len(failures), failures="\n".join(failures), extra=RESCUE_ROUNDS)}]
         # If sources still need reading, a final answer now would be replaced: don't stream it.
         reply = llm.chat(with_attachments(convo), tools=tools, stream=private and not unread)
         calls = calls_in(reply)
@@ -327,7 +413,7 @@ def agent(state: dict[str, Any]) -> dict[str, Any]:
             reply = llm.chat(with_attachments([*convo, {"role": "user", "content": EMPTY_NUDGE}]),
                              tools=tools, stream=private and not unread)
             calls = calls_in(reply)
-        if not calls and unread and state.get("tool_rounds", 0) < MAX_TOOL_ROUNDS - 1:
+        if not calls and unread and state.get("tool_rounds", 0) < max_rounds - 1:
             step("Opening the best sources")
             reply = llm.chat(with_attachments([*convo, {"role": "user", "content": READ_SOURCES}]),
                              tools=tools, stream=private)

@@ -50,6 +50,12 @@ this file, this file is right.
   are classified (address/CAPTCHA/sign-in/busy) with a "try other sources first" playbook (District, PVR INOX for
   BookMyShow). Instagram links give caption + comments only (rendered page); the video must be forwarded. Sites
   guess the city from the proxy's address (abroad): the playbook says to pick the city first. Paying stays in the app.
+- **Getting unstuck and an Indian browser (2026-11-18):** a stuck turn (2 failed steps, or 1 after 5 rounds) gets, once
+  per request: one tier up (Sonnet->Opus, Opus->Fable, within the budget/mix rules), a brief to diagnose, search the web
+  and forums (Reddit/Stack Exchange/GitHub) for a fix and take another route, the search tools and 4 more rounds;
+  specialists too. Claude API failures (overloaded/5xx/429/timeout) are retried once on another model if no words were
+  shown yet. The browser now has a location in India (BROWSER_LOCATION, default Noida) and en-IN/hi languages: District
+  showed Hong Kong before (the proxy and this server are both Indian addresses; the browser had no location).
 - **Prepaid credit alerts (2026-11-17):** `app/llm/credit.py`, `scripts/llm_credit.py`; balance set to $49.43 on
   2026-11-17 ($50 top-up minus $0.57 already spent). Reset it after every top-up. See CLAUDE_CODE_SERVER.md.
 - **Scouts paused (owner, 2026-11-17):** all three `enabled=false`; resume from the Scouts page.

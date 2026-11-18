@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     llm_context_tokens: int = 65536
     # Agents are told the current date and time in this zone ("tomorrow" must mean something).
     timezone: str = "Asia/Kolkata"
+    # Where the agents' browser says it is (owner, 2026-11-18: "make the browser look Indian"). Sites that ask for
+    # the location get these coordinates (default: Noida); without them District guessed Hong Kong. Change with
+    # BROWSER_LOCATION="lat,lon" (e.g. Delhi 28.6139,77.2090; Mumbai 19.0760,72.8777).
+    browser_location: str = "28.5355,77.3910"
+    browser_languages: str = "en-IN,en;q=0.9,hi;q=0.8"
 
     # --- Web access for agents (app/browsing) ---
     # Bing market for search and news, e.g. en-IN, en-US.

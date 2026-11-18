@@ -39,6 +39,19 @@ BLOCKED_NOTE = (
 )
 
 
+def indian_location(settings) -> dict:
+    """The browser looks like a person in India (owner, 2026-11-18): Indian languages first, and a location in
+    India for sites that ask (movie and shop sites pick the city from it). An unreadable setting is left out."""
+    out: dict = {"extra_http_headers": {"Accept-Language": settings.browser_languages}}
+    try:
+        lat, lon = (float(x) for x in settings.browser_location.split(","))
+    except (ValueError, AttributeError):
+        return out
+    if -90 <= lat <= 90 and -180 <= lon <= 180:
+        out.update(geolocation={"latitude": lat, "longitude": lon, "accuracy": 100}, permissions=["geolocation"])
+    return out
+
+
 async def _click(handle, ref: int) -> None:
     """Click like a person would. Sticky headers often cover a button that was scrolled to the top
     edge ("... intercepts pointer events"): then centre it and try again, and as a last resort
@@ -286,6 +299,7 @@ class Browser:
             user_agent=USER_AGENT, locale="en-IN", timezone_id=settings.timezone,
             viewport=VIEWPORT, accept_downloads=False,
             service_workers="block", java_script_enabled=True, storage_state=storage_state,
+            **indian_location(settings),
         )
         await context.route("**/*", _guard_request)
         await context.route_web_socket("**/*", _guard_websocket)

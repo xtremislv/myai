@@ -31,8 +31,11 @@ from app.orchestrator.nodes import (
     JOB_NOTE,
     PRODUCT_HINT,
     READ_SOURCES,
+    RESCUE_NOTE,
+    RESCUE_ROUNDS,
     VIDEO_HINT,
     _department,
+    _with_rescue_tools,
     assistant_calls,
     calls_in,
     compact_tool_results,
@@ -41,6 +44,7 @@ from app.orchestrator.nodes import (
     pending_calls,
     searched_without_reading,
     started_background,
+    stuck_signals,
 )
 from app.orchestrator.progress import step
 from app.orchestrator.tools import TOOL_DESCRIPTIONS, tool_schemas
@@ -505,19 +509,45 @@ def make_specialist(name: str):
     spec = SPECIALISTS[name]
 
     def node(state: dict[str, Any]) -> dict[str, Any]:
+        """A stuck specialist (nodes.stuck_signals on its own work) steps up a tier, gets the brief and the web and
+        forum tools, and RESCUE_ROUNDS more rounds: once per request, shared with the rest of the team."""
+        from app.llm.model_manager import escalated
+
+        own = state.get("messages", [])[state.get("agent_start", 0):]
+        rescued = state.get("rescues", 0) > 0
+        failures = [] if rescued else stuck_signals(
+            {"messages": [{"role": "user", "content": ""}, *own], "tool_rounds": state.get("agent_rounds", 0)})
+        token = escalated.set(True) if rescued or failures else None
+        try:
+            out = body(state, rescued, failures)
+        finally:
+            if token is not None:
+                escalated.reset(token)
+        if failures:
+            out["rescues"] = 1
+        return out
+
+    def body(state: dict[str, Any], rescued: bool, failures: list[str]) -> dict[str, Any]:
         graph_node_total.labels(node=f"specialist_{name}").inc()
         tools = available(state).get(name, [])
+        max_rounds = spec.max_rounds + (RESCUE_ROUNDS if rescued or failures else 0)
+        if tools and (rescued or failures):
+            tools = _with_rescue_tools(tools, state)
         rounds = state.get("agent_rounds", 0)
         if rounds == 0:
             step(spec.title)
         with tracer.start_as_current_span(f"agents.{name}"):
             convo = _specialist_convo(state, spec)
             own_so_far = state.get("messages", [])[state.get("agent_start", 0):]
+            if failures:
+                step("That didn't work: thinking it over with a stronger model")
+                convo.append({"role": "user", "content": RESCUE_NOTE.format(
+                    n=len(failures), failures="\n".join(failures), extra=RESCUE_ROUNDS)})
             if tools and started_background(own_so_far):
                 convo.append({"role": "user", "content": JOB_NOTE + " Write it as your report."})
                 reply = llm.chat(convo, tools=tools, tool_choice="none")
                 calls = []
-            elif rounds >= spec.max_rounds or not tools:
+            elif rounds >= max_rounds or not tools:
                 convo.append({"role": "user", "content": "No more tool calls: write your report now."})
                 reply = llm.chat(convo, tools=tools or None, tool_choice="none" if tools else None)
                 calls = []
@@ -536,14 +566,14 @@ def make_specialist(name: str):
                     calls = calls_in(reply)
                 own = state.get("messages", [])[state.get("agent_start", 0):]
                 can_read = any(t["function"]["name"] == "fetch_page" for t in tools)
-                if not calls and can_read and rounds < spec.max_rounds - 1 and searched_without_reading(own):
+                if not calls and can_read and rounds < max_rounds - 1 and searched_without_reading(own):
                     step("Opening the best sources")
                     convo.append({"role": "assistant", "content": str(reply)})
                     convo.append({"role": "user", "content": READ_SOURCES})
                     reply = llm.chat(convo, tools=tools)
                     calls = calls_in(reply)
                 nudges = state.get("order_nudges", 0)
-                if not calls and rounds < spec.max_rounds - 1 and _unfinished_order(name, state, own, str(reply)):
+                if not calls and rounds < max_rounds - 1 and _unfinished_order(name, state, own, str(reply)):
                     step("Carrying on with the order")
                     convo.append({"role": "assistant", "content": str(reply)})
                     convo.append({"role": "user", "content": ORDER_CONTINUE})

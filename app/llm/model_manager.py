@@ -28,6 +28,7 @@ import datetime as dt
 import logging
 import re
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -294,6 +295,21 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+# A stuck turn (orchestrator.nodes.stuck_signals): its answer calls step up one tier, at least to complex
+# (owner, 2026-11-18: "Opus first", Fable when Opus was already working on it). The budget and the monthly mix
+# still apply afterwards (steer), so a month over budget stays on the cheaper models.
+
+escalated: ContextVar[bool] = ContextVar("escalated", default=False)
+
+
+def step_up(tier: str) -> str:
+    return "complex" if TIERS.index(tier) < TIERS.index("complex") else "deep"
+
+
+# When the API fails a call after the SDK's own retries (overloaded, 5xx, timeout): the tier tried once instead.
+FALLBACK_TIER = {"light": "standard", "standard": "complex", "complex": "standard", "deep": "complex"}
+
+
 def choose(task: str, messages: list[dict], tools: list | None = None, requested: str | None = None,
            background: bool = False) -> Choice:
     """The model for this call. `requested`: a Claude model id a caller insists on (kept as is)."""
@@ -303,6 +319,8 @@ def choose(task: str, messages: list[dict], tools: list | None = None, requested
     if not _settings().llm_smart_routing:
         return Choice("standard", _settings().llm_model, "smart routing off")
     tier, reason = base_tier(task, messages, tools, background)
+    if escalated.get() and task.startswith(ANSWER_TASKS):
+        tier, reason = step_up(tier), f"{reason}; stepped up: the task got stuck"
     tier, reason = steer(tier, reason, task, month_summary())
     ledger.add(_k(month_key(), "calls", tier), 1)
     return Choice(tier, models()[tier], reason)

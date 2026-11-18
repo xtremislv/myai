@@ -19,7 +19,8 @@ def per_turn(old: list | None, new: list | None) -> list:
 
 
 # Counters that are per request; execution.run sets them to 0 for every new message.
-TURN_COUNTERS = ("tool_rounds", "research_steps", "reflections", "handoffs", "agent_rounds", "agent_start", "order_nudges")
+TURN_COUNTERS = ("tool_rounds", "research_steps", "reflections", "handoffs", "agent_rounds", "agent_start", "order_nudges",
+                 "rescues")
 TURN_LISTS = ("research_notes", "review_notes", "assignments")
 
 
@@ -52,3 +53,4 @@ class AgentState(TypedDict, total=False):
     agent_rounds: int               # tool rounds in the current task (bounded per specialist)
     agent_start: int                # index in messages where the current task's own work begins
     order_nudges: int               # times a shopping specialist was sent back to finish an order
+    rescues: int                    # single agent: 1 once this turn got stuck and was stepped up (nodes.stuck_signals)

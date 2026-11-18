@@ -380,3 +380,69 @@ def test_a_specialist_that_refuses_without_tools_is_sent_back_to_search(monkeypa
     assert nudged == [True]
     assert final["research_notes"] == ["[research] Brand X was criticised for an AI ad (news, 2026-11-03)."]
     assert any("Story about AI ads" in m["content"] for m in final["messages"] if m["role"] == "tool")
+
+
+# ---- getting unstuck (owner, 2026-11-18) ----
+def _turn_with_failures(results, rounds=1):
+    msgs = [{"role": "user", "content": "book tickets"}]
+    for n, text in enumerate(results):
+        msgs.append({"role": "assistant", "content": "", "tool_calls": [
+            {"id": f"c{n}", "type": "function", "function": {"name": "fetch_page", "arguments": "{}"}}]})
+        msgs.append({"role": "tool", "tool_call_id": f"c{n}", "name": "fetch_page", "content": json.dumps(text)})
+    return {"messages": msgs, "scratchpad": {}, "subject_id": "u1", "subject_roles": [], "tool_rounds": rounds}
+
+
+def test_a_turn_is_stuck_after_two_failures_or_one_late_failure():
+    blocked = "ERROR: https://in.bookmyshow.com/x: BLOCKED (address): in.bookmyshow.com refuses this server's address"
+    assert nodes.stuck_signals(_turn_with_failures(["fine page", blocked])) == []
+    assert nodes.stuck_signals(_turn_with_failures([blocked], rounds=5))[0].startswith("- fetch_page: ")
+    two = nodes.stuck_signals(_turn_with_failures([blocked, "<<UNTRUSTED...>>\nERROR: timed out"]))
+    assert len(two) == 2 and "BLOCKED (address)" in two[0]
+
+
+def test_the_stuck_turn_gets_a_stronger_model_the_brief_search_tools_and_more_rounds(monkeypatch):
+    from app.llm import model_manager
+
+    seen = []
+
+    def chat(messages, tools=None, **kw):
+        seen.append({"note": messages[-1]["content"] if messages[-1]["role"] == "user" else "",
+                     "tools": {t["function"]["name"] for t in tools or []}, "up": model_manager.escalated.get()})
+        return "Here's what I found instead."
+
+    monkeypatch.setattr(nodes.llm, "chat", chat)
+    monkeypatch.setattr(nodes.toolsel, "select", lambda schemas, dept, messages: [
+        t for t in schemas if t["function"]["name"] in ("browser_open", "fetch_page")])
+    state = _turn_with_failures(["ERROR: x", "ERROR: y"])
+    out = nodes.agent(state)
+    assert out["rescues"] == 1 and seen[0]["up"] is True
+    assert seen[0]["note"].startswith("You seem to be stuck: 2 step(s) failed") and "forum_search" in seen[0]["note"]
+    assert {"web_search", "forum_search", "read_thread"} <= seen[0]["tools"]
+    assert model_manager.escalated.get() is False  # only for this turn's calls
+    # later in the same turn: still stepped up, no second brief, and 4 more rounds than usual
+    later = {**state, "rescues": 1, "tool_rounds": nodes.MAX_TOOL_ROUNDS}
+    out = nodes.agent(later)
+    assert "rescues" not in out and seen[1]["up"] is True and "stuck" not in seen[1]["note"]
+    assert out["next"] == "__end__" and not seen[1]["note"].startswith("You have used all")
+    nodes.agent({**later, "tool_rounds": nodes.MAX_TOOL_ROUNDS + nodes.RESCUE_ROUNDS})
+    assert seen[2]["note"].startswith("You have used all your tool calls")
+
+
+def test_a_stuck_specialist_is_stepped_up_once(monkeypatch):
+    from app.llm import model_manager
+
+    seen = []
+
+    def chat(messages, tools=None, **kw):
+        seen.append((model_manager.escalated.get(), "You seem to be stuck" in str(messages[-1].get("content")),
+                     {t["function"]["name"] for t in tools or []}))
+        return "Report: BookMyShow refused; District has the showtimes."
+
+    monkeypatch.setattr(specialists.llm, "chat", chat)
+    node = specialists.make_specialist("browser")
+    turn = _turn_with_failures(["ERROR: a", "ERROR: b"])
+    state = {**turn, "agent_start": 1, "agent_rounds": 2, "assignments": ["find showtimes"]}
+    out = node(state)
+    assert out["rescues"] == 1 and seen[0][0] is True and seen[0][1] is True and "forum_search" in seen[0][2]
+    node({**state, "rescues": 1})
+    assert seen[-1][0] is True and seen[-1][1] is False  # still stepped up, no second brief

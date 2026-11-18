@@ -6,6 +6,7 @@ messages and tools, so callers don't change)."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -30,6 +31,7 @@ from app.observability import (
 )
 from app.orchestrator.clock import place_clock
 
+logger = logging.getLogger(__name__)
 _settings = get_settings()
 _client = OpenAI(base_url=_settings.llm_base_url, api_key=_settings.llm_api_key)
 
@@ -396,6 +398,31 @@ def _chat(
         return Reply(strip_thoughts(message.content or ""), _calls(message))
 
 
+# Failures worth one try on another model: overloaded (529), server errors, rate limits (they are per model),
+# timeouts and dropped connections. Never a bad request, a refused key or an empty credit balance.
+_SWITCH_STATUSES = (408, 429, 500, 502, 503, 504, 529)
+
+
+def _fallback(exc: Exception, choice, said: list[bool]):
+    """The model to try once after an API failure, or None (owner, 2026-11-18: switch models when stuck).
+    Not once words were streamed to the person (they'd see the answer twice), and not for a model the
+    caller asked for by name."""
+    from app.llm import credit, model_manager
+
+    if said or choice.reason == "asked for by the caller" or credit.is_out_of_credit(exc):
+        return None
+    status = getattr(exc, "status_code", None)
+    name = type(exc).__name__
+    if status not in _SWITCH_STATUSES and name not in ("APITimeoutError", "APIConnectionError", "OverloadedError",
+                                                       "InternalServerError", "RateLimitError"):
+        return None
+    tier = model_manager.FALLBACK_TIER.get(choice.tier)
+    model = model_manager.models().get(tier or "")
+    if not model or model == choice.model:
+        return None
+    return model_manager.Choice(tier, model, f"{choice.reason}; switched after {name}")
+
+
 def _claude(
     messages: list[dict],
     *,
@@ -414,6 +441,13 @@ def _claude(
     choice = model_manager.choose(task, messages, tools, requested=model, background=background.get())
     model = choice.model
     sink = token_sink.get() if stream else None
+    said: list[bool] = []
+    if sink is not None:
+        outer = sink
+
+        def sink(text: str) -> None:  # noqa: F811 - the same sink, noting that words reached the person
+            said.append(True)
+            outer(text)
     convo, max_tokens = fit_to_context(
         [_for_model(m) for m in place_clock(messages)], tools, kwargs.get("max_tokens", _settings.llm_max_tokens))
     request = claude.params(convo, model=model, max_tokens=max_tokens, tools=tools, tool_choice=tool_choice)
@@ -422,7 +456,19 @@ def _claude(
         span.set_attribute("llm.tier", choice.tier)
         start = time.perf_counter()
         try:
-            text, calls, usage, raw = claude.call(request, sink, timeout=kwargs.get("timeout"))
+            try:
+                text, calls, usage, raw = claude.call(request, sink, timeout=kwargs.get("timeout"))
+            except Exception as exc:
+                fallback = _fallback(exc, choice, said)
+                if fallback is None:
+                    raise
+                llm_requests_total.labels(model=model, status="error").inc()
+                logger.warning("model switch after an API error: %s -> %s (%s)", choice.tier, fallback.tier,
+                               type(exc).__name__)
+                choice, model = fallback, fallback.model
+                span.set_attribute("llm.model", model)
+                request = claude.params(convo, model=model, max_tokens=max_tokens, tools=tools, tool_choice=tool_choice)
+                text, calls, usage, raw = claude.call(request, sink, timeout=kwargs.get("timeout"))
             llm_requests_total.labels(model=model, status="ok").inc()
         except Exception as exc:
             llm_requests_total.labels(model=model, status="error").inc()

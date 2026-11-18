@@ -196,3 +196,73 @@ def test_no_history_breakpoint_without_a_stamp_or_text():
     req = claude.params([{"role": "user", "content": "plain"}], model="claude-haiku-5-5", max_tokens=50,
                         tools=None, tool_choice=None)
     assert "cache_control" not in req["messages"][-1]["content"][0] and "system" not in req
+
+
+# ---- switching models (owner, 2026-11-18): after an API failure, and when a turn gets stuck ----
+class _Overloaded(Exception):
+    status_code = 529
+
+
+def test_an_overloaded_model_is_retried_once_on_another(anthropic, monkeypatch):
+    used = []
+
+    def call(request, sink, timeout=None):
+        used.append(request["model"])
+        if len(used) == 1:
+            raise _Overloaded("overloaded")
+        raw = _block(input_tokens=1, output_tokens=1, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+        return "fine", [], claude.usage_of(raw), raw
+
+    monkeypatch.setattr(claude, "call", call)
+    assert client.chat([{"role": "user", "content": "hi"}], task="orchestrator.nodes.agent") == "fine"
+    assert used == ["claude-sonnet-5-5", "claude-opus-5-5"]
+
+
+def test_no_switch_after_words_were_shown_or_for_a_bad_request(anthropic, monkeypatch):
+    from app.llm import client as client_mod
+
+    class BadRequest(Exception):
+        status_code = 400
+
+    tries = []
+
+    def call(request, sink, timeout=None):
+        tries.append(request["model"])
+        if sink:
+            sink("Hello ")
+        raise _Overloaded("overloaded")
+
+    monkeypatch.setattr(claude, "call", call)
+    token = client_mod.token_sink.set(lambda t: None)
+    try:
+        with pytest.raises(_Overloaded):
+            client.chat([{"role": "user", "content": "hi"}], stream=True, task="orchestrator.nodes.agent")
+    finally:
+        client_mod.token_sink.reset(token)
+    assert len(tries) == 1  # words already reached the person: no second answer
+
+    def bad(request, sink, timeout=None):
+        tries.append(request["model"])
+        raise BadRequest("bad")
+
+    monkeypatch.setattr(claude, "call", bad)
+    with pytest.raises(BadRequest):
+        client.chat([{"role": "user", "content": "hi"}], task="orchestrator.nodes.agent")
+    assert len(tries) == 2
+
+
+def test_a_stuck_turn_steps_up_a_tier_within_the_budget_rules(anthropic, monkeypatch):
+    from app.llm import model_manager as mm
+
+    msgs = [{"role": "user", "content": "find showtimes"}]
+    token = mm.escalated.set(True)
+    try:
+        assert mm.choose("orchestrator.nodes.agent", msgs).model == "claude-opus-5-5"       # Sonnet -> Opus
+        long = msgs + [{"role": "tool", "content": "x"}] * 5                                  # Opus already -> Fable
+        assert mm.choose("orchestrator.nodes.agent", long).model == "claude-fable-5-2"
+        assert mm.choose("request_manager.guards.triage", msgs).tier == "light"              # sorting isn't stepped up
+        real = mm.month_summary
+        monkeypatch.setattr(mm, "month_summary", lambda *a: {**real(*a), "mode": "over budget"})
+        assert mm.choose("orchestrator.nodes.agent", msgs).tier == "standard"               # budget used up: no Opus
+    finally:
+        mm.escalated.reset(token)
