@@ -341,18 +341,26 @@ def searched_without_reading(messages: list[dict[str, Any]]) -> bool:
     return bool(names & SEARCH_TOOLS) and not names & READING_TOOLS
 
 
-# Older tool results are cut to this many characters before going back to the model: web pages
-# are long. The latest round always goes in full.
+# Tool results from earlier turns are cut to this many characters before going back to the model:
+# web pages are long. This turn's results go in full while they total under TURN_RESULT_CHARS, so
+# each round's request starts with the last one's text and is read back from the prompt cache;
+# shortening a result after it was sent (as every round did until 2026-11-18) changed the text the
+# cache holds, and every later round of the turn missed. Past the budget, older rounds are cut again.
 OLD_RESULT_CHARS = 3000
+TURN_RESULT_CHARS = 80_000
 
 
 def compact_tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Messages with every tool result except the latest round's shortened."""
+    """Messages with tool results from earlier turns shortened, and this turn's too (except the
+    latest round) once they pass TURN_RESULT_CHARS."""
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
     last_call = max((i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("tool_calls")), default=-1)
+    this_turn_chars = sum(len(m.get("content") or "") for m in messages[last_user + 1:] if m.get("role") == "tool")
+    cut_before = last_call if this_turn_chars > TURN_RESULT_CHARS else last_user
     out = []
     for i, m in enumerate(messages):
         content = m.get("content") or ""
-        if m.get("role") == "tool" and i < last_call and len(content) > OLD_RESULT_CHARS:
+        if m.get("role") == "tool" and i < cut_before and len(content) > OLD_RESULT_CHARS:
             m = {**m, "content": content[:OLD_RESULT_CHARS] + " …[older result shortened]"}
         out.append(m)
     return out

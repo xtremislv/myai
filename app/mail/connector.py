@@ -30,11 +30,16 @@ from email.message import EmailMessage
 from email.utils import make_msgid, parseaddr
 
 from app.browsing import extract
+from app.mail import imapparse
 
 TIMEOUT = 60  # seconds per network read: a big mailbox search or message can take a while
-# A summary reads at most this much of each email: the text comes first, attachments after it, and
-# only ~3,000 characters of the text are used. (256 KB pulled attachments too: ~1 s per email.)
-SUMMARY_FETCH_BYTES = 64 * 1024
+# Emails are read by their structure (BODYSTRUCTURE): the whole text part is fetched, never the
+# attachments, which are listed by name and fetched one at a time when asked for (read_attachment).
+TEXT_MAX_BYTES = 2 * 1024 * 1024  # of one email's text part (only generated newsletters get near it)
+SUMMARY_BODY_CHARS = 20_000  # of each email's text given to a summary (~5k tokens)
+ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024  # as stored on the server (base64 is ~4/3 of the file)
+# A server whose BODYSTRUCTURE can't be read gets the first this-many bytes of the raw email instead.
+SUMMARY_FETCH_BYTES = 256 * 1024
 # A signed-in IMAP connection is kept this long after use, so the next call (the agent's next tool
 # round, or the next message) skips TLS and the login. Servers drop idle sessions after ~30 minutes.
 IDLE_SECONDS = 120
@@ -458,14 +463,17 @@ def search_all(cfg: MailConfig, box: str, query: str, limit: int, body_bytes: in
                progress=None) -> tuple[int, list[dict]]:
     """(total matches, up to `limit` newest matching emails), on one connection. Each email is
     {"id", "message_id", "from", "from_email", "subject", "date", "unread", "attachments", "body"};
-    with body_bytes 0 only the headers are fetched (fast), else the first body_bytes of each."""
+    with body_bytes 0 only the headers are fetched (fast), else each email's whole text (no attachments)."""
     with _session(cfg) as conn:
         _, prefix = _select(conn, box, query)
         uids = _search(conn, ["ALL"], query)[::-1]
         total = len(uids)
         wanted = uids[:max(0, limit)]
-        part = f"BODY.PEEK[]<0.{body_bytes}>" if body_bytes else "BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)]"
-        found: dict[bytes, dict] = {}
+        if body_bytes:
+            found = _with_text(conn, wanted, prefix, SUMMARY_BODY_CHARS, progress)
+            return total, [found[u] for u in wanted if u in found]
+        part = "BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)]"
+        found = {}
         for start in range(0, len(wanted), FETCH_CHUNK):
             chunk = wanted[start:start + FETCH_CHUNK]
             _, rows = conn.uid("FETCH", b",".join(chunk), f"(UID FLAGS {part})")
@@ -479,6 +487,106 @@ def search_all(cfg: MailConfig, box: str, query: str, limit: int, body_bytes: in
             if progress:
                 progress(min(start + FETCH_CHUNK, len(wanted)), len(wanted))
         return total, [found[u] for u in wanted if u in found]
+
+
+_HEAD = "FROM TO CC SUBJECT DATE MESSAGE-ID"
+
+
+def _item_bytes(item: dict, prefix: str) -> bytes | None:
+    """The literal of the first reply item whose name starts with prefix ("BODY[HEADER", "BODY[1.2]")."""
+    for key, val in item.items():
+        if key.startswith(prefix.upper()) and isinstance(val, bytes):
+            return bytes(val)
+    return None
+
+
+def _structure(conn, uids: list[bytes]) -> dict[bytes, dict]:
+    """uid -> {"head": header Message, "unread", "parts", "body_part"}: one small FETCH per 50 emails."""
+    out: dict[bytes, dict] = {}
+    for start in range(0, len(uids), FETCH_CHUNK):
+        chunk = uids[start:start + FETCH_CHUNK]
+        _, rows = conn.uid("FETCH", b",".join(chunk), f"(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS ({_HEAD})])")
+        for item in imapparse.messages(rows):
+            uid = str(item.get("UID") or "")
+            if not uid.isdigit():
+                continue
+            parts = imapparse.parts(item.get("BODYSTRUCTURE"))
+            flags = item.get("FLAGS") if isinstance(item.get("FLAGS"), list) else []
+            out[uid.encode()] = {
+                "head": email.message_from_bytes(_item_bytes(item, "BODY[HEADER") or b"", policy=email.policy.default),
+                "unread": "\\Seen" not in [str(f) for f in flags],
+                "parts": parts, "body_part": imapparse.body_part(parts),
+            }
+    return out
+
+
+def _texts(conn, info: dict[bytes, dict]) -> dict[bytes, str]:
+    """uid -> the email's whole text, fetching only each email's text part: one FETCH per part
+    number (most emails share "1" or "1.1"), never the attachments."""
+    groups: dict[str, list[bytes]] = {}
+    for uid, i in info.items():
+        if i["body_part"] is not None:
+            groups.setdefault(i["body_part"].section, []).append(uid)
+    out: dict[bytes, str] = {}
+    for section, uids in groups.items():
+        for start in range(0, len(uids), FETCH_CHUNK):
+            chunk = uids[start:start + FETCH_CHUNK]
+            _, rows = conn.uid("FETCH", b",".join(chunk), f"(UID BODY.PEEK[{section}]<0.{TEXT_MAX_BYTES}>)")
+            for item in imapparse.messages(rows):
+                uid = str(item.get("UID") or "").encode()
+                data = _item_bytes(item, f"BODY[{section}]")
+                if uid not in info or data is None:
+                    continue
+                part = info[uid]["body_part"]
+                try:
+                    text = imapparse.text_of(data, part)
+                    if part.type == "text/html":
+                        text = extract.page_text(text)[1]
+                except Exception:  # noqa: BLE001 - an odd encoding must not stop the rest
+                    text = ""
+                if part.size > TEXT_MAX_BYTES:
+                    text += f"\n[the rest of this very long email was not fetched: {imapparse.size_label(part.size)}]"
+                out[uid] = text
+    return out
+
+
+def _files(parts: list) -> list[str]:
+    return [p.filename for p in parts if p.attachment and p.filename]
+
+
+def _with_text(conn, uids: list[bytes], prefix: str, body_chars: int, progress=None) -> dict[bytes, dict]:
+    """The summary dicts of these emails with their whole text (clipped to body_chars, spaces
+    collapsed) and every attachment's name. Emails whose structure the server didn't give fall
+    back to the first SUMMARY_FETCH_BYTES of the raw email."""
+    info = _structure(conn, uids)
+    texts = _texts(conn, info)
+    out: dict[bytes, dict] = {}
+    for uid, i in info.items():
+        head = i["head"]
+        sender = _header(head, "From")
+        out[uid] = {
+            "id": prefix + uid.decode(), "message_id": _header(head, "Message-ID"), "from": sender,
+            "from_email": parseaddr(sender)[1], "subject": _header(head, "Subject") or "(no subject)",
+            "date": _header(head, "Date"), "unread": i["unread"], "attachments": _files(i["parts"]),
+            "body": extract.clip(" ".join(texts.get(uid, "").split()), body_chars),
+        }
+    missing = [u for u in uids if u not in out or (not _has_structure(info.get(u)))]
+    for start in range(0, len(missing), FETCH_CHUNK):
+        chunk = missing[start:start + FETCH_CHUNK]
+        _, rows = conn.uid("FETCH", b",".join(chunk), f"(UID FLAGS BODY.PEEK[]<0.{SUMMARY_FETCH_BYTES}>)")
+        for uid, meta, raw in _fetched(rows):
+            mail = _summary_of(prefix + uid.decode(), meta, raw, True)
+            mail["body"] = extract.clip(mail["body"], body_chars)
+            out[uid] = mail
+    if progress:
+        progress(len(out), len(uids))
+    return out
+
+
+def _has_structure(i: dict | None) -> bool:
+    """False when the structure gave nothing to read: no parts at all (a server that sent no
+    BODYSTRUCTURE). An email with only attachments has parts, and no text, which is right."""
+    return bool(i and i["parts"])
 
 
 def _summary_of(mail_id: str, meta: bytes, raw: bytes, with_body: bool) -> dict:
@@ -514,6 +622,60 @@ def _body(msg) -> str:
 MAX_OPEN = 10  # emails one open_mail call reads
 
 
+def _open_text(head, text: str, parts: list, max_chars: int, part: int = 1) -> str:
+    lines = "\n".join(f"{h}: {_header(head, h)}" for h in ("From", "To", "Cc", "Date", "Subject", "Message-ID")
+                      if head.get(h))
+    files = [p for p in parts if p.attachment and p.filename]
+    if files:
+        # Sizes as the person knows them: base64 on the server is ~4/3 of the file.
+        sized = [f"{p.filename} ({imapparse.size_label(p.size * 3 // 4 if p.encoding == 'base64' else p.size)})"
+                 for p in files]
+        lines += f"\nAttachments: {', '.join(sized)} (open one with open_mail attachment=<name>)"
+    text = text.strip()
+    pages = max(1, -(-len(text) // max_chars))
+    if pages == 1:
+        return lines + "\n\n" + text
+    part = min(max(1, int(part)), pages)
+    piece = text[(part - 1) * max_chars:part * max_chars]
+    more = (f"[part {part} of {pages}: call open_mail with part={part + 1} for the next part]" if part < pages
+            else f"[part {part} of {pages}: the end of the email]")
+    return lines + "\n\n" + (f"[...part {part}, continuing]\n" if part > 1 else "") + piece + "\n" + more
+
+
+def _ids_by_folder(conn, ids: list[str], box: str) -> tuple[dict[str, list[tuple[str, str]]], dict[str, str]]:
+    archive = _all_mail(conn) if any(i.lower().startswith(ALL_PREFIX) for i in ids) else None
+    by_folder: dict[str, list[tuple[str, str]]] = {}
+    errors: dict[str, str] = {}
+    for mail_id in ids:
+        try:
+            if mail_id.lower().startswith(ALL_PREFIX):
+                folder, uid = archive or _folder(box), str(int(mail_id[len(ALL_PREFIX):]))
+            else:
+                folder, uid = _folder(box), str(int(mail_id))
+        except ValueError:
+            errors[mail_id] = f"ERROR: '{mail_id}' is not an email id"
+            continue
+        by_folder.setdefault(folder, []).append((mail_id, uid))
+    return by_folder, errors
+
+
+def _open_raw(conn, uids: list[str], max_chars: int) -> dict[str, str]:
+    """Fallback for a server that gave no structure: the whole raw email, parsed here."""
+    if not uids:
+        return {}
+    _, rows = conn.uid("FETCH", ",".join(uids), "(UID BODY.PEEK[])")
+    raw_of = {uid.decode(): raw for uid, _, raw in _fetched(rows)}
+    if len(uids) == 1 and not raw_of:  # a server that leaves UID out of a one-email reply
+        raw_of = {uids[0]: next((r[1] for r in rows or [] if isinstance(r, tuple)), None)}
+    out = {}
+    for uid, raw in raw_of.items():
+        if raw is None:
+            continue
+        msg = email.message_from_bytes(raw, policy=email.policy.default)
+        out[uid] = _format_open(msg, max_chars)
+    return out
+
+
 def _format_open(msg, max_chars: int) -> str:
     files = [p.get_filename() for p in msg.iter_attachments() if p.get_filename()]
     head = "\n".join(
@@ -525,51 +687,82 @@ def _format_open(msg, max_chars: int) -> str:
     )
 
 
-def read_message(cfg: MailConfig, message_id: str, box: str = "inbox", max_chars: int = 12_000) -> str:
-    return read_messages(cfg, [message_id], box, max_chars)
+def read_message(cfg: MailConfig, message_id: str, box: str = "inbox", max_chars: int = 60_000, part: int = 1) -> str:
+    return read_messages(cfg, [message_id], box, max_chars, part)
 
 
-def read_messages(cfg: MailConfig, message_ids: list[str], box: str = "inbox", max_chars: int = 12_000) -> str:
-    """Several emails in full on one connection, one FETCH per folder. One id: the email alone;
-    several: each under an "=== email <id> ===" line, in the order asked."""
+def read_messages(cfg: MailConfig, message_ids: list[str], box: str = "inbox", max_chars: int = 60_000,
+                  part: int = 1) -> str:
+    """Emails in full (the whole text; attachments listed with their sizes, not fetched) on one
+    connection. One id: the email alone; several: each under an "=== email <id> ===" line."""
     ids = list(dict.fromkeys(str(m).strip() for m in message_ids if str(m).strip()))[:MAX_OPEN]
     if not ids:
         return "ERROR: no email id given"
     with _session(cfg) as conn:
-        archive = _all_mail(conn) if any(i.lower().startswith(ALL_PREFIX) for i in ids) else None
-        by_folder: dict[str, list[tuple[str, str]]] = {}
-        texts: dict[str, str] = {}
-        for mail_id in ids:
-            try:
-                if mail_id.lower().startswith(ALL_PREFIX):
-                    folder, uid = archive or _folder(box), str(int(mail_id[len(ALL_PREFIX):]))
-                else:
-                    folder, uid = _folder(box), str(int(mail_id))
-            except ValueError:
-                texts[mail_id] = f"ERROR: '{mail_id}' is not an email id"
-                continue
-            by_folder.setdefault(folder, []).append((mail_id, uid))
+        by_folder, texts = _ids_by_folder(conn, ids, box)
         for folder, wanted in by_folder.items():
             conn.select(_quote(folder) if " " in folder else folder, readonly=True)
-            _, rows = conn.uid("FETCH", ",".join(uid for _, uid in wanted), "(UID BODY.PEEK[])")
-            raw_of = {uid.decode(): raw for uid, _, raw in _fetched(rows)}
-            if len(wanted) == 1 and not raw_of:  # a server that leaves UID out of a one-email reply
-                raw_of = {wanted[0][1]: next((r[1] for r in rows or [] if isinstance(r, tuple)), None)}
+            uids = [uid.encode() for _, uid in wanted]
+            info = _structure(conn, uids)
+            body = _texts(conn, info)
+            raw = _open_raw(conn, [u.decode() for u in uids if not _has_structure(info.get(u))], max_chars)
             for mail_id, uid in wanted:
-                raw = raw_of.get(uid)
-                if raw is None:
-                    texts[mail_id] = f"ERROR: no message with id {mail_id}"
-                    continue
-                msg = email.message_from_bytes(raw, policy=email.policy.default)
-                texts[mail_id] = _format_open(msg, max_chars)
+                i = info.get(uid.encode())
+                if _has_structure(i):
+                    texts[mail_id] = _open_text(i["head"], body.get(uid.encode(), ""), i["parts"], max_chars, part)
+                else:
+                    texts[mail_id] = raw.get(uid, f"ERROR: no message with id {mail_id}")
     if len(ids) == 1:
         return texts[ids[0]]
     return "\n\n".join(f"=== email {i} ===\n{texts[i]}" for i in ids)
 
 
+def _pick(files: list, name: str):
+    """The attachment called `name`: exact (any case), else the only one containing it, else by
+    number (1 = the first listed)."""
+    want = name.strip().casefold()
+    exact = [p for p in files if p.filename.casefold() == want]
+    if exact:
+        return exact[0]
+    near = [p for p in files if want and want in p.filename.casefold()]
+    if len(near) == 1:
+        return near[0]
+    if want.isdigit() and 1 <= int(want) <= len(files):
+        return files[int(want) - 1]
+    return None
+
+
+def read_attachment(cfg: MailConfig, message_id: str, name: str, box: str = "inbox") -> tuple[str, str, bytes] | str:
+    """(file name, content type, the file's bytes) of one attachment, or an ERROR string."""
+    with _session(cfg) as conn:
+        by_folder, errors = _ids_by_folder(conn, [str(message_id).strip()], box)
+        if errors:
+            return next(iter(errors.values()))
+        folder, [(mail_id, uid)] = next(iter(by_folder.items()))
+        conn.select(_quote(folder) if " " in folder else folder, readonly=True)
+        info = _structure(conn, [uid.encode()]).get(uid.encode())
+        if info is None:
+            return f"ERROR: no message with id {mail_id}"
+        files = [p for p in info["parts"] if p.attachment and p.filename]
+        if not files:
+            return f"ERROR: email {mail_id} has no attachments"
+        part = _pick(files, name)
+        if part is None:
+            return (f"ERROR: email {mail_id} has no attachment called '{name}'. Its attachments: "
+                    + ", ".join(p.filename for p in files))
+        if part.size > ATTACHMENT_MAX_BYTES:
+            return f"ERROR: {part.filename} is too big to open here ({imapparse.size_label(part.size)})"
+        _, rows = conn.uid("FETCH", uid, f"(UID BODY.PEEK[{part.section}])")
+        got = next(iter(imapparse.messages(rows)), {})
+        data = _item_bytes(got, f"BODY[{part.section}]")
+        if data is None:
+            return f"ERROR: the mail server did not send {part.filename}"
+        return part.filename, part.type, imapparse.decode(data, part.encoding)
+
+
 def fetch_messages(
     cfg: MailConfig, box: str = "inbox", limit: int = 10, unread_only: bool = True,
-    since: dt.date | None = None, body_chars: int = 3000, query: str = "", hours: float = 0,
+    since: dt.date | None = None, body_chars: int = SUMMARY_BODY_CHARS, query: str = "", hours: float = 0,
 ) -> list[dict]:
     """The newest messages with their text, without marking them read. Each is
     {"id", "message_id", "from", "subject", "date", "unread", "attachments", "body"}."""
@@ -592,17 +785,9 @@ def fetch_messages(
         else:
             found = _search(conn, criteria, query)
         uids = found[-max(1, min(limit, MAX_SUMMARY)):][::-1]
-        # All of them in one FETCH per 50 (one email per FETCH was a server round trip each: 40-60 s for 40).
-        got: dict[bytes, dict] = {}
-        for start in range(0, len(uids), FETCH_CHUNK):
-            chunk = uids[start:start + FETCH_CHUNK]
-            _, rows = conn.uid("FETCH", b",".join(chunk), f"(UID FLAGS BODY.PEEK[]<0.{SUMMARY_FETCH_BYTES}>)")
-            for uid, meta, raw in _fetched(rows):
-                if uid in got:
-                    continue
-                mail = _summary_of(prefix + uid.decode(), meta, raw, True)
-                mail["body"] = extract.clip(mail["body"], body_chars)
-                got[uid] = mail
+        # Structure + text parts for all of them in a few FETCH commands (one FETCH per email was a server
+        # round trip each: 40-60 s for 40), whole text, no attachments.
+        got = _with_text(conn, uids, prefix, body_chars)
         return [got[u] for u in uids if u in got]
 
 

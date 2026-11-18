@@ -294,9 +294,11 @@ def callback_app(monkeypatch):
     app.dependency_overrides[deps.current_subject] = lambda: Subject(who["id"], ())
     app.dependency_overrides[get_session] = lambda: iter([None])
     oauth._flows.clear()
+    routes_me._pending_box.clear()
     yield TestClient(app, base_url="https://testserver"), saved, who
     app.dependency_overrides.clear()
     oauth._flows.clear()
+    routes_me._pending_box.clear()  # a sign-in a test started and never finished must not leak into others
 
 
 def _start(client):

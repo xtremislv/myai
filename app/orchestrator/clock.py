@@ -11,6 +11,10 @@ message, after everything that can be cached.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
+import threading
+import time
 from zoneinfo import ZoneInfo
 
 from app.config import get_settings
@@ -60,6 +64,30 @@ def _stamped(content, stamp: str):
     return f"{content or ''}\n\n{stamp}"
 
 
+# One stamp per turn: every tool round of a turn sends the stamp its first call sent, so the turn's
+# requests keep the same text and read each other back from the prompt cache (a minute ticking
+# over mid-turn changed it). Kept TURN_STAMP_SECONDS at most, so a very long run still moves on.
+TURN_STAMP_SECONDS = 600
+_turn_stamps: dict[str, tuple[str, float]] = {}
+_turn_lock = threading.Lock()
+
+
+def _turn_key(messages: list[dict], last_user: int) -> str:
+    """The conversation up to and including the person's latest message (no system prompt)."""
+    convo = [m for m in messages[:last_user + 1] if m.get("role") != "system"]
+    return hashlib.sha256(json.dumps(convo, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def turn_stamp(messages: list[dict], last_user: int) -> str:
+    key, now = _turn_key(messages, last_user), time.monotonic()
+    with _turn_lock:
+        for k in [k for k, (_, t) in _turn_stamps.items() if now - t > TURN_STAMP_SECONDS]:
+            del _turn_stamps[k]
+        if key not in _turn_stamps:
+            _turn_stamps[key] = (now_stamp(), now)
+        return _turn_stamps[key][0]
+
+
 def place_clock(messages: list[dict], now: dt.datetime | None = None) -> list[dict]:
     """Messages ready to send: the clock marker left by with_now is removed from the system
     prompt and the time goes on the latest user message instead. Without a user message the
@@ -79,5 +107,6 @@ def place_clock(messages: list[dict], now: dt.datetime | None = None) -> list[di
         out[i] = {**out[i], "content": content}
     if users:
         last = users[-1]
-        out[last] = {**out[last], "content": _stamped(out[last].get("content"), now_stamp(now))}
+        stamp = now_stamp(now) if now is not None else turn_stamp(messages, last)
+        out[last] = {**out[last], "content": _stamped(out[last].get("content"), stamp)}
     return out

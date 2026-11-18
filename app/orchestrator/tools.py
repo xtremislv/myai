@@ -296,19 +296,53 @@ def search_mail(
     return untrusted(f"{category} mailbox", found)
 
 
-def open_mail(state: dict[str, Any], message_id: str, category: str = "", folder: str = "") -> str:
+ATTACHMENT_CHARS = 60_000  # of an attachment's text given to the model; longer ones say where they were cut
+
+
+def _attachment_text(got) -> str:
+    from app.mail import connector
+    from app.storage import attachments
+
+    if isinstance(got, str):
+        return got
+    name, kind, data = got
+    if kind == "message/rfc822" or name.lower().endswith(".eml"):
+        import email
+        import email.policy
+
+        return f"Forwarded email {name}:\n" + connector._format_open(
+            email.message_from_bytes(data, policy=email.policy.default), ATTACHMENT_CHARS)
+    try:
+        text = attachments.extract_text(name, kind, data)
+    except Exception:  # noqa: BLE001 - a damaged file
+        return f"ERROR: {name} could not be read (damaged or protected file)."
+    if text is None:
+        return (f"{name} is a {kind} file ({len(data) // 1024} KB): its contents can't be read as text here. "
+                "Tell the person what it is; they can open it in their mail app.")
+    from app.browsing import extract
+
+    return f"Attachment {name} ({kind}):\n\n" + extract.clip(text.strip(), ATTACHMENT_CHARS)
+
+
+def open_mail(state: dict[str, Any], message_id: str, category: str = "", folder: str = "",
+              attachment: str = "", part: int = 1) -> str:
     from app.mail import connector
 
     cfg, err = _mailbox(state, category, folder, "read")
     if cfg is None:
         return err
+    if attachment.strip():
+        return untrusted(f"an attachment of an email in the {category} mailbox",
+                         _mail_call(lambda: _attachment_text(connector.read_attachment(
+                             cfg, str(message_id).split(",")[0].strip(), attachment, folder or "inbox"))))
     ids = [i for i in re.split(r"[\s,;]+", str(message_id)) if i][:connector.MAX_OPEN]
     if len(ids) > 1:
-        each = max(4_000, 40_000 // len(ids))  # several at once share about 40k characters
+        each = max(8_000, 80_000 // len(ids))  # several at once share about 80k characters
         return untrusted(f"{len(ids)} emails in the {category} mailbox",
                          _mail_call(connector.read_messages, cfg, ids, folder or "inbox", each))
     return untrusted(f"an email in the {category} mailbox",
-                     _mail_call(connector.read_message, cfg, ids[0] if ids else "", folder or "inbox"))
+                     _mail_call(connector.read_message, cfg, ids[0] if ids else "", folder or "inbox", 60_000,
+                                max(1, int(part or 1))))
 
 
 def mark_mail(
@@ -2703,7 +2737,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "open_mail": "Read emails in full by the ids exactly as read_mail or search_mail showed them "
                  "(ids like all-123 are from the archive search). Several at once: message_id \"12, 15, all-30\" "
                  "(up to 10 in one call); never open emails one call at a time. To learn what several emails "
-                 "say, use summarize_mail instead (with query or hours to pick them): it is much faster.",
+                 "say, use summarize_mail instead (with query or hours to pick them): it is much faster. "
+                 "attachment: the name (or number) of one attachment the email lists, to read that file "
+                 "(PDF, Word, Excel, text, forwarded email); only when the person asks about it. part: for a very "
+                 "long email that says it has more parts, the next part's number.",
     "mark_mail": "Mark an email by id: action read, unread, flag or unflag.",
     "send_mail": "Send an email (or a reply: in_reply_to is the original's Message-ID). Call it with the "
                  "final text when asked to send: the app shows the exact email for confirmation "

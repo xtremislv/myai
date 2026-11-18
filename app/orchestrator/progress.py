@@ -49,7 +49,7 @@ TOOL_STEPS = {
     "browser_back": "Going back",
     "browser_commit": "Confirming: {summary}",
     "search_mail": "Searching {category} mail for {query}",
-    "open_mail": "Opening an email",
+    "open_mail": "Opening the email",
     "mark_mail": "Marking an email as {action}",
     "send_mail": "Sending an email to {to}",
     "summarize": "Summarizing",

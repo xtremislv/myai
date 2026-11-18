@@ -208,25 +208,31 @@ CACHE = {"type": "ephemeral"}
 
 
 def _mark_history(turns: list[dict]) -> None:
-    """A cache breakpoint on the latest user message, before its clock stamp.
+    """A cache breakpoint on the person's latest message, before its clock stamp.
 
     The stamp moves to the next user message on the next turn, so the history up to here is only
     read back from the cache if an entry ends exactly here (the automatic breakpoint at the very end
     includes the stamp, and is only reused by this turn's own tool rounds)."""
-    last = turns[-1]
-    if last["role"] != "user":
-        return
-    blocks = last["content"]
-    for i in range(len(blocks) - 1, -1, -1):
-        block = blocks[i]
-        if block.get("type") != "text":
+    # The stamped message is the person's latest one, which is not the last turn once tool rounds
+    # follow it (their results are user turns too). It is split the same way in every call of the
+    # turn: a stamp left inside the text block in later rounds changed the block the first call had
+    # cached, so each round after the first read back only up to the person's previous message.
+    for turn in reversed(turns):
+        if turn["role"] != "user":
             continue
-        match = _STAMP.search(block["text"])
-        if not match or not block["text"][:match.start()].strip():
+        blocks = turn["content"]
+        for i in range(len(blocks) - 1, -1, -1):
+            block = blocks[i]
+            if block.get("type") != "text":
+                continue
+            match = _STAMP.search(block["text"])
+            if not match:
+                continue
+            if not block["text"][:match.start()].strip():
+                return
+            blocks[i:i + 1] = [{"type": "text", "text": block["text"][:match.start()], "cache_control": CACHE},
+                               {"type": "text", "text": match.group(1)}]
             return
-        blocks[i:i + 1] = [{"type": "text", "text": block["text"][:match.start()], "cache_control": CACHE},
-                           {"type": "text", "text": match.group(1)}]
-        return
 
 
 def params(messages: list[dict], *, model: str, max_tokens: int, tools: list[dict] | None,

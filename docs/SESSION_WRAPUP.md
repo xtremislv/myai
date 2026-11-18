@@ -21,13 +21,22 @@ this file, this file is right.
   call wrote and none read. Now also explicit breakpoints on the system prompt (with tools) and on the latest user
   message before its `[Now: ...]` stamp (`anthropic_backend.params`/`_mark_history`). Check reads in
   `llm_usage.jsonl` ("cached"); a different tool-group mix still misses the system entry.
-- **Mail speed (2026-11-18):** summaries waited 38-65 s before the first model call (llm_usage.jsonl), because
-  `fetch_messages` sent one IMAP FETCH per email, 256 KB each. Now one FETCH for all (64 KB each), signed-in IMAP
-  connections are reused for 2 minutes (`connector._session`; test doubles are never pooled), all summary batches run
-  at once (`summary.PARALLEL` 10), urgent/to-do emails show as live steps while the rest are read
-  (`summary.early_notes`), and `open_mail` takes up to 10 ids in one call. Not yet timed on a real mailbox.
-  Access log masks secret query values (`observability.RedactQueryFilter`). Prompt cache: the agent's first call of
-  a turn mostly misses (8 of 43 calls read) because the tool-group mix changes the tools+system prefix.
+- **Mail speed and full text (2026-11-18):** summaries waited 38-65 s before the first model call (llm_usage.jsonl):
+  one IMAP FETCH per email, 256 KB each. Now emails are read by structure (`app/mail/imapparse.py`, BODYSTRUCTURE):
+  one small FETCH for headers + structure, then only each email's text part, whole (up to 2 MB), never attachments;
+  a server without BODYSTRUCTURE falls back to the raw email. Summaries get up to 20,000 characters per email (was
+  3,000). `open_mail` shows the whole text (60k-character parts: `part=2`...), lists attachments with sizes, reads up to
+  10 ids per call, and reads one attachment on request (`attachment=<name or number>`: PDF, Word, Excel, text,
+  forwarded email; images can't be read). Signed-in IMAP connections are reused for 2 minutes
+  (`connector._session`; test doubles are never pooled), all summary batches run at once (`summary.PARALLEL` 10), and
+  urgent/to-do emails show as live steps (`summary.early_notes`). Not yet timed on a real mailbox.
+  Access log masks secret query values (`observability.RedactQueryFilter`).
+- **Prompt cache (2026-11-18):** tool rounds after a turn's first call read back only up to the person's previous
+  message: the clock stamp was split off the latest message only while it was the last turn (`_mark_history`), each
+  round shortened the previous round's results (`compact_tool_results`), and a minute ticking over changed the stamp.
+  Now this turn's results stay whole (up to 80k characters), the stamp is split the same way every round and fixed
+  per turn (`clock.turn_stamp`). Still open: a different tool-group mix between messages (toolsel) changes the
+  tools at the very start, so the next message's first call misses everything; options in the 2026-11-18 session.
 - **Prepaid credit alerts (2026-11-17):** `app/llm/credit.py`, `scripts/llm_credit.py`; balance set to $49.43 on
   2026-11-17 ($50 top-up minus $0.57 already spent). Reset it after every top-up. See CLAUDE_CODE_SERVER.md.
 - **Scouts paused (owner, 2026-11-17):** all three `enabled=false`; resume from the Scouts page.
