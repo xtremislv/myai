@@ -110,7 +110,6 @@ approvals, NSFW + order-forwarding guards), and OpenTelemetry → Prometheus/Lok
 - After changing `android/`, commit and run `scripts/publish_android.sh "notes"` so the website offers it and installed
   apps update themselves (`--required` if old apps would break). Never sign with another key than
   `~/.config/twai-android/release.jks`: phones refuse the update.
-
 - Security audit 2026-11-18 rules: every password or recovery-code check goes through `attempts.guarded(...)`
   (`app/auth/attempts.py`: per account+address, account, address; Redis with in-process fallback) and
   `security.password_matches` (a missing user still costs a bcrypt check). IMAP folder names go through
